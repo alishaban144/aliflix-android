@@ -8,6 +8,9 @@ import com.aliflix.app.data.playbackProgressFromJson
 import com.aliflix.app.data.toJson
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 class AccountLocalSnapshotStore(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(
@@ -19,8 +22,19 @@ class AccountLocalSnapshotStore(context: Context) {
         get() = preferences.getString(KEY_ACTIVE_SCOPE, AccountMergePolicy.GUEST_SCOPE)
             ?: AccountMergePolicy.GUEST_SCOPE
 
+    val scopeRevision: Long get() = preferences.getLong("scope-revision", 0)
+
+    fun scopeChanges()=callbackFlow {
+        val listener=android.content.SharedPreferences.OnSharedPreferenceChangeListener{_,key->
+            if(key==KEY_ACTIVE_SCOPE||key=="scope-revision")trySend(activeScope to scopeRevision)
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        trySend(activeScope to scopeRevision)
+        awaitClose{preferences.unregisterOnSharedPreferenceChangeListener(listener)}
+    }.distinctUntilChanged()
+
     fun setActiveScope(scope: String) {
-        preferences.edit { putString(KEY_ACTIVE_SCOPE, scope) }
+        if(activeScope!=scope)preferences.edit { putString(KEY_ACTIVE_SCOPE, scope);putLong("scope-revision",scopeRevision+1) }
     }
 
     fun existingUserScopes(): Set<String> =

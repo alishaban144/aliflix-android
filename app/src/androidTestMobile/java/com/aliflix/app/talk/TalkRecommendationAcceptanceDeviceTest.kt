@@ -53,7 +53,7 @@ class TalkRecommendationAcceptanceDeviceTest {
         } } finally {
             receipt.writeText(JSONObject().put("turns",turns).put("tools",JSONObject(session.debugToolCalls.toMap())).put("phase",session.state.value.phase)
                 .put("lines",JSONArray(session.state.value.lines.map{JSONObject().put("role",it.role).put("text",it.text)})).put("issue",session.debugRecommendationIssue).put("connectionIssue",session.debugConnectionIssue)
-                .put("presentationIssue",session.debugPresentationIssue).put("pool",JSONArray(session.debugRecommendationPoolKeys)).put("deliveryCorrections",session.debugDeliveryRejections).put("bridgeText",session.debugBridgeText).put("events",JSONArray(session.debugWireEvents.toList())).toString(2))
+                .put("presentationIssue",session.debugPresentationIssue).put("pool",JSONArray(session.debugRecommendationPoolKeys)).put("deliveryCorrections",session.debugDeliveryRejections).put("events",JSONArray(session.debugWireEvents.toList())).toString(2))
             instrumentation.runOnMainSync { talk.finish() }
         }
     }

@@ -24,12 +24,13 @@ class AskResearchStreamTest {
         assertNull(stream.accept(event(2,4)))
         assertEquals(1,stream.latest!!.getJSONArray("results").getJSONObject(0).getInt("tmdbId"))
     }
-    @Test fun curatedSnapshotsCanReorderAndReplaceEarlyMatches() {
+    @Test fun reorderedAndIncompleteSnapshotsPreserveEveryPublishedCard() {
         val stream=AskResearchStream("request")
         assertThrows(IllegalArgumentException::class.java){stream.accept(event(1,1).put("requestId","old"))}
         stream.accept(event(2,1,2))
-        assertEquals(2,stream.accept(event(3,2,1))!!.getJSONArray("results").getJSONObject(0).getInt("tmdbId"))
-        assertEquals(3,stream.accept(event(4,3,running=false))!!.getJSONArray("results").getJSONObject(0).getInt("tmdbId"))
+        assertEquals(1,stream.accept(event(3,2,1))!!.getJSONArray("results").getJSONObject(0).getInt("tmdbId"))
+        val final=stream.accept(event(4,3,running=false))!!.getJSONArray("results")
+        assertEquals(listOf(1,2,3),(0 until final.length()).map{final.getJSONObject(it).getInt("tmdbId")})
         assertTrue(stream.finished)
         assertFalse(stream.latest!!.optBoolean("incomplete"))
     }

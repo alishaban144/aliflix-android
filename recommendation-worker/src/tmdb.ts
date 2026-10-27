@@ -86,6 +86,7 @@ export class TmdbClient {
   constructor(private readonly env: RecommendationEnv, private readonly budget = 38, private readonly deadline?: AbortSignal) {}
   get callsUsed(): number { return this.used; }
   get callsRemaining(): number { return this.budget - this.used; }
+  collection(id:number):Promise<{parts:TmdbListItem[]}> {return this.request(`/collection/${id}`,{language:'en-US'},3600);}
 
   async seasons(id: number) {
     const result = await this.request<{ seasons?: Array<{ season_number: number; name: string; episode_count: number }> }>(`/tv/${id}`, { language: 'en-US' }, 3600);
@@ -95,11 +96,11 @@ export class TmdbClient {
   }
 
   async episodes(id: number, season: number) {
-    const result = await this.request<{ episodes?: Array<{ episode_number: number; season_number: number; name: string; overview: string; still_path: string | null; runtime: number | null }> }>(`/tv/${id}/season/${season}`, { language: 'en-US' }, 3600);
+    const result = await this.request<{ episodes?: Array<{ episode_number: number; season_number: number; name: string; overview: string; still_path: string | null; runtime: number | null;air_date?:string }> }>(`/tv/${id}/season/${season}`, { language: 'en-US' }, 3600);
     return { tmdbId: id, seasonNumber: season, episodes: (result.episodes || [])
       .filter(e => e.season_number === season && e.episode_number > 0).map(e => ({
         number: e.episode_number, seasonNumber: season, title: e.name, overview: e.overview,
-        stillPath: e.still_path, runtime: e.runtime,
+        stillPath: e.still_path, runtime: e.runtime,airDate:e.air_date,
       })) };
   }
 

@@ -4,6 +4,23 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkConversationIntentTest {
+    @Test fun clausesAndMovieThemesDoNotHijackTheRequestedTask(){
+        assertEquals(TalkIntent.DECISION,talkConversationIntent("Don't recommend Arrival, choose between Primer and Coherence"))
+        for(prompt in listOf("Recommend comedy or thriller movies", "Can you recommend films about restricted access?", "Compare Primer with Coherence, then recommend three others"))
+            assertFalse(prompt,talkToolNeedsDiscoveryCorrection("recommendations",prompt,2))
+        assertFalse(talkActionRequested("download","Don’t download it."))
+        assertEquals(TalkIntent.CAPABILITIES,talkConversationIntent("Can you access my other apps?"))
+        assertEquals(TalkIntent.DECISION,talkConversationIntent("Recommend Primer or Coherence"))
+        assertEquals(listOf("After Life (1998)","After Yang"),talkExplicitComparisonTitles("Compare After Life (1998) with After Yang, then recommend two other films."))
+        assertTrue(talkExplicitComparisonTitles("Don't compare Primer with Coherence; recommend two other films.").isEmpty())
+    }
+    @Test fun discoveryAndInformationNeverAuthorizeAnUnrequestedWrite(){
+        assertFalse(talkActionRequested("download","Can you recommend an episode for my child?"))
+        assertFalse(talkActionRequested("save","Suggest something with time loops"))
+        assertFalse(talkActionRequested("download","What is a download?"))
+        assertTrue(talkActionRequested("download","Find me episode two and download it in low quality"))
+        assertTrue(talkActionRequested("save","Explain the difference, then save Primer"))
+    }
     @Test fun explicitComparisonFallbackParsesNamesWithoutGuessingSentenceFragments() {
         assertEquals(listOf("Arrival","Ex Machina"),talkExplicitComparisonTitles("Should I watch Arrival or Ex Machina tonight?"))
         assertEquals(listOf("Moon","Source Code"),talkExplicitComparisonTitles("Choose between Moon and Source Code for a fast evening."))
@@ -25,6 +42,18 @@ class TalkConversationIntentTest {
         assertEquals(TalkIntent.CAPABILITIES,talkConversationIntent("What are your technical limitations?"))
         assertEquals(TalkIntent.CONVERSATION,talkConversationIntent("If I say stop, what happens?"))
     }
+    @Test fun excludedTitleAlternativesNeverBecomeAChoiceBetweenThoseTitles() {
+        for(prompt in listOf(
+            "Find two deadpan comedies about pointless institutions. Do not choose Brazil or Office Space.",
+            "Recommend a quiet thriller, excluding Dune or Arrival.",
+            "Find films about memory without choosing Memento or Total Recall.",
+            "Recommend two films, avoid Brazil or Office Space, but keep the institutional absurdity."
+        )) {
+            assertNotEquals(prompt,TalkIntent.DECISION,talkConversationIntent(prompt,2))
+            assertFalse(prompt,talkToolNeedsDiscoveryCorrection("recommendations",prompt,2))
+        }
+        assertEquals(TalkIntent.DECISION,talkConversationIntent("Choose Arrival or Moon. Do not choose Dune."))
+    }
     @Test fun completedContentNeverRetainsWritingJustBecauseAuxiliaryWorkIsPending() {
         assertTrue(talkShowsResponseProgress(true,false))
         assertFalse(talkShowsResponseProgress(true,true))
@@ -40,17 +69,6 @@ class TalkConversationIntentTest {
             assertEquals(prompt,TalkIntent.STOP,talkConversationIntent(prompt))
         for(prompt in listOf("If I say wait a second, will you stop?","Explain the ending of Never Let Me Go","Stop and compare Arrival with Moon instead"))
             assertNotEquals(prompt,TalkIntent.STOP,talkConversationIntent(prompt))
-    }
-    @Test fun echoAndClicksDoNotGrabTheFloorButSustainedNearSpeechCan() {
-        val gate=TalkBargeInGate()
-        repeat(8){assertFalse(gate.accept(.99f,it*32L,true,false))}
-        assertFalse(gate.accept(.95f,1000,true,true))
-        assertFalse(gate.accept(.1f,1032,true,true))
-        assertFalse(gate.accept(.96f,1100,true,true))
-        assertFalse(gate.accept(.96f,1132,true,true))
-        assertFalse(gate.accept(.96f,1164,true,true))
-        assertTrue(gate.accept(.96f,1196,true,true))
-        assertFalse(gate.accept(.96f,1228,true,true))
     }
     @Test fun questionsAndQuotesNeverAuthorizeMutationsWhileCompoundCommandsKeepTheirScope() {
         assertFalse(talkActionRequested("save","If I asked you to save Arrival, what would you need?"))

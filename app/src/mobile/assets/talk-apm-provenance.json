@@ -1,0 +1,51 @@
+{
+  "buildCommit": "e15607ca41d39f50147dbaf950bd892df9063a64",
+  "workflowRun": 40497078239,
+  "sourceUrl": "https://gstreamer.freedesktop.org/src/mirror/webrtc-audio-processing/webrtc-audio-processing-2.1.tar.xz",
+  "abis": [
+    {
+      "abi": "arm64-v8a",
+      "webrtcAudioProcessing": "2.1",
+      "sourceSha256": "ae9302824b2038d394f10213cab05312c564a038434269f11dbf68f511f9f9fe",
+      "abseil": "20240722.0",
+      "ndk": "27.2.12479018",
+      "minSdk": 29,
+      "pageSize": 16384,
+      "sha256": "1aa156b56a4c07123c5c0979029e149ead3f0e0b646a77c65cb5901e4ebad24d",
+      "bytes": 880712
+    },
+    {
+      "abi": "armeabi-v7a",
+      "webrtcAudioProcessing": "2.1",
+      "sourceSha256": "ae9302824b2038d394f10213cab05312c564a038434269f11dbf68f511f9f9fe",
+      "abseil": "20240722.0",
+      "ndk": "27.2.12479018",
+      "minSdk": 29,
+      "pageSize": 16384,
+      "sha256": "4df6129f1d2bdd72fc245a5554c07ce137c22b418431f84b89bcee35c3ae9d9f",
+      "bytes": 679904
+    },
+    {
+      "abi": "x86",
+      "webrtcAudioProcessing": "2.1",
+      "sourceSha256": "ae9302824b2038d394f10213cab05312c564a038434269f11dbf68f511f9f9fe",
+      "abseil": "20240722.0",
+      "ndk": "27.2.12479018",
+      "minSdk": 29,
+      "pageSize": 16384,
+      "sha256": "3a244438990f221bff6ac5efdcac693316fcec4574517fd2600ff04839211b04",
+      "bytes": 1079516
+    },
+    {
+      "abi": "x86_64",
+      "webrtcAudioProcessing": "2.1",
+      "sourceSha256": "ae9302824b2038d394f10213cab05312c564a038434269f11dbf68f511f9f9fe",
+      "abseil": "20240722.0",
+      "ndk": "27.2.12479018",
+      "minSdk": 29,
+      "pageSize": 16384,
+      "sha256": "f760685ac52ce053c92a33c457d3779c1b7af49fd8235fa32a767e7864487346",
+      "bytes": 1012240
+    }
+  ]
+}

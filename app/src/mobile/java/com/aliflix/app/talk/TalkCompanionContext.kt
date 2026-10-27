@@ -17,14 +17,14 @@ internal fun talkLibraryIdentity(item:Media,kind:String)=JSONObject().put("id",i
 internal fun talkAppContext(context:Context):JSONObject {
     val app=context.applicationContext as AliflixApplication
     val settings=app.playerSettingsStore.settings.value
-    return JSONObject().put("version",BuildConfig.VERSION_NAME).put("platform","Android mobile")
+    return JSONObject().put("version",BuildConfig.VERSION_NAME).put("platform","Android mobile").put("currentDate",java.time.LocalDate.now().toString())
         .put("technicalLimitations",JSONArray(listOf(
             "Live voice and fresh research require an internet connection; service capacity, provider outages and quota can delay or prevent a lookup.",
             "Microphone input is captured only in an active permitted Talk session. Leaving/backgrounding releases capture; muted and text mode do not stream microphone audio. No camera, arbitrary screen, other apps or OS control is exposed to Talk.",
             "Conversation context is bounded and compressed. Archived history is retained only when enabled; recall is not unlimited and may lose details. Read actual app state rather than assuming memory.",
             "Knowledge and catalogue metadata can be incomplete or stale. Tavily supplies current web evidence, TMDB supplies identity/facts; missing or conflicting information needs an honest qualification. Model reasoning can be mistaken.",
-            "Actions are restricted to the actual supported native tools. Playback/source availability, audio tracks and subtitles vary. Opening download options is not a completed download; native account/option/confirmation flows still need the viewer.",
-            "Undo restores only the last library change made through this conversation, and checks for intervening edits. It does not undo navigation, playback or arbitrary manual changes."
+            "Actions are restricted to the actual supported native tools. Playback/source availability, audio tracks and subtitles vary. Download preparation and transfer have separate observed states. Requested subtitles and quality must be verified. Native source/account verification and guarded confirmations still need the viewer.",
+            "Undo restores the last library change or validated batch made through this conversation, and checks for intervening edits. It does not undo navigation, playback or arbitrary manual changes."
         )))
         .put("library",JSONObject().put("favorites",app.libraryStore.likes.value.size)
             .put("myList",app.libraryStore.myList.value.size).put("recent",app.libraryStore.recent.value.size))
@@ -37,26 +37,25 @@ internal fun talkAppContext(context:Context):JSONObject {
             .put("subtitleLanguage",app.playbackProviderRepository.preferences.value.preferredSubtitleLanguage.code)
             .put("provider",app.playbackProviderRepository.preferences.value.effectiveGeneralProvider.name)
             .put("recommendationsEnabled",app.recommendationStore.enabled.value))
-        .put("actions",JSONArray(listOf("show_title_cards: show, focus or restore real cards in Talk and chat; known cards are local, new cards use the same catalogue search as the app",
-            "app_control: show_card, open_title, play (optional season/episode), download (native quality/audio/episode options), similar, search",
-            "app_control: save/unsave My List, favorite/unfavorite, dislike/undo_dislike; title_state reads these exact flags; undo restores the last conversation library change",
-            "app_control: open_screen home, discover, ask, my_list, favorites, history, downloads, settings, account",
-            "app_control: set_setting play_next_episode, audio_boost, zoom, auto_subtitles, playback_speed, subtitle_size, subtitle_opacity, subtitle_delay_seconds, subtitle_vertical_offset, preferred_quality, subtitle_language, provider, recommendations_enabled",
-            "app_control: player_state, pause, resume, seek, audio_language, subtitle_language on the real active Media3 player")))
-        .put("moreActions",JSONArray(listOf("app_control: downloads_state, pause_download, resume_download, remove_download for an exact title/episode",
-            "app_control: set_voice (Aoede/Kore/Puck/Charon), set_history (enabled), new_chat; open_screen talk_voices/talk_privacy/recent_chats")))
-        .put("features",JSONArray(listOf(
-            "Home: For You, Movies, TV Shows, Categories; title details, search, seasons and episode ratings.",
-            "Discover > Ask Aliflix: one Movies/Series composer includes All/Running/Ended series status and supports up to four Similar title anchors, contextual Filters, researched daily discovery and Surprise Me. The companion speech icon or Talk opens Talk; Talk starts listening after microphone permission. Transcript and Privacy controls are inside Talk. End or Back returns to the app.",
-            "My Space: Favorites are explicit likes; My List is saved intent, not proof of watching. Recent history and playback progress are separate. Settings and app updates are accessed here.",
-            "Player > More > Streaming source chooses a provider; individual hosts are tried automatically. Filmo is preferred for movies, Serienstream for TV, AniWorld for Japanese anime; unavailable sources can fall back. Website availability does not guarantee every host works.",
-            "Player > More > Audio & subtitles: available audio languages depend on the current source; subtitles, manual subtitle delay and Sync with audio are separate controls. Sync with audio analyses local dialogue timing; it does not translate or generate subtitles.",
-            "Player episodes supports season selection. Next episode depends on the Play next episode setting. Quality, audio, subtitles, volume and brightness remain individual playback preferences.",
-            "Watch Together is inside Player > More. Private invitations, independent provider streams, host/everyone permissions and room leave/end controls; no video URLs or credentials are shared.",
-            "Downloads have their own quality choice, audio/subtitle selection when available, and episode selection; saved downloads are separate from My List. Source tracks can vary by title.",
-            "Settings has inline Auto/Low preferred quality and a read-only Streaming sources list at the end; choosing a source is in the player.",
-            "Talk uses Gemini Live, the selected Aoede/Kore/Puck/Charon voice, Tavily research, persistent cards and native app_control actions. It can change the listed settings, manage title lists, open native features, start playback/download options and control the active player. Account verification, download options and destructive confirmations use their real native screens. Stop or leaving releases the microphone."
-        )))
+        .put("capabilities",JSONObject()
+            .put("discovery",JSONObject().put("tool","recommendations").put("descriptionsAndSimilarity","inside_chat").put("voiceChoices",3).put("chatDefaultChoices",12).put("chatMaximumChoices",24).put("mediaType","inferred_from_request").put("seriesStatus",JSONArray(listOf("returning","ended"))).put("filtersLocation","Discover beside All, Movies and Series").put("results","each_reply_owns_its_collection"))
+            .put("titleCards",JSONObject().put("tool","show_title_cards").put("identity","movie:id or tv:id").put("automaticForDiscussedTitles",true))
+            .put("downloads",JSONObject().put("tool","app_control").put("action","download").put("execution","background_preparation_then_media3_service")
+                .put("requiredForSeries",JSONArray(listOf("season","episode"))).put("quality",JSONArray(listOf("low","medium","high"))).put("subtitleLanguage","supported BCP-47 code or off")
+                .put("progressAction","download_work").put("cancelAction","cancel_download_work").put("verification","native source verification when required").put("queuedIsCompleted",false))
+            .put("voice",JSONObject().put("action","set_voice").put("choices",JSONArray(VOICES)).put("takesEffect","new_session_before_acknowledgement"))
+            .put("library",JSONArray(listOf("title_state","library_state","save","unsave","favorite","unfavorite","dislike","undo_dislike","batch_library","undo")))
+            .put("player",JSONArray(listOf("player_state","play","pause","resume","seek","audio_language","subtitle_language")))
+            .put("navigation",JSONArray(listOf("home","discover","ask","my_list","favorites","history","downloads","settings","account","talk_voices","talk_privacy","recent_chats","agent_tasks")))
+            .put("settings",JSONArray(listOf("play_next_episode","audio_boost","zoom","auto_subtitles","playback_speed","subtitle_size","subtitle_opacity","subtitle_delay_seconds","subtitle_vertical_offset","preferred_quality","subtitle_language","provider","recommendations_enabled")))
+            .put("agent",JSONObject().put("tool","agent_workspace").put("background",true).put("explicitMonitoringConsent",true).put("scope","Aliflix only")))
+        .put("navigation",JSONObject().put("ask","Discover > Ask > text conversation").put("library","My Space")
+            .put("provider","Player > More > Streaming source").put("audioSubtitles","Player > More > Audio & subtitles")
+            .put("watchTogether","Player > More > Watch Together").put("backgroundWork","Talk > Background work"))
+        .put("boundaries",JSONObject().put("syncWithAudio","Local subtitle timing; no translation or subtitle generation")
+            .put("myList","Saved intent, not evidence of watching").put("completedSeries","Read actual episode progress")
+            .put("providerAvailability","Verify the requested source and tracks; website availability alone is insufficient")
+            .put("undo","Last Talk library edit or validated batch, checked for intervening edits"))
         .put("settingValues",JSONObject().put("playback_speed",JSONArray(listOf(.5,.75,1.0,1.25,1.5,2.0))).put("preferred_quality",JSONArray(listOf("AUTO","LOW")))
             .put("providers",JSONArray(com.aliflix.app.model.MobilePlaybackProvider.entries.map{it.name})).put("subtitle_languages",JSONArray(com.aliflix.app.model.SubtitleLanguage.entries.map{it.code})))
         .put("instruction","These are real native capabilities and current state. For a user action request, USE app_control or show_title_cards. Use canonical id/type/year from conversation for the exact established edition. Read title_state instead of guessing library membership. undo restores only the last Talk library change. Only confirm completion from the action result. Open real native options or account verification when required. Questions about features do not authorize unrelated changes.")

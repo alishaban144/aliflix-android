@@ -7,6 +7,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkGroundingTest {
+    @Test fun naturalNarrationRetainsCanonicalChoicesWithoutForcingAListReadingTemplate(){
+        val cards=listOf(TalkTitleCard(14337,MediaType.MOVIE,"Primer","2004"),TalkTitleCard(148284,MediaType.MOVIE,"The Vast of Night","2019"),TalkTitleCard(329865,MediaType.MOVIE,"Arrival","2016"))
+        val text="Primer makes its impossible machine feel almost mundane, tucked into a cramped garage. For a warmer, more patient mystery, The Vast of Night lets voices and long moving shots do the work."
+        val args=JSONObject().put("picks",JSONArray().put(JSONObject().put("key","movie:14337")).put(JSONObject().put("key","movie:148284"))).put("narration",text)
+        assertEquals(text,talkPresentation(cards,args,2,natural=true).speechText)
+        assertTrue(runCatching{talkPresentation(cards,JSONObject(args.toString()).put("narration",text+" Also try Arrival."),2,natural=true)}.isFailure)
+    }
     @Test fun dominantFeatureAndNumericTitlesResolveWithoutAddingAnUnrequestedEdition() {
         fun row(id:Int,title:String,year:Int,votes:Int)=com.aliflix.app.recommendation.V3CatalogMedia.fromJson(JSONObject()
             .put("tmdbId",id).put("mediaType","movie").put("title",title).put("releaseDate","$year-01-01").put("tmdbVoteCount",votes))
@@ -58,9 +65,6 @@ class TalkGroundingTest {
         assertTrue(talkContinuityTurns(emptyList(),true,context).toString().contains("300668"))
     }
     @Test fun aPartialTitleMatchOrWrongSpokenSelectionNeverPassesDelivery() {
-        val bridge=talkResearchBridge("movies about gentlemen","en")
-        assertTrue(talkIsApprovedBridge(bridge,bridge))
-        assertFalse(talkIsApprovedBridge("$bridge Try Arrival, Moon and Gattaca.",bridge))
         val script="Annihilation (2018): An uncanny journey into change. Arrival (2016): Language reshapes a life. Moon (2009): Isolation and fractured identity."
         assertTrue(talkSpeechMatchesScript(script.replace(":",", "),script))
         assertFalse(talkSpeechMatchesScript("$script Try Interstellar too.",script))

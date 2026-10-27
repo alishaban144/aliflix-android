@@ -63,18 +63,20 @@ internal fun estimatedDownloadQuality(quality: DownloadQuality, tracks: List<Dow
 }
 
 internal suspend fun prepareDownload(activity: ComponentActivity, host: FrameLayout, selection: PlaybackSelection,
-    language: String, onUpdate: (DownloadDiscovery) -> Unit = {}, requiredAudio: String = "Default"): PreparedDownload {
+    language: String, onUpdate: (DownloadDiscovery) -> Unit = {}, requiredAudio: String = "Default", allowVerification:Boolean=true): PreparedDownload {
     val progress = (activity.application as AliflixApplication).playbackProgressStore
     val prefs = PlaybackProviderRepository(activity).preferences.value
     val providers = downloadProviderOrder(selection)
+    var requiredVerification:SerienstreamVerificationRequired?=null
     suspend fun attempt(provider: PlaybackProvider): PreparedDownload {
         val candidate = selection.copy(source = if (provider == selection.source.identity) selection.source else prefs.sourceFor(selection.media, provider))
         var server = ""
         val request = try { NativeStreamResolver(activity, progress, host).use {
-            it.resolve(candidate, 0, emptySet(), onServer = { name -> server = name })
+            it.resolve(candidate, 0, emptySet(), allowVerification=allowVerification, onServer = { name -> server = name })
         } } catch (verification: SerienstreamVerificationRequired) {
             val session = DownloadSession.get(activity)
             session.verifications[session.key(candidate, language)] = candidate to verification
+            requiredVerification=verification
             throw verification
         }
         if (provider == MobilePlaybackProvider.SERIENSTREAM) DownloadSession.get(activity).let { it.verifications.remove(it.key(candidate, language)) }
@@ -90,7 +92,7 @@ internal suspend fun prepareDownload(activity: ComponentActivity, host: FrameLay
         val preferred=withTimeout(60_000) { attempt(primary) }
         onUpdate(DownloadDiscovery(preferred.qualities.map { DownloadOption(it,preferred) },true))
         return preferred
-    } catch (gate:SerienstreamVerificationRequired) { throw gate }
+    } catch (gate:SerienstreamVerificationRequired) { if(allowVerification)throw gate }
     catch (cancelled:CancellationException) {
         currentCoroutineContext().ensureActive()
         if (!mayAutomaticallyLeaveSource(primary, cancelled)) throw IllegalStateException("Source unavailable · Retry", cancelled)
@@ -99,7 +101,8 @@ internal suspend fun prepareDownload(activity: ComponentActivity, host: FrameLay
         currentCoroutineContext().ensureActive()
         if (!mayAutomaticallyLeaveSource(primary, error)) throw error
     }
-    return discoverDownloadOptions(providers.drop(1), ::attempt, onUpdate).prepared()
+    return try{discoverDownloadOptions(providers.drop(1), ::attempt, onUpdate).prepared()}
+    catch(error:IllegalStateException){throw (requiredVerification?:error)}
 }
 
 internal suspend fun prepareDownloadBatch(activity: ComponentActivity, host: FrameLayout,

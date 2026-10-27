@@ -1,4 +1,6 @@
 import { AskResearch, askRoute } from './askResearch';
+import { agentRoute } from './talkAgent';
+export { TalkAgent } from './talkAgent';
 export { AskResearch };
 import { talkRoute } from './talk';
 export { TalkSession } from './talk';
@@ -241,6 +243,8 @@ async function routeRecommendation(request: Request, env: RecommendationEnv): Pr
 export default {
   async fetch(request: Request, env: RecommendationEnv, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const agent = await agentRoute(request, env);
+    if(agent)return agent;
     const ask = await askRoute(request, env, ctx);
     if (ask) return ask;
     const talk = await talkRoute(request, env);

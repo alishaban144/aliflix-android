@@ -28,6 +28,7 @@ fun AskAliflixScreen(
     onEdit: () -> Unit,
     onOpenMedia: (Media) -> Unit,
     suggestions: List<Media> = emptyList(),
+    personalizedPicks: List<Media> = emptyList(),
     suggestionsLoading: Boolean = false,
     suggestionsError: String? = null,
     onRetrySuggestions: () -> Unit = {},
@@ -46,7 +47,7 @@ fun AskAliflixScreen(
     if (!com.aliflix.app.BuildConfig.IS_TV) {
         UnifiedAskAliflix(uiState, editorState, onEditorStateChanged, onSubmitRequest, onReset, onBack,
             onOpenMedia, suggestions, suggestionsLoading, onRetry, onSearchCompanies, listState,
-            myListKeys, onToggleMyList, modifier, onRefine=onRefineRequest)
+            myListKeys, onToggleMyList, modifier, onRefine=onRefineRequest, personalizedPicks=personalizedPicks,onLoadMore=onLoadMore)
         return
     }
     val tracker = remember { DiscoverTouchTracker() }

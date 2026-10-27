@@ -7,6 +7,7 @@ import kotlinx.coroutines.yield
 class MobileAliflixApplication : AliflixApplication() {
     override fun onCreate() {
         super.onCreate()
+        com.aliflix.app.talk.TalkDownloadWork.get(this)
         accountScope.launch {
             yield()
             accountServices

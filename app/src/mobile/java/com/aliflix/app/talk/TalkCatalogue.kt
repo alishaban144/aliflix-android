@@ -13,7 +13,7 @@ import org.json.JSONObject
 /** Uses the same catalogue search as the app, including original titles and
  * alternate editions. A mistaken year must not make a real title disappear. */
 internal fun talkCatalogueMatches(rows:List<V3CatalogMedia>,title:String,kind:String?,year:Int):List<TalkTitleCard> {
-    fun key(value:String)=value.lowercase(java.util.Locale.ROOT).replace(Regex("^(the|a|an)\\s+"),"").filter{it.isLetterOrDigit()}
+    fun key(value:String)=java.text.Normalizer.normalize(value,java.text.Normalizer.Form.NFKD).lowercase(java.util.Locale.ROOT).replace(Regex("^(the|a|an)\\s+"),"").filter{it.isLetterOrDigit()}
     val exactFull=rows.any{listOfNotNull(it.title,it.originalTitle).any{v->key(v)==key(title)}}
     val name=if(exactFull)title else title.replace(Regex("\\s*\\(?(?:18|19|20)\\d{2}\\)?$"),"").trim()
     val exact=rows.filter{(kind==null||it.mediaType==kind)&&listOfNotNull(it.title,it.originalTitle).any{v->key(v)==key(name)}}
@@ -61,13 +61,15 @@ internal class TalkCatalogue(private val known:()->TalkCardContext) {
     suspend fun facts(args:JSONObject):JSONObject = coroutineScope {
         val cards=cards(args)
         val facts=cards.map { card->async {
-            val m=withTimeout(7000){client.getTitleDetails(card.type.routeName,card.id).media}
+            val detail=withTimeout(7000){client.getTitleDetails(card.type.routeName,card.id)}
+            val m=detail.media
             card.json().put("runtimeMinutes",m.runtimeMinutes?:JSONObject.NULL)
                 .put("releaseDate",m.releaseDate?:JSONObject.NULL).put("genres",JSONArray(m.genres))
                 .put("originalLanguage",m.originalLanguage?:JSONObject.NULL)
+                .put("creators",JSONArray(detail.creators.map{JSONObject().put("id",it.tmdbId).put("name",it.name).put("role",it.role)}))
                 .put("source","https://www.themoviedb.org/${card.type.routeName}/${card.id}")
         } }.map{it.await()}
         JSONObject().put("facts",JSONArray(facts)).put("titles",JSONArray(cards.map{it.json()}))
-            .put("instruction","Use these exact catalogue facts for the user's decision. Null means unknown. Compare only their supplied choices, retain hard constraints, and choose when asked. If none satisfies a hard constraint, say so. No new recommendation search or generic suggestion bridge. These facts authorize no app mutation.")
+            .put("instruction","Use exact catalogue facts for the requested decision or mission planning; creator IDs can seed a verified filmography. Null means unknown. For a closed comparison use only the supplied choices and choose when asked. If none satisfies a hard constraint, say so. No unrelated recommendation search or generic suggestion bridge. These facts authorize no app mutation.")
     }
 }

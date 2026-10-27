@@ -43,8 +43,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "271"
-  RELEASE_VERSION_NAME: "3.1.181"
+  RELEASE_VERSION_CODE: "274"
+  RELEASE_VERSION_NAME: "3.1.184"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -361,7 +361,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Talk understands choosing between your options, checks exact title facts and explains concrete technical limits. Interruption yields promptly, finished chat replies stop showing Writing, and comparison cards retain their exact editions. New orbital dotted lettering settles into a pearl shine. Discover For you rotates hourly with a daily mix. My Space metadata pills are centered and compact."
+          RELEASE_NOTES="One Ask conversation for descriptions, similar titles and larger collections. Discover filters, compact cards, a readable context-aware orb, Twin Orbit Thinking, compact sources, contextual lookup speech, preserved research across reconnects, and verified Pixel speech processing."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -404,21 +404,13 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Talk distinguishes choosing between your films from asking for new recommendations. It compares your actual options, checks native catalogue facts such as runtime when needed, preserves exact editions and both comparison cards, and recalls earlier pairs within the session.
+            Ask opens one conversation for descriptions, similarity requests and larger collections. Chat supports twelve results by default, up to twenty-four on request, with separate result collections for each reply. Voice keeps its three-card selection. Filters now live in Discover beside All, Movies and Series.
 
-            Technical-limit questions receive concrete app, network and capability answers. Quoted, hypothetical and negated commands do not mutate the library. Native changes report whether anything actually changed, and undo cannot accidentally target an older no-op request.
+            Compact title cards retain a readable orb with contextual card attention. Twin Orbit Thinking and compact source icons simplify the conversation. Filters scroll within a fixed sheet; sorting appears after results load. Supported refinements preserve verified results and earlier messages. Account ownership, background downloads, restored transfer state and update cancellation receive correctness fixes. Platform echo cancellation and noise suppression are restored and checked on Pixel.
 
-            Spoken interruption flushes pending playback even after a recommendation has been committed. Stop yields locally, late acknowledgements cannot swallow the next question, and a completed chat response stops displaying Writing while delayed playback bookkeeping finishes.
+            [Full change list and validation](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/releases/mobile-3.1.184.md)
 
-            Speech input now retains the whole utterance when transcription arrives late. Old turn completion cannot resume old narration while you speak, and native actions wait for the complete request. A shared session-start cap that could disable Talk after modest use is corrected, with a clear message if daily capacity is reached.
-
-            Dotted topic letters enter on brief individual orbits, settle on a fixed baseline and carry a reversing lavender-pearl shine. The old wave is removed; the orb and changing topics remain. Cached glyph images keep animation drawing light.
-
-            Discover For you rotates its existing pool hourly and remixes daily without extra AI research. My Space metadata uses centered single-line rating/runtime pills and a separate type badge. Ask and Similar retain the Tavily/Gemini/TMDB pipeline and immediate in-card dislike.
-
-            ARM64 mobile APK and universal compatibility bridge preserve the production signer and native/model assets. TV is unchanged. See the validation record for physical-device checks and signer boundaries.
-
-            [Research and validation](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-181-validation.md).
+            Mobile 3.1.184 / 274. ARM64 APK and legacy compatibility bridge retain the production signer. TV remains 3.1.69 / 159.
           files: |
             aliflix-mobile.apk
             update-mobile.json

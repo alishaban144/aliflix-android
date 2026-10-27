@@ -19,8 +19,10 @@ internal fun PlaybackSelection.nativeJson(): String = JSONObject().apply {
 
 internal fun nativeSelection(raw: String): PlaybackSelection = JSONObject(raw).let { json ->
     val episodes = json.optJSONArray("episodes") ?: JSONArray()
-    PlaybackSelection(Media.fromJson(json.getJSONObject("media")),
-        seasonNumber = json.optInt("season", 1), episodeNumber = json.optInt("episode", 1),
+    val media=Media.fromJson(json.getJSONObject("media"))
+    PlaybackSelection(media,
+        seasonNumber = if(media.type==MediaType.TV)json.optInt("season",1) else null,
+        episodeNumber = if(media.type==MediaType.TV)json.optInt("episode",1) else null,
         episodeTitle = json.optString("episodeTitle").takeIf { it.isNotBlank() && it != "null" },
         availableEpisodes = (0 until episodes.length()).map { index -> episodes.getJSONObject(index).let {
             Episode(it.getInt("season"), it.getInt("number"), it.getString("title"),

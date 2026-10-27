@@ -1,5 +1,5 @@
 
-@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class,androidx.compose.material3.ExperimentalMaterial3Api::class)
 
 package com.aliflix.app.ui.discover
 
@@ -58,6 +58,14 @@ import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.FilterChip
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -86,6 +94,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
@@ -110,6 +119,7 @@ import com.aliflix.app.ui.theme.AliflixContentSecondary
 import com.aliflix.app.ui.theme.AliflixContentTertiary
 import com.aliflix.app.ui.theme.AliflixError
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 internal fun DiscoverScreen(
@@ -121,6 +131,7 @@ internal fun DiscoverScreen(
     onAccount: () -> Unit = {},
     homeContent: HomeContent?,
     recent: List<Media>,
+    personalizedPicks: List<Media> = emptyList(),
     focusRequestId: Int?,
     onFocusRequestConsumed: (Int) -> Unit,
     askOpenRequestId: Int? = null,
@@ -189,6 +200,36 @@ internal fun DiscoverScreen(
         )
     }
     var recommendModeActive by rememberSaveable { mutableStateOf(false) }
+    var filtersOpen by remember { mutableStateOf(false) }
+    var appliedFilters by (catalogueStore?.appliedFilterState?:remember { mutableStateOf<com.aliflix.app.recommendation.CatalogDiscoverySpec?>(null) })
+    var filterDraft by remember { mutableStateOf(com.aliflix.app.recommendation.CatalogDiscoverySpec(com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE)) }
+    fun editFilters(){
+        filterDraft=(appliedFilters?:com.aliflix.app.recommendation.CatalogDiscoverySpec(com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE)).copy(mediaKind=if(mediaFilter=="Series"||appliedFilters?.requiredStatus!=null)com.aliflix.app.recommendation.RecommendationMediaKind.SERIES else com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE)
+        filtersOpen=true
+    }
+    if(filtersOpen&&!com.aliflix.app.BuildConfig.IS_TV) {
+        @OptIn(ExperimentalMaterial3Api::class)
+        val filterSheet=androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded=true)
+        val filterSheetScope=androidx.compose.runtime.rememberCoroutineScope()
+        fun closeFilters(){filterSheetScope.launch{filterSheet.hide();filtersOpen=false}}
+        ModalBottomSheet(onDismissRequest={filtersOpen=false},sheetState=filterSheet,sheetGesturesEnabled=false,dragHandle=null,containerColor=com.aliflix.app.ui.theme.AliflixBackgroundBase) {
+            Column(Modifier.fillMaxWidth().fillMaxHeight(.92f).navigationBarsPadding()) {
+                Row(Modifier.fillMaxWidth().padding(horizontal=12.dp),horizontalArrangement=Arrangement.End) {
+                    AliflixIconButton(onClick=::closeFilters){Icon(Icons.Rounded.Close,"Close filters")}
+                }
+                AskAliflixFilters(filterDraft,{filterDraft=it},{
+                    appliedFilters=filterDraft.takeIf{selectedFilterCount(it)>0||it.sortBy!=com.aliflix.app.recommendation.RecommendationSort.MOST_POPULAR}
+                    closeFilters()
+                } ,loading=false,onSearchCompanies=onSearchCompanies,modifier=Modifier.weight(1f),submitLabel="Apply",headerContent={
+                if(mediaFilter=="Series"||filterDraft.requiredStatus!=null)Row(Modifier.padding(horizontal=20.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    listOf("All" to null,"Running" to "Returning Series","Ended" to "Ended").forEach { (label,status) ->
+                        FilterChip(selected=filterDraft.requiredStatus==status,onClick={filterDraft=filterDraft.copy(requiredStatus=status)},label={Text(label)})
+                    }
+                }
+                })
+            }
+        }
+    }
     var preservedCatalogBottomPadding by remember { mutableStateOf(catalogBottomPadding) }
 
     LaunchedEffect(catalogBottomPadding) {
@@ -223,8 +264,8 @@ internal fun DiscoverScreen(
     LaunchedEffect(askOpenRequestId, aiEnabled) {
         if (askOpenRequestId != null) {
             if (aiEnabled) {
-                recommendModeActive = true
-                onModeChange(SearchMode.AI)
+                if(com.aliflix.app.BuildConfig.IS_TV){recommendModeActive = true;onModeChange(SearchMode.AI)}
+                else openAskConversation(context)
             }
             onAskOpenRequestConsumed(askOpenRequestId)
         }
@@ -316,6 +357,7 @@ internal fun DiscoverScreen(
                     onEdit = onEditAskAliflix,
                     onOpenMedia = onOpen,
                     suggestions = similarSuggestions,
+                    personalizedPicks = personalizedPicks,
                     suggestionsLoading = similarSuggestionsLoading,
                     suggestionsError = similarSuggestionsError,
                     onRetrySuggestions = { similarSuggestionsRetry += 1 },
@@ -431,12 +473,12 @@ internal fun DiscoverScreen(
                         }
 
                         if (aiEnabled && fieldValue.text.isBlank()) DiscoverAskCard(touchTracker) { mode ->
-                            onSetAskEditorState(askEditorState.copy(mode = mode))
-                            recommendModeActive = true
-                            onModeChange(SearchMode.AI)
+                            if(com.aliflix.app.BuildConfig.IS_TV){
+                                onSetAskEditorState(askEditorState.copy(mode = mode));recommendModeActive=true;onModeChange(SearchMode.AI)
+                            }else openAskConversation(context)
                         }
 
-                        if (fieldValue.text.isBlank() && recentSearches.isNotEmpty()) {
+                        if (fieldValue.text.isBlank() && appliedFilters==null && recentSearches.isNotEmpty()) {
                             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text("Recent searches", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                                 AliflixIconButton(onClick = { confirmClear = true }) { Icon(Icons.Rounded.DeleteOutline, "Delete search history") }
@@ -450,12 +492,21 @@ internal fun DiscoverScreen(
                         }
                         CatalogueTypeSelector(
                             selected = mediaFilter,
-                            onSelect = onMediaFilterChange,
+                            onSelect = { selected ->
+                                if(selected=="Movies")appliedFilters?.takeIf{it.requiredStatus!=null}?.let { previous ->
+                                    appliedFilters=previous.copy(requiredStatus=null).takeIf{selectedFilterCount(it)>0||it.sortBy!=com.aliflix.app.recommendation.RecommendationSort.MOST_POPULAR}
+                                }
+                                onMediaFilterChange(selected)
+                            },
+                            onFilters = if(com.aliflix.app.BuildConfig.IS_TV)null else ::editFilters,
+                            filterCount = appliedFilters?.let{selectedFilterCount(it)}?:0,
                             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp)
                         )
 
                     } }
-                    if (catalogueStore != null) DiscoverCatalogueContent(
+                    if(catalogueStore!=null&&appliedFilters!=null&&!com.aliflix.app.BuildConfig.IS_TV)DiscoverFilteredCatalogue(
+                        catalogueStore.filters,appliedFilters!!,mediaFilter,fieldValue.text.trim(),onOpen,catalogueHeader,Modifier.fillMaxSize(),onSortChanged={sort->appliedFilters=appliedFilters?.copy(sortBy=sort)}
+                    ) else if (catalogueStore != null) DiscoverCatalogueContent(
                         store = catalogueStore, query = fieldValue.text.trim(), filter = mediaFilter,
                         onOpen = { if (fieldValue.text.isNotBlank()) { shelves.record("search", it); recentSearches = shelves.read("search") }; onOpen(it) },
                         onPerson = onPerson, onCategory = onCategory,
@@ -471,6 +522,8 @@ internal fun DiscoverScreen(
 private fun CatalogueTypeSelector(
     selected: String,
     onSelect: (String) -> Unit,
+    onFilters:(()->Unit)?=null,
+    filterCount:Int=0,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -487,9 +540,9 @@ private fun CatalogueTypeSelector(
             val interactionSource = remember { MutableInteractionSource() }
             AliflixChip(
                 selected = active,
-                contentPadding = PaddingValues(horizontal = 15.dp),
+                contentPadding = PaddingValues(horizontal = if(onFilters==null)15.dp else 8.dp),
                 modifier = Modifier
-                    .height(48.dp)
+                    .then(if(onFilters!=null)Modifier.weight(1f)else Modifier).height(48.dp)
 
                     .aliflixPressScale(interactionSource)
                     .selectable(
@@ -508,6 +561,12 @@ private fun CatalogueTypeSelector(
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                 )
+            }
+        }
+        if(onFilters!=null)AliflixChip(selected=filterCount>0,contentPadding=PaddingValues(horizontal=7.dp),modifier=Modifier.weight(1.25f).height(48.dp).clickable(onClick=onFilters).semantics{role=Role.Button;stateDescription=if(filterCount>0)"$filterCount active filters" else "No filters selected"}.testTag("discover-filters")) {
+            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)) {
+                Icon(Icons.Rounded.Tune,null,Modifier.size(16.dp),tint=AliflixAccentSecondary)
+                Text("Filters",fontSize=12.sp,maxLines=1,color=AliflixContentPrimary)
             }
         }
     }

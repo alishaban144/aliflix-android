@@ -39,7 +39,7 @@ internal fun DiscoverAskCard(touchTracker: DiscoverTouchTracker = remember { Dis
     } else 0f
     AliflixSurface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Small)
-            .then(if(!com.aliflix.app.BuildConfig.IS_TV)Modifier.clickable { onMode(0) } else Modifier),
+            .then(if(!com.aliflix.app.BuildConfig.IS_TV)Modifier.clickable { openAskConversation(context) } else Modifier),
         shape = AliflixCorners.Panel,
         level = AliflixSurfaceLevel.Content,
     ) {
@@ -90,7 +90,7 @@ internal fun DiscoverAskCard(touchTracker: DiscoverTouchTracker = remember { Dis
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 (if(com.aliflix.app.BuildConfig.IS_TV)listOf("Describe", "Find similar")else listOf("Ask", "Talk")).forEachIndexed { index, label ->
                     Button(
-                        onClick = { if(!com.aliflix.app.BuildConfig.IS_TV&&index==1)context.startActivity(android.content.Intent().setClassName(context,"com.aliflix.app.talk.TalkVoiceActivity")) else onMode(index) },
+                        onClick = { if(!com.aliflix.app.BuildConfig.IS_TV&&index==1)context.startActivity(android.content.Intent().setClassName(context,"com.aliflix.app.talk.TalkVoiceActivity")) else if(!com.aliflix.app.BuildConfig.IS_TV)openAskConversation(context)else onMode(index) },
                         modifier = Modifier.weight(1f).height(48.dp),
                         shape = AliflixCorners.Small,
                         contentPadding = PaddingValues(horizontal = 9.dp),

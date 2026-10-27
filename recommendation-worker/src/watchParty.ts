@@ -83,8 +83,8 @@ export async function watchPartyRoute(request:Request, env:RecommendationEnv):Pr
     const rate=await env.RECOMMENDATION_RATE_LIMITER.limit({key:'party:'+ (request.headers.get('cf-connecting-ip')||'unknown')});
     if(!rate.success)return json({error:'RATE_LIMITED'},429);
     if(url.pathname==='/v1/party/identity'&&request.method==='POST') {
-      const input=z.object({idToken:z.string().max(8192).optional()}).strict().parse(await body(request));
-      const identity:Identity={sub:input.idToken?await accountIdentity(input.idToken):'guest:'+crypto.randomUUID(),kind:input.idToken?'account':'guest',exp:Date.now()+24*HOUR};
+      const input=z.object({idToken:z.string().max(8192).optional(),guestKey:z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional()}).strict().refine(v=>!v.idToken||!v.guestKey).parse(await body(request));
+      const identity:Identity={sub:input.idToken?await accountIdentity(input.idToken):'guest:'+(input.guestKey?await hash('ask-guest-v1.'+input.guestKey):crypto.randomUUID()),kind:input.idToken?'account':'guest',exp:Date.now()+24*HOUR};
       return json({token:await issueIdentity(identity,env.CURSOR_SIGNING_SECRET),expires:identity.exp});
     }
     const identity=await verifyIdentity(request.headers.get('authorization')?.replace(/^Bearer /,'')||'',env.CURSOR_SIGNING_SECRET);

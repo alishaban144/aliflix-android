@@ -4,6 +4,15 @@ import {TalkContextSchema} from '../src/talkEvidence';
 import {env} from 'cloudflare:test';
 afterEach(()=>vi.restoreAllMocks());
 describe('Live bounded provisioning',()=>{
+ it('returns manual activity metadata while keeping its actual config locked in the token',async()=>{
+  const spy=vi.spyOn(globalThis,'fetch').mockResolvedValue(Response.json({name:'auth_tokens/test-manual-activity'}));
+  const token=await issueLiveToken({...env,GEMINI_API_KEY:'test',CURSOR_SIGNING_SECRET:'test'},TalkContextSchema.parse({companionVersion:9}),Date.now()+60000);
+  const mint=JSON.parse(String(spy.mock.calls[0][1]?.body));
+  expect(mint.bidiGenerateContentSetup.realtimeInputConfig.automaticActivityDetection).toEqual({disabled:true});
+  expect(mint.fieldMask.split(',')).toContain('realtimeInputConfig');
+  expect(token.inputActivity).toBe('manual');
+  expect(token.setup).not.toHaveProperty('systemInstruction');
+ });
  it('exposes real card control only to capable clients and welcomes general conversation',()=>{
   const context=TalkContextSchema.parse({companionVersion:4,recentProgress:[]});
   expect(liveSetup(context).tools[0].functionDeclarations.map(t=>t.name)).toContain('show_title_cards');

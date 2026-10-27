@@ -23,29 +23,47 @@ import kotlin.coroutines.resumeWithException
 
 /** Mobile research uses the existing authenticated guest/account identity.
  * No provider credentials or movie prose are shipped to the device. */
-class AskResearchClient(context:Context) {
-    private val prefs=context.applicationContext.getSharedPreferences("aliflix-ask-identity",Context.MODE_PRIVATE)
-    private val http=OkHttpClient.Builder().connectTimeout(8,TimeUnit.SECONDS).readTimeout(40,TimeUnit.SECONDS).callTimeout(45,TimeUnit.SECONDS).build()
-    private val base=BuildConfig.RECOMMENDATION_AI_BASE_URL.trimEnd('/')
-    private val identityLock=kotlinx.coroutines.sync.Mutex()
-    private suspend fun identity():String {
+class AskResearchClient internal constructor(private val context:Context,private val http:OkHttpClient,
+    private val base:String,private val accountState:()->AskAccountTicket,preferencesName:String,
+    private val currentUser:()->com.google.firebase.auth.FirebaseUser?={FirebaseAuth.getInstance().currentUser}) {
+    constructor(context:Context):this(context,OkHttpClient.Builder().connectTimeout(8,TimeUnit.SECONDS).readTimeout(40,TimeUnit.SECONDS).callTimeout(45,TimeUnit.SECONDS).build(),
+        BuildConfig.RECOMMENDATION_AI_BASE_URL.trimEnd('/'),AskAccountScope(context)::current,"aliflix-ask-identity")
+    private val prefs=context.applicationContext.getSharedPreferences(preferencesName,Context.MODE_PRIVATE)
+    private fun currentAccount()=accountState()
+    fun accountTicket():AskAccountTicket=currentAccount().also{
+        if(!it.aligned)throw RecommendationAiClientException("ACCOUNT_SYNC_PENDING",true,"Account is still switching. Try again.")
+    }
+    private fun checkAccount(ticket:AskAccountTicket){ticket.requireCurrent(currentAccount())}
+    private suspend fun identity(ticket:AskAccountTicket):String {
         identityLock.lock()
         try {
-            val user=FirebaseAuth.getInstance().currentUser
+            checkAccount(ticket)
+            val user=currentUser()
             val owner=user?.uid?:"guest"
-            if(prefs.getString("owner",null)==owner&&prefs.getLong("expires",0)>System.currentTimeMillis()+60000)
-                return prefs.getString("token","").orEmpty()
-            val body=JSONObject();user?.getIdToken(false)?.await()?.token?.let{body.put("idToken",it)}
+            if(prefs.getString("owner",null)==owner&&(owner!="guest"||prefs.getBoolean("persistentGuest",false))&&prefs.getLong("expires",0)>System.currentTimeMillis()+60000)
+                prefs.getString("token",null)?.takeIf{it.isNotBlank()}?.let{return it}
+            val body=JSONObject()
+            if(user!=null)body.put("idToken",requireNotNull(user.getIdToken(false).await().token))
+            else {
+                // Keep this credential outside the expiring token preferences:
+                // a 401 clears tokens, not ownership of persistent guest work.
+                val installation=context.applicationContext.getSharedPreferences("aliflix-ask-installation",Context.MODE_PRIVATE)
+                val guestKey=installation.getString("guestKey",null)?:android.util.Base64.encodeToString(ByteArray(32).also{java.security.SecureRandom().nextBytes(it)},android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP).also{installation.edit().putString("guestKey",it).commit()}
+                body.put("guestKey",guestKey)
+            }
             val json=execute(Request.Builder().url("$base/v1/party/identity").post(body.toString().toRequestBody(JSON)).build())
-            prefs.edit().putString("owner",owner).putString("token",json.getString("token")).putLong("expires",json.getLong("expires")).apply()
+            checkAccount(ticket)
+            synchronized(identityCache){prefs.edit().putString("owner",owner).putString("token",json.getString("token")).putLong("expires",json.getLong("expires")).putBoolean("persistentGuest",owner=="guest").apply()}
             return json.getString("token")
         } finally {identityLock.unlock()}
     }
-    suspend fun request(path:String,body:JSONObject?=null):JSONObject {
-        val token=identity()
+    suspend fun request(path:String,body:JSONObject?=null,account:AskAccountTicket=accountTicket()):JSONObject {
+        checkAccount(account)
+        val token=identity(account)
+        checkAccount(account)
         val request=Request.Builder().url("$base/v4/ask/$path").header("Authorization","Bearer $token")
             .apply{if(body!=null)post(body.toString().toRequestBody(JSON))}.build()
-        return try{execute(request,if(path=="recommendations")40000 else 15000)}catch(e:kotlinx.coroutines.CancellationException){
+        return try{execute(request,if(path=="recommendations")40000 else 15000).also{checkAccount(account)}}catch(e:kotlinx.coroutines.CancellationException){
             body?.optString("requestId")?.takeIf{it.isNotBlank()}?.let { id ->
                 http.newCall(Request.Builder().url("$base/v4/ask/cancel").header("Authorization","Bearer $token")
                     .post(JSONObject().put("requestId",id).toString().toRequestBody(JSON)).build()).enqueue(object:Callback{
@@ -55,22 +73,25 @@ class AskResearchClient(context:Context) {
             };throw e
         }
     }
-    fun recommendations(body:JSONObject):Flow<JSONObject> = callbackFlow {
-        val token=identity()
+    fun recommendations(body:JSONObject,account:AskAccountTicket=accountTicket()):Flow<JSONObject> = callbackFlow {
+        checkAccount(account)
+        val token=identity(account)
+        checkAccount(account)
         val parser=AskResearchStream(body.getString("requestId"))
         val request=Request.Builder().url("$base/v4/ask/recommendations?stream=1")
             .header("Authorization","Bearer $token").post(body.toString().toRequestBody(JSON)).build()
         val call=http.newCall(request)
         fun failed(error:Throwable){
             if(!call.isCanceled()){
-                parser.retained()?.let{trySend(it);close()}?:close(error)
+                if(error is kotlinx.coroutines.CancellationException)close(error)
+                else parser.retained()?.let{trySend(it);close()}?:close(error)
             }
         }
         call.enqueue(object:Callback {
             override fun onFailure(call:Call,e:IOException){failed(e)}
             override fun onResponse(call:Call,response:Response){response.use {
                 try {
-                    if(it.code==401)prefs.edit().clear().apply()
+                    if(it.code==401)invalidateIdentity(it.request.header("Authorization"))
                     if(!it.isSuccessful){
                         val source=requireNotNull(it.body).source();source.request(24001)
                         require(source.buffer.size<=24000)
@@ -81,6 +102,7 @@ class AskResearchClient(context:Context) {
                     val source=requireNotNull(it.body).source()
                     while(!call.isCanceled()&&!source.exhausted()){
                         val event=JSONObject(source.readUtf8LineStrict(256000))
+                        checkAccount(account)
                         parser.accept(event)?.let{value->trySend(value)}
                         if(parser.finished)break
                     }
@@ -106,12 +128,16 @@ class AskResearchClient(context:Context) {
                 try {
                     val source=requireNotNull(it.body).source();source.request(256001);require(source.buffer.size<=256000)
                     val json=JSONObject(source.buffer.readUtf8())
-                    if(it.code==401)prefs.edit().clear().apply()
+                    if(it.code==401)invalidateIdentity(it.request.header("Authorization"))
                     if(!it.isSuccessful){val e=json.optJSONObject("error");throw RecommendationAiClientException(e?.optString("code")?:"RESEARCH_UNAVAILABLE",it.code==429||it.code>=500,e?.optString("message")?:"Research unavailable")}
                     if(c.isActive)c.resume(json)
                 }catch(e:Throwable){if(c.isActive)c.resumeWithException(e)}
             }}
         })
     }}
-    private companion object {val JSON="application/json; charset=utf-8".toMediaType()}
+    private fun invalidateIdentity(authorization:String?)=synchronized(identityCache){
+        val token=prefs.getString("token",null)
+        if(token!=null&&authorization=="Bearer $token")prefs.edit().remove("token").remove("expires").apply()
+    }
+    private companion object {val identityLock=kotlinx.coroutines.sync.Mutex();val identityCache=Any();val JSON="application/json; charset=utf-8".toMediaType()}
 }

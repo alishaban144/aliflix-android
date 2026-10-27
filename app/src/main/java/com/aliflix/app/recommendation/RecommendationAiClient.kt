@@ -31,11 +31,12 @@ class RecommendationAiClient(
 ) {
     private val detailsLocks = Array(32) { kotlinx.coroutines.sync.Mutex() }
     suspend fun getRecommendations(request: V3RecommendationRequest, onPartial: (suspend (V3RecommendationResponse) -> Unit)? = null): V3RecommendationResponse = withContext(ioDispatcher) {
-        if (!com.aliflix.app.BuildConfig.IS_TV && research != null) {
+        if (!com.aliflix.app.BuildConfig.IS_TV && research != null && (request.mode != "filters" || request.query.isNotBlank())) {
+            val account=research.accountTicket()
             val body=request.toJson().put("aiModel", "gemini-3.8-flash").put("geminiModel", "gemini-3.8-flash").put("library", researchLibrary())
-            if(onPartial==null)return@withContext V3RecommendationResponse.fromJson(research.request("recommendations",body))
+            if(onPartial==null)return@withContext V3RecommendationResponse.fromJson(research.request("recommendations",body,account))
             var latest:V3RecommendationResponse?=null
-            research.recommendations(body).collect{event->
+            research.recommendations(body,account).collect{event->
                 val value=V3RecommendationResponse.fromJson(event)
                 latest=value
                 if(value.results.isNotEmpty())onPartial(value)

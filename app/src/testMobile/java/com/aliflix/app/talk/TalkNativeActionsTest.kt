@@ -22,6 +22,12 @@ class TalkNativeActionsTest {
   return TalkNativeActions(RuntimeEnvironment.getApplication(),TalkCatalogue{cards}){cards=cards.show(it)}
  }
  private fun row(id:Int,title:String,type:String,year:String,original:String=title)=V3CatalogMedia.fromJson(JSONObject().put("tmdbId",id).put("title",title).put("originalTitle",original).put("mediaType",type).put("releaseDate","$year-01-01"))
+ @Test fun spokenUnaccentedTitlesResolveTheirActualAccentedCatalogueIdentity() {
+  val film=row(1600,"The Double Life of V\u00e9ronique","movie","1991","La Double Vie de V\u00e9ronique")
+  assertEquals(listOf(1600),talkCatalogueMatches(listOf(film),"The Double Life of Veronique","movie",1991).map{it.id})
+  assertEquals(listOf(1600),talkCatalogueMatches(listOf(film),"La Double Vie de Veronique","movie",1991).map{it.id})
+  assertTrue(talkCatalogueMatches(listOf(film),"Veronica","movie",1991).isEmpty())
+ }
  @Test fun mistakenYearsAndOriginalTitlesStillDisplayRealMatchingEditions() {
   val rows=listOf(row(34415,"The Killing","tv","2011"),row(32368,"The Killing","tv","2007","Forbrydelsen"),row(247,"The Killing","movie","1956"))
   assertEquals(listOf(34415,32368),talkCatalogueMatches(rows,"The Killing (2017)","tv",2017).map{it.id})
@@ -77,5 +83,26 @@ class TalkNativeActionsTest {
   assertEquals(TalkTitleActivity::class.java.name,intent.component!!.className)
   assertEquals(70523,JSONObject(intent.getStringExtra("title")!!).getInt("id"))
   assertEquals(2,JSONObject(intent.getStringExtra("assistantAction")!!).getInt("episode"))
+ }
+ @Test fun batchPreflightRejectsEveryWriteWhenOneCommandIsInvalid()=runBlocking {
+  val actions=action();val app=(RuntimeEnvironment.getApplication() as AliflixApplication)
+  val before=app.libraryStore.isInMyList(card.media())
+  val commands=org.json.JSONArray().put(JSONObject().put("action",if(before)"unsave" else "save").put("title","Dark"))
+   .put(JSONObject().put("action","invented").put("title","Dark"))
+  assertTrue(runCatching{actions.execute(JSONObject().put("action","batch_library").put("commands",commands))}.isFailure)
+  assertEquals(before,app.libraryStore.isInMyList(card.media()))
+ }
+ @Test fun batchUndoRestoresEveryActualFlagAndPreservesInterveningManualEdits()=runBlocking {
+  val actions=action();val app=(RuntimeEnvironment.getApplication() as AliflixApplication)
+  val saved=app.libraryStore.isInMyList(card.media());val liked=app.libraryStore.isLiked(card.media())
+  val commands=org.json.JSONArray().put(JSONObject().put("action",if(saved)"unsave" else "save").put("title","Dark"))
+   .put(JSONObject().put("action",if(liked)"unfavorite" else "favorite").put("title","Dark"))
+  assertEquals(2,actions.execute(JSONObject().put("action","batch_library").put("commands",commands)).value.getInt("changedCount"))
+  assertEquals(2,actions.execute(JSONObject().put("action","undo")).value.getInt("undoneCount"))
+  assertEquals(saved,app.libraryStore.isInMyList(card.media()));assertEquals(liked,app.libraryStore.isLiked(card.media()))
+  actions.execute(JSONObject().put("action","batch_library").put("commands",commands))
+  app.libraryStore.toggleMyList(card.media())
+  assertEquals("changed_since_action",actions.execute(JSONObject().put("action","undo")).value.getString("status"))
+  assertEquals(!liked,app.libraryStore.isLiked(card.media()))
  }
 }

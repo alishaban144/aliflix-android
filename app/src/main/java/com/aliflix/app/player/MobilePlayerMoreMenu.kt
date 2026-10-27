@@ -80,6 +80,7 @@ internal fun MobilePlayerMoreSheet(
     audioBoostAvailability: AudioBoostAvailability = AudioBoostAvailability.OFF,
     onAudioBoostChange: ((Boolean) -> Unit)? = null,
     onWatchTogether: (() -> Unit)? = null,
+    onTalk: (() -> Unit)? = null,
     germanEdition: String? = null,
     onGermanEdition: (() -> Unit)? = null,
     synchronizedPlayback: Boolean = false,
@@ -147,6 +148,9 @@ internal fun MobilePlayerMoreSheet(
                     MorePage.HOME -> {
                         onWatchTogether?.let { action ->
                             MoreOptionRow(Icons.Rounded.Groups, "Watch Together", "", onClick = { onDismiss(); action() })
+                        }
+                        onTalk?.let { action ->
+                            MoreOptionRow(Icons.Rounded.GraphicEq,"Talk","",onClick={onDismiss();action()})
                         }
                         germanEdition?.let { label ->
                             MoreOptionRow(Icons.Rounded.Language, "German · Serienstream", label,

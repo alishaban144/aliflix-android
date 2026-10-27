@@ -102,6 +102,19 @@ describe('Watch Party protocol and security',()=>{
   const restored=await connect(stub,'host','wrong');restored.ws.close();
  });
 
+ it('renews a device-held guest credential without changing ownership after access expiry',async()=>{
+  const config:RecommendationEnv={...env,CURSOR_SIGNING_SECRET:'persistent-guest-test',RECOMMENDATION_RATE_LIMITER:{limit:async()=>({success:true})}};
+  const issue=async(guestKey:string)=>{const response=await watchPartyRoute(new Request('https://test/v1/party/identity',{method:'POST',body:JSON.stringify({guestKey})}),config);expect(response?.status).toBe(200);return response!.json<{token:string}>();};
+  const first=await issue('A'.repeat(43));const owner=await verifyIdentity(first.token,config.CURSOR_SIGNING_SECRET);
+  const clock=vi.spyOn(Date,'now').mockReturnValue(Date.now()+48*3600000);
+  try{
+   await expect(verifyIdentity(first.token,config.CURSOR_SIGNING_SECRET)).rejects.toThrow();
+   const renewed=await issue('A'.repeat(43));expect((await verifyIdentity(renewed.token,config.CURSOR_SIGNING_SECRET)).sub).toBe(owner.sub);
+   expect((await verifyIdentity((await issue('B'.repeat(43))).token,config.CURSOR_SIGNING_SECRET)).sub).not.toBe(owner.sub);
+   const malformed=await watchPartyRoute(new Request('https://test/v1/party/identity',{method:'POST',body:JSON.stringify({guestKey:owner.sub})}),config);expect(malformed?.status).toBe(400);
+  }finally{clock.mockRestore();}
+ });
+
  it('verifies Firebase account signatures, audience and issuer before issuing a session identity',async()=>{
   const keys=await crypto.subtle.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['sign','verify']);
   if(!('publicKey' in keys))throw Error('Expected RSA key pair');

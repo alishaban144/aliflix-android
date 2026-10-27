@@ -8,12 +8,27 @@ import org.junit.Test
 
 /** Replays the provider ordering captured in the physical Annihilation failure. */
 class TalkWireReplayDeviceTest {
-    @get:Rule val compose=freshTalkValidationRule()
+    @get:Rule val compose=freshTalkValidationRule(localAudio=true)
+    @Test fun idleScheduledControlReplyCannotRaceASyntheticUserTurn(){
+        val session=compose.activity.voice
+        compose.runOnUiThread{
+            session.setTextMode(true);session.debugPreviewUserQuestion("Why is the sky blue?")
+            session.debugReplayServerMessage(JSONObject("""{"toolCall":{"functionCalls":[{"id":"language","name":"conversation_language","args":{"language":"en","explicitRequest":false}}]}}"""))
+            session.debugReplayServerMessage(JSONObject("""{"serverContent":{"turnComplete":true}}"""))
+            assertEquals("A scheduled function continuation needs no competing user prompt",0,TalkVoiceSession::class.java.getDeclaredField("silentReplyNudges").apply{isAccessible=true}.getInt(session))
+            val deadline=TalkVoiceSession::class.java.getDeclaredField("answerDeadline").apply{isAccessible=true}.get(session) as TalkResponseDeadline
+            assertTrue(deadline.pending)
+            session.debugReplayServerMessage(JSONObject("""{"serverContent":{"outputTranscription":{"text":"Air scatters blue light more strongly."},"generationComplete":true,"turnComplete":true}}"""))
+            assertFalse(session.state.value.sending)
+            assertEquals(0,session.debugInterruptions)
+            deadline.clear()
+        }
+    }
     @Test fun lateInputFragmentsUpdateOneUtteranceWithoutRevivingFinishedWriting() {
         val session=compose.activity.voice
         compose.runOnUiThread {
             session.newChat();session.setTextMode(true)
-            fun event(json:String)=session.debugReplayServerMessage(JSONObject(json))
+            fun event(json:String){val message=JSONObject(json);val activity=message.optJSONObject("voiceActivity")?.optString("type");if(activity!=null)session.debugSetInputActivity(activity=="ACTIVITY_START")else session.debugReplayServerMessage(message)}
             event("""{"voiceActivity":{"type":"ACTIVITY_START"}}""")
             event("""{"serverContent":{"inputTranscription":{"text":"Should I watch Arrival"}}}""")
             event("""{"serverContent":{"interrupted":true}}""")
@@ -42,7 +57,7 @@ class TalkWireReplayDeviceTest {
         val session=compose.activity.voice
         compose.runOnUiThread {
             session.newChat();session.setTextMode(true)
-            fun event(json:String)=session.debugReplayServerMessage(JSONObject(json))
+            fun event(json:String){val message=JSONObject(json);val activity=message.optJSONObject("voiceActivity")?.optString("type");if(activity!=null)session.debugSetInputActivity(activity=="ACTIVITY_START")else session.debugReplayServerMessage(message)}
             event("""{"voiceActivity":{"type":"ACTIVITY_START"}}""")
             event("""{"serverContent":{"inputTranscription":{"text":"Choose between Arrival and Ex Machina."}}}""")
             event("""{"voiceActivity":{"type":"ACTIVITY_END"}}""")
@@ -65,14 +80,14 @@ class TalkWireReplayDeviceTest {
         }
         compose.onAllNodesWithTag("talk-response-status").assertCountEquals(0)
     }
-    @Test fun aCommittedRecommendationStillYieldsToTheUsersInterruption() {
+    @Test fun aProviderOnlyInterruptionCannotFlushACommittedRecommendation() {
         val session=compose.activity.voice
         compose.runOnUiThread {
             session.debugPreviewUserQuestion("Recommend three films")
             TalkVoiceSession::class.java.getDeclaredField("presentationDelivered").apply{isAccessible=true}.setBoolean(session,true)
             val before=session.debugInterruptions
             session.debugReplayServerMessage(JSONObject("""{"serverContent":{"interrupted":true}}"""))
-            assertEquals(before+1,session.debugInterruptions)
+            assertEquals(before,session.debugInterruptions)
             assertFalse(session.debugOutputPlaying)
         }
     }
@@ -89,7 +104,7 @@ class TalkWireReplayDeviceTest {
             deadline.clear()
         }
     }
-    @Test fun interruptedLookupAudioCannotCompleteTheUnansweredUserTurn() {
+    @Test fun aGenuineBargeAbandonsTheOldLookupAndAnswersOnlyTheNewQuestion() {
         val session=compose.activity.voice
         fun content(json:String)=session.debugReplayServerMessage(JSONObject().put("serverContent",JSONObject(json)))
         compose.runOnUiThread {
@@ -97,18 +112,19 @@ class TalkWireReplayDeviceTest {
             TalkVoiceSession::class.java.getDeclaredField("awaitingToolAnswer").apply{isAccessible=true}.setBoolean(session,true)
             TalkVoiceSession::class.java.getDeclaredField("pendingToolReply").apply{isAccessible=true}.set(session,JSONObject().put("evidence","A verified premise"))
             content("""{"outputTranscription":{"text":"It's a film about a team exploring"},"modelTurn":{"parts":[{"inlineData":{"mimeType":"audio/pcm;rate=24000","data":"AAAAAA=="}}]}}""")
+            session.debugSetInputActivity(true)
             content("""{"interrupted":true}""")
+            content("""{"inputTranscription":{"text":"Actually, explain why the sky is blue instead."}}""")
+            session.debugSetInputActivity(false)
             content("""{"turnComplete":true}""")
-            assertTrue("Still owes the real lookup answer",session.state.value.sending)
-            assertEquals("Thinking",session.state.value.phase)
+            assertNull("An interrupted lookup cannot regain the floor",TalkVoiceSession::class.java.getDeclaredField("pendingToolReply").apply{isAccessible=true}.get(session))
+            assertTrue(session.state.value.sending)
             assertEquals(0L,session.debugTurnCompleteAt)
-            assertTrue(session.state.value.lines.last().stopped)
-            content("""{"outputTranscription":{"text":"Annihilation follows scientists investigating a mysterious region, with a meditative, unsettling mood."}}""")
-            content("""{"generationComplete":true,"turnComplete":true}""")
+            content("""{"outputTranscription":{"text":"Air molecules scatter shorter blue wavelengths more strongly."},"generationComplete":true,"turnComplete":true}""")
             assertFalse(session.state.value.sending)
             assertTrue(session.debugTurnCompleteAt>0)
-            assertFalse(session.state.value.lines.last().stopped)
-            assertTrue(session.state.value.lines.last().text.startsWith("Annihilation follows"))
+            assertEquals("Actually, explain why the sky is blue instead.",session.state.value.lines.last{it.role=="user"}.text)
+            assertTrue(session.state.value.lines.last().text.startsWith("Air molecules"))
         }
     }
     @Test fun latePresentationRetriesCannotChangeCardsOrAppendPhantomErrors() {

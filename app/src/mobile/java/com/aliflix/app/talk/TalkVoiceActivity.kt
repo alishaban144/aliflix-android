@@ -19,11 +19,17 @@ class TalkVoiceActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if(intent.getBooleanExtra("textMode",false))voice.setTextMode(true)
+        volumeControlStream=talkAudioAttributes().volumeControlStream
+        if(intent.getBooleanExtra("textMode",false)||intent.getBooleanExtra("agentTasks",false))voice.setTextMode(true)
         enableEdgeToEdge(statusBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
+        if(savedInstanceState==null)intent.getStringExtra("initialPrompt")?.takeIf{it.isNotBlank()}?.let { prompt ->
+            intent.getStringExtra("initialTitle")?.let { raw -> runCatching{org.json.JSONObject(raw)}.getOrNull()?.let { voice.seedTitle(it) } }
+            voice.sendText(prompt)
+        }
         setContent { AliflixMobileTheme { TalkVoiceScreen(voice, onStart = ::startListening, onClose = ::finish) } }
     }
     private fun startListening() {
+        if(com.aliflix.app.BuildConfig.DEBUG&&intent.getBooleanExtra("validationLocalAudio",false))return
         if(voice.state.value.textMode){lifecycleScope.launch { voice.connect() };return}
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
             lifecycleScope.launch { voice.connect() }

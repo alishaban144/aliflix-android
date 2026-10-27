@@ -12,6 +12,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AskAliflixWiringIntegrationTest {
+    @Test fun japaneseAndAmericanAnimationMapToOneAnimationGenreAndEitherOrigin() {
+        val spec=CatalogDiscoverySpec(RecommendationMediaKind.MOVIE,
+            animationFilters=listOf(AnimationFilter.JAPANESE_ANIMATION,AnimationFilter.AMERICAN_ANIMATION))
+        val mapped=AskAliflixRequestMapper.map(AskAliflixRequest.Filters(spec)).workerRequest.filters
+        assertEquals(listOf("Animation"),mapped.includedGenres)
+        assertEquals(listOf("JP","US"),mapped.originCountries)
+        assertEquals(null,mapped.originalLanguage)
+    }
     @Test
     fun cloudflareGptOssIsTheDefaultForFreshSettingsAndUnspecifiedRequests() {
         assertEquals(

@@ -100,11 +100,14 @@ data class CatalogDiscoverySpec(
     val productionCompanies: List<ProductionCompanyFilter> = emptyList(),
     val originalLanguage: String? = null,
     val animationFilter: AnimationFilter? = null,
+    val animationFilters: List<AnimationFilter> = emptyList(),
     val requiredStatus: String? = null,
     val countries: List<String> = emptyList(),
     val sortBy: RecommendationSort = RecommendationSort.MOST_POPULAR,
     val discoveryText: String = "",
-)
+) {
+    val animationChoices: List<AnimationFilter> get() = (listOfNotNull(animationFilter)+animationFilters).distinct()
+}
 
 /** UI-ready Worker result. TMDB-verified metadata lives on [media]. */
 data class RecommendationCandidate(

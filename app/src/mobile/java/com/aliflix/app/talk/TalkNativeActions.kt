@@ -11,6 +11,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.launch
 
 internal data class TalkNativeResult(val value:JSONObject,val afterReply:(()->Unit)?=null)
 
@@ -22,13 +23,32 @@ internal class TalkNativeActions(private val context:Context,private val catalog
     private val app get()=context.applicationContext as AliflixApplication
     private data class Change(val card:TalkTitleCard,val action:String,val before:Boolean,val after:Boolean)
     private var lastChange:Change?=null
-    fun clearUndo(){lastChange=null}
+    private var lastBatch:List<Change> = emptyList()
+    fun clearUndo(){lastChange=null;lastBatch=emptyList()}
     suspend fun execute(args:JSONObject):TalkNativeResult {
         val action=args.optString("action")
+        if(action=="download_work")return TalkNativeResult(JSONObject().put("status","current").put("jobs",JSONArray(TalkDownloadWork.get(context).jobs.value.map{it.json()})))
+        if(action=="cancel_download_work"){
+            val id=args.getString("workId");val work=TalkDownloadWork.get(context)
+            require(work.jobs.value.any{it.id==id}){"Unknown download work"}
+            return TalkNativeResult(JSONObject().put("status",work.cancel(id)).put("workId",id))
+        }
+        if(action=="library_state")return libraryState(args)
+        if(action=="batch_library")return batch(args)
         if(action=="undo")return undo()
-        if(action=="set_setting"){lastChange=null;return setting(args)}
+        if(action=="set_setting"){val result=setting(args);clearUndo();return result}
         if(action=="open_screen"||action=="search")return navigation(args,null)
         if(action in setOf("downloads_state","pause_download","resume_download","remove_download"))return downloads(args)
+        if(action=="resume"){
+            val current=talkPlayerAction(context,JSONObject().put("action","player_state"))
+            if(current.optString("status")!="current")return TalkNativeResult(current)
+            val command=JSONObject(args.toString()).put("expectedContentKey",current.getString("contentKey"))
+            return TalkNativeResult(JSONObject().put("status","ready").put("action","resume").put("instruction","The same current playback resumes after this brief reply.")){
+                val activity=context as? TalkVoiceActivity
+                activity?.voice?.suspendSession()
+                app.accountScope.launch{talkPlayerAction(context,command);if(activity?.intent?.hasExtra("playerContext")==true)activity.finish()}
+            }
+        }
         if(action in setOf("player_state","pause","resume","seek","audio_language","subtitle_language"))
             return TalkNativeResult(talkPlayerAction(context,args))
         require(action in setOf("show_card","title_state","open_title","play","download","similar","save","unsave","favorite","unfavorite","dislike","undo_dislike")){"Unknown app action"}
@@ -42,6 +62,7 @@ internal class TalkNativeActions(private val context:Context,private val catalog
         val before=current()
         if(action=="title_state")return TalkNativeResult(JSONObject().put("status","observed").put("card",card.json())
             .put("saved",library.isInMyList(media)).put("favorite",library.isLiked(media)).put("disliked",media.key in AskTaste(context).rejected()))
+        if(action=="download")return TalkNativeResult(TalkDownloadWork.get(context).start(card,args))
         when(action){
             "save","unsave"->if(library.isInMyList(media)!=(action=="save"))library.toggleMyList(media)
             "favorite","unfavorite"->if(library.isLiked(media)!=(action=="favorite"))library.toggleLike(media)
@@ -49,7 +70,7 @@ internal class TalkNativeActions(private val context:Context,private val catalog
             "undo_dislike"->AskTaste(context).unreject(media)
             else->return navigation(args,card)
         }
-        val after=current();lastChange=if(before!=after)Change(card,action,before,after)else null
+        val after=current();lastBatch=emptyList();lastChange=if(before!=after)Change(card,action,before,after)else null
         return TalkNativeResult(JSONObject().put("status","completed").put("title",card.title).put("action",action)
             .put("changed",before!=after).put("previousValue",before)
             .put("saved",library.isInMyList(media)).put("favorite",library.isLiked(media)).apply{
@@ -57,6 +78,12 @@ internal class TalkNativeActions(private val context:Context,private val catalog
             })
     }
     private fun undo():TalkNativeResult {
+        if(lastBatch.isNotEmpty()){
+            val changes=lastBatch;lastBatch=emptyList()
+            if(changes.any{readFlag(it.card,it.action)!=it.after})return TalkNativeResult(JSONObject().put("status","changed_since_action"))
+            changes.asReversed().forEach{writeFlag(it.card,it.action,it.before)}
+            return TalkNativeResult(JSONObject().put("status","completed").put("undoneCount",changes.size))
+        }
         val change=lastChange?:return TalkNativeResult(JSONObject().put("status","nothing_to_undo"))
         lastChange=null
         val media=change.card.media();val library=app.libraryStore;val taste=AskTaste(context)
@@ -66,6 +93,45 @@ internal class TalkNativeActions(private val context:Context,private val catalog
         show(listOf(change.card))
         return TalkNativeResult(JSONObject().put("status","completed").put("undone",change.action).put("card",change.card.json()).put("saved",library.isInMyList(media)).put("favorite",library.isLiked(media))
             .apply{if(change.action in setOf("dislike","undo_dislike"))put("disliked",media.key in taste.rejected())})
+    }
+    private fun readFlag(card:TalkTitleCard,action:String):Boolean=when(action){
+        "save","unsave"->app.libraryStore.isInMyList(card.media())
+        "favorite","unfavorite"->app.libraryStore.isLiked(card.media())
+        else->card.key in AskTaste(context).rejected()
+    }
+    private fun writeFlag(card:TalkTitleCard,action:String,value:Boolean){
+        when(action){
+            "save","unsave"->if(app.libraryStore.isInMyList(card.media())!=value)app.libraryStore.toggleMyList(card.media())
+            "favorite","unfavorite"->if(app.libraryStore.isLiked(card.media())!=value)app.libraryStore.toggleLike(card.media())
+            else->if(value)AskTaste(context).reject(card.media())else AskTaste(context).unreject(card.media())
+        }
+    }
+    private suspend fun batch(args:JSONObject):TalkNativeResult {
+        val commands=args.getJSONArray("commands");require(commands.length() in 1..24)
+        // Resolve and validate the WHOLE plan before making its first change.
+        val resolved=(0 until commands.length()).map{index->
+            val command=commands.getJSONObject(index);val action=command.getString("action")
+            require(action in setOf("save","unsave","favorite","unfavorite","dislike","undo_dislike"))
+            val cards=catalogue.find(command.optString("title"),command.optString("kind").takeIf{it in setOf("movie","tv")},command.optInt("year"),command.optInt("tmdbId"))
+            require(cards.size==1){"Resolve each exact edition before a batch"}
+            cards.single() to action
+        }
+        require(resolved.map{(card,action)->card.key+":"+when(action){"save","unsave"->"saved";"favorite","unfavorite"->"liked";else->"rejected"}}.distinct().size==resolved.size){"Conflicting duplicate commands"}
+        val changes=resolved.map{(card,action)->Change(card,action,readFlag(card,action),action in setOf("save","favorite","dislike"))}.filter{it.before!=it.after}
+        try{changes.forEach{writeFlag(it.card,it.action,it.after)}}catch(error:Exception){changes.asReversed().filter{readFlag(it.card,it.action)==it.after}.forEach{writeFlag(it.card,it.action,it.before)};throw error}
+        lastChange=null;lastBatch=changes
+        return TalkNativeResult(JSONObject().put("status","completed").put("changedCount",changes.size)
+            .put("results",org.json.JSONArray(resolved.map{(card,action)->card.json().put("action",action).put("value",readFlag(card,action))})))
+    }
+    private fun libraryState(args:JSONObject):TalkNativeResult {
+        val library=app.libraryStore;val progress=app.playbackProgressStore.entries.value.values
+        val collection=args.optString("stringValue","all")
+        val rows=when(collection){"saved"->library.myList.value;"favorite"->library.likes.value;"watched"->library.recent.value;else->library.myList.value+library.likes.value+library.recent.value}.distinctBy{it.key}
+        val offset=args.optInt("offset",0).coerceAtLeast(0)
+        return TalkNativeResult(JSONObject().put("status","current").put("total",rows.size).put("nextOffset",(offset+40).takeIf{it<rows.size})
+            .put("items",JSONArray(rows.drop(offset).take(40).map{media->JSONObject().put("id",media.id).put("kind",media.type.routeName).put("title",media.title).put("year",media.year)
+                .put("saved",library.isInMyList(media)).put("favorite",library.isLiked(media)).put("completed",media.type==com.aliflix.app.model.MediaType.MOVIE&&progress.any{it.media.key==media.key&&it.completed})
+                .put("started",progress.any{it.media.key==media.key&&it.positionSeconds>0}).put("episodesCompleted",progress.count{it.media.key==media.key&&it.completed})})))
     }
     private fun navigation(args:JSONObject,card:TalkTitleCard?):TalkNativeResult {
         val action=args.optString("action")
@@ -84,18 +150,18 @@ internal class TalkNativeActions(private val context:Context,private val catalog
     private fun setting(args:JSONObject):TalkNativeResult {
         val store=app.playerSettingsStore;val preferences=app.playbackProviderRepository
         fun enabled():Boolean{require(args.opt("enabled") is Boolean){"A boolean enabled value is required"};return args.getBoolean("enabled")}
-        fun number():Float{val n=args.getDouble("numberValue");require(n.isFinite()){ "A finite number is required" };return n.toFloat()}
+        fun number(range:ClosedFloatingPointRange<Float> = -Float.MAX_VALUE..Float.MAX_VALUE)=args.talkSettingNumber(range)
         val setting=args.getString("setting")
         when(setting){
             "play_next_episode"->store.updatePlayNextEpisode(enabled())
             "audio_boost"->store.updateBoostAudio(enabled())
             "zoom"->store.updateResizeModeZoom(enabled())
             "auto_subtitles"->preferences.setAutoDisplaySubtitles(enabled())
-            "playback_speed"->{val speed=number();require(speed in listOf(.5f,.75f,1f,1.25f,1.5f,2f)){"Supported speeds: 0.5, 0.75, 1, 1.25, 1.5, 2"};store.updatePlaybackSpeed(speed)}
+            "playback_speed"->{val speed=number(.5f..2f);require(speed in listOf(.5f,.75f,1f,1.25f,1.5f,2f)){"Supported speeds: 0.5, 0.75, 1, 1.25, 1.5, 2"};store.updatePlaybackSpeed(speed)}
             "subtitle_size"->store.updateSubtitleFontSize(number())
             "subtitle_opacity"->store.updateSubtitleBackgroundOpacity(number())
-            "subtitle_delay_seconds"->store.updateSubtitleDelayTenths((number()*10).toInt())
-            "subtitle_vertical_offset"->store.updateSubtitleVerticalOffsetDp(number().toInt())
+            "subtitle_delay_seconds"->store.updateSubtitleDelayTenths(kotlin.math.round(number().coerceIn(-60f,60f)*10).toInt())
+            "subtitle_vertical_offset"->store.updateSubtitleVerticalOffsetDp(kotlin.math.round(number().coerceIn(-200f,200f)).toInt())
             "preferred_quality"->store.updatePreferredVideoQuality(PreferredVideoQuality.valueOf(args.getString("stringValue").uppercase(java.util.Locale.ROOT)))
             "subtitle_language"->preferences.selectPreferredSubtitleLanguage(SubtitleLanguage.entries.first{it.code.equals(args.getString("stringValue"),true)})
             "provider"->{val provider=requireNotNull(PlaybackProvider.fromStoredValue(args.getString("stringValue")));require(provider.supportsGeneralPlayback);preferences.selectGeneralProvider(provider)}
@@ -111,10 +177,12 @@ internal class TalkNativeActions(private val context:Context,private val catalog
         val action=args.getString("action")
         var entries=store.entries.value
         if(action!="downloads_state") {
-            val cards=catalogue.find(args.optString("title"),args.optString("kind").takeIf{it in setOf("movie","tv")},args.optInt("year"))
+            val episode=TalkEpisodeArguments.from(args)
+            val cards=catalogue.find(args.optString("title"),args.optString("kind").takeIf{it in setOf("movie","tv")},args.optInt("year"),args.optInt("tmdbId"))
             if(cards.size!=1)return TalkNativeResult(JSONObject().put("status","choose_title").put("instruction","Ask which downloaded title or exact episode to change."))
             val card=cards.single()
-            entries=entries.filter{it.selection.media.key==card.key&&(args.optInt("season")==0||it.selection.seasonNumber==args.optInt("season"))&&(args.optInt("episode")==0||it.selection.episodeNumber==args.optInt("episode"))}
+            episode.requireKind(card.type)
+            entries=entries.filter{it.selection.media.key==card.key&&episode.matches(it.selection.seasonNumber,it.selection.episodeNumber)}
             if(entries.size!=1)return TalkNativeResult(JSONObject().put("status",if(entries.isEmpty())"not_downloaded" else "choose_episode").put("instruction","This title has no matching download, or more than one episode matches. Ask for the exact episode or open Downloads; do not change unrelated files."))
             when(action){"pause_download"->store.pause(entries.single().id);"resume_download"->store.resume(entries.single());"remove_download"->store.remove(entries.single().id)}
         }

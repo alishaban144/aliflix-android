@@ -21,6 +21,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -32,6 +33,10 @@ import com.aliflix.app.ui.theme.*
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.delay
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.semantics.*
 
 internal data class TalkTitleCard(val id:Int,val type:MediaType,val title:String,val year:String="",val posterPath:String?=null,val originalTitle:String?=null) {
     val key get()="${type.routeName}:$id"
@@ -44,57 +49,55 @@ internal fun parseTalkTitles(rows:JSONArray?,limit:Int=3):List<TalkTitleCard> =
         val type=row.optString("mediaType",row.optString("type"));require(id>0&&title.isNotBlank()&&type in setOf("movie","tv"))
         val poster=talkPosterPath(row.optString("posterPath",row.optString("poster_path")))
         TalkTitleCard(id,MediaType.from(type),title.take(180),row.optString("year",row.optString("releaseDate")).take(4),poster,row.optString("originalTitle").takeIf{it.isNotBlank()&&it!="null"})
-    }.getOrNull() }.distinctBy{it.key}.take(limit.coerceIn(1,8))
+    }.getOrNull() }.distinctBy{it.key}.take(limit.coerceIn(1,24))
 
 internal fun talkPosterPath(value:String?):String? {
     val path=value?.replace(Regex("^https://image\\.tmdb\\.org/t/p/(?:w\\d+|original)/"),"/")?:return null
     return path.takeIf{Regex("^/[A-Za-z0-9._-]+\\.(?:jpg|png|webp)$",RegexOption.IGNORE_CASE).matches(it)&&it.length<=200}
 }
 
-/** Quiet, compact companions to the reply; the orb and topic keep the stage. */
-@Composable internal fun TalkTitleCards(titles:List<TalkTitleCard>,onOpen:(TalkTitleCard)->Unit,modifier:Modifier=Modifier,motion:Boolean=com.aliflix.app.ui.common.rememberMobileMotionEnabled()) {
-    var retained by remember { mutableStateOf(titles) }
-    LaunchedEffect(titles) {
-        retained=(retained+titles).distinctBy{it.key}.map{old->titles.firstOrNull{it.key==old.key}?:old}
-        if(motion)delay(520)
-        retained=titles
-    }
-    if(retained.isEmpty()&&titles.isEmpty())return
-    BoxWithConstraints(modifier.fillMaxWidth()) {
-    val singleWidth=minOf(maxWidth*.84f,300.dp)
-    val groupWidth=(maxWidth-10.dp*(maxOf(2,titles.size)-1))/maxOf(2,titles.size)
-    val cardWidth by animateDpAsState(if(titles.size==1)singleWidth else groupWidth,spring(dampingRatio=.88f,stiffness=if(motion)170f else 10000f),label="card-focus-width")
-    val edge by animateDpAsState(if(titles.size==1)(maxWidth-cardWidth)/2 else 0.dp,tween(if(motion)480 else 0),label="card-centering")
-    LazyRow(Modifier.fillMaxWidth().testTag("talk-title-cards"),horizontalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(horizontal=edge,vertical=8.dp)) {
-        items(retained,key={it.key}) { title ->
-            val shown=titles.any{it.key==title.key}
-            val direction=if(retained.indexOf(title)<retained.indexOfFirst{it.key==titles.firstOrNull()?.key})-1 else 1
-            val tilt by animateFloatAsState(if(shown)0f else direction*9f,tween(if(motion)420 else 0),label="card-turn")
-            AnimatedVisibility(shown,modifier=Modifier.animateItem(placementSpec=if(motion)spring(dampingRatio=.86f,stiffness=170f)else snap()),
-                enter=if(motion)fadeIn(tween(280))+slideInHorizontally(spring(stiffness=200f)){it/5}+scaleIn(initialScale=.94f) else EnterTransition.None,
-                exit=if(motion)fadeOut(tween(280))+slideOutHorizontally(tween(420)){direction*it/2}+shrinkHorizontally(tween(480))+scaleOut(targetScale=.84f) else ExitTransition.None) {
-            val shape=RoundedCornerShape(20.dp)
-            Box(Modifier.width(cardWidth).graphicsLayer{rotationZ=tilt}.clip(shape)
-                .background(Brush.linearGradient(listOf(Color(0xFF211E2A).copy(alpha=.92f),Color(0xFF15141C).copy(alpha=.96f))))
-                .border(.5.dp,Color.White.copy(alpha=.11f),shape)
-                .clickable(role=Role.Button,onClick={onOpen(title)}).padding(9.dp).testTag("talk-title-${title.key}")) {
-              AnimatedContent(titles.size==1,transitionSpec={fadeIn(tween(if(motion)280 else 0)) togetherWith fadeOut(tween(if(motion)140 else 0))},label="card-focus-layout") { focused ->
-              if(focused)Row(Modifier.height(82.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                TalkPoster(title,Modifier.width(54.dp).height(81.dp))
-                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(7.dp)) {
-                    Text(title.title,color=AliflixContentPrimary,fontSize=14.sp,lineHeight=18.sp,fontWeight=FontWeight.SemiBold,maxLines=2,overflow=TextOverflow.Ellipsis)
-                    Text(listOf(if(title.type==MediaType.MOVIE)"Film" else "Series",title.year).filter{it.isNotBlank()}.joinToString(" · "),
-                        color=AliflixContentSecondary,fontSize=11.sp,letterSpacing=.2.sp)
-                }
-                Icon(Icons.AutoMirrored.Rounded.ArrowForward,"Open ${title.title}",Modifier.size(17.dp),tint=AliflixAccentSecondary.copy(alpha=.8f))
-              } else Column(verticalArrangement=Arrangement.spacedBy(6.dp)) {
-                TalkPoster(title,Modifier.fillMaxWidth().aspectRatio(2f/3f))
-                Text(title.title,color=AliflixContentPrimary,fontSize=12.sp,lineHeight=15.sp,fontWeight=FontWeight.SemiBold,maxLines=2,overflow=TextOverflow.Ellipsis,modifier=Modifier.height(30.dp))
-                Text(title.year,color=AliflixContentSecondary,fontSize=10.sp)
-              }
-              }
+/** Native adaptation of Kokonut UI Momentum Rail / RailCard by Dorian Baffier,
+ * MIT, d33a196aa574553b6c49f947ed6e510bfe1c06c3. The image, corner badge,
+ * separate metadata and focus depth come from the authored component. Chat uses
+ * its flat, all-details-visible layout so long collections remain scannable. */
+@Composable internal fun TalkTitleCards(
+    titles:List<TalkTitleCard>,onOpen:(TalkTitleCard)->Unit,modifier:Modifier=Modifier,
+    motion:Boolean=com.aliflix.app.ui.common.rememberMobileMotionEnabled(),
+    collection:Boolean=false,focusedKey:String?=null,onBounds:(String,Rect)->Unit={_,_->},
+) {
+    if(titles.isEmpty())return
+    if(collection) BoxWithConstraints(modifier.fillMaxWidth()) {
+      val columns=if(maxWidth>=320.dp&&LocalDensity.current.fontScale<=1.3f)3 else 2
+      val width=minOf(112.dp,(maxWidth-12.dp*(columns-1))/columns)
+      Column(verticalArrangement=Arrangement.spacedBy(14.dp)) {
+        titles.chunked(columns).forEach { row ->
+            Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                row.forEach { title -> key(title.key) { TalkRailCard(title,onOpen,Modifier.width(width),motion,focusedKey==title.key,onBounds) } }
             }
-        } }
+        }
+      }
+    } else Row(modifier.fillMaxWidth().padding(vertical=8.dp),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val width=minOf(88.dp,(maxWidth-20.dp)/3)
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp,Alignment.CenterHorizontally)) {
+                titles.take(3).forEach { title -> key(title.key) { TalkRailCard(title,onOpen,Modifier.width(width),motion,focusedKey==title.key,onBounds) } }
+            }
+        }
     }
+}
+
+@Composable private fun TalkRailCard(title:TalkTitleCard,onOpen:(TalkTitleCard)->Unit,modifier:Modifier,motion:Boolean,focused:Boolean,onBounds:(String,Rect)->Unit) {
+    val depth by animateFloatAsState(if(focused)1f else .96f,spring(dampingRatio=1f,stiffness=if(motion)170f else 10000f),label="rail-depth")
+    Column(modifier.graphicsLayer{scaleX=depth;scaleY=depth}.onGloballyPositioned{onBounds(title.key,it.boundsInRoot())}
+        .clickable(role=Role.Button,onClick={onOpen(title)}).semantics(mergeDescendants=true){}.testTag("talk-title-${title.key}"),verticalArrangement=Arrangement.spacedBy(7.dp)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(2f/3f).clip(RoundedCornerShape(16.dp))
+            .border(if(focused)1.5.dp else .5.dp,if(focused)AliflixAccentSecondary else Color.White.copy(alpha=.12f),RoundedCornerShape(16.dp))) {
+            TalkPoster(title,Modifier.fillMaxSize())
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha=.18f),Color.Transparent,Color.Black.copy(alpha=.18f)))))
+            if(title.year.isNotBlank())Text(title.year,color=Color.White,fontSize=10.sp,fontWeight=FontWeight.Medium,
+                modifier=Modifier.padding(8.dp).clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha=.68f)).padding(horizontal=6.dp,vertical=3.dp))
+        }
+        Text(title.title,color=AliflixContentPrimary,fontSize=13.sp,lineHeight=17.sp,fontWeight=FontWeight.Medium,maxLines=2,overflow=TextOverflow.Ellipsis)
+        Text(if(title.type==MediaType.TV)"Series" else "Film",color=AliflixContentTertiary,fontSize=11.sp)
     }
 }
