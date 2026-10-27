@@ -43,6 +43,8 @@ describe('one conversation with mode-appropriate discovery',()=>{
   const chat=liveSetup(TalkContextSchema.parse({companionVersion:10,textMode:true,recentProgress:[]}));
   expect(voice.systemInstruction.parts[0].text).toContain('then call research_note once');
   expect(voice.systemInstruction.parts[0].text).toContain('If final results have already arrived, skip');
+  const lookup=voice.systemInstruction.parts[0].text.split('LOOKUP CONVERSATION:')[1].split('\n')[0];
+  expect(lookup).toContain('film_knowledge');expect(lookup).toContain('web_research');
   expect(chat.systemInstruction.parts[0].text).not.toContain('then call research_note once');
  });
 });
