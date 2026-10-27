@@ -1,4 +1,30 @@
 import type { RecommendationResult } from './types';
+import { discoveryConstraints } from './discoveryConstraints';
+import { RecommendationFiltersSchema } from './schemas';
+
+/** Only complete, mechanically checkable catalogue refinements may reuse a
+ * researched collection. A new premise, anchor or request for additional
+ * choices still needs research; retained results never pretend to be exhaustive. */
+export function refineTalkCollection(results:RecommendationResult[],question:string):RecommendationResult[]|null {
+ const q=question.toLowerCase().replace(/\.\s*(?:keep|preserve|retain)\s+(?:all\s+)?(?:the\s+)?(?:other|remaining|same)\s+constraints(?:\s+(?:from|of)\s+(?:this|the|that|previous)\s+search)?[.!?\s]*$/,'').trim().replace(/[.!?]+$/,'');
+ const prefix='(?:(?:only|just|show(?: me)?|give(?: me)?)\\s+)?';
+ const media='(?:(?:films?|movies?|titles?|series|shows?)\\s+)?';
+ const date='(?:(?:from|since|after|before|until|through)\\s+(?:18|19|20)\\d{2}(?:\\s+(?:onwards?|and later|and newer))?|(?:more\\s+)?(?:recent|newer|latest))';
+ const runtime='(?:under|less than|at most)\\s+\\d{1,3}\\s+(?:minutes?|mins?)';
+ const status='(?:ended|finished|completed|running|ongoing|returning)\\s+(?:series|shows?)';
+ if(!new RegExp('^'+prefix+'(?:'+media+'(?:'+date+'|'+runtime+')|'+status+')$','i').test(q))return null;
+ const filters=discoveryConstraints(RecommendationFiltersSchema.parse({}),q);
+ const seriesStatus=talkSeriesStatus(q);
+ const kept=results.filter(value=>{
+  const year=Number(value.releaseDate?.slice(0,4));
+  if((filters.minimumYear||filters.maximumYear)&&!Number.isInteger(year))return false;
+  if(filters.minimumYear&&year<filters.minimumYear||filters.maximumYear&&year>filters.maximumYear)return false;
+  if(filters.maximumRuntimeMinutes&&(value.runtimeMinutes==null||value.runtimeMinutes>filters.maximumRuntimeMinutes))return false;
+  if(seriesStatus&&(value.mediaType!=='tv'||value.status?.toLowerCase()!==(seriesStatus==='ended'?'ended':'returning series')))return false;
+  return true;
+ });
+ return kept.length?kept:null;
+}
 
 export function canRetainTalkResearch(failure:{status:number;code:string}|undefined):boolean {
  return !!failure&&([429,500,502,503,504].includes(failure.status)||(failure.status===422&&failure.code==='NO_RESEARCH'));

@@ -1,6 +1,7 @@
 import { describe,it,expect } from 'vitest';
 import { TalkContextSchema } from '../src/talkEvidence';
 import { talkChatRecommendationCount,talkRecommendationCount,talkRecommendationQuery,talkSeriesStatus } from '../src/talkIntent';
+import { TalkChatSchema } from '../src/talkChats';
 import { liveSetup } from '../src/talkProviders';
 
 describe('one conversation with mode-appropriate discovery',()=>{
@@ -26,6 +27,12 @@ describe('one conversation with mode-appropriate discovery',()=>{
   expect(names(liveSetup(TalkContextSchema.parse({companionVersion:10,textMode:false,recentProgress:[]})))).toContain('research_note');
   expect(names(liveSetup(TalkContextSchema.parse({companionVersion:10,textMode:true,recentProgress:[]})))).not.toContain('present_recommendations');
   expect(names(liveSetup(TalkContextSchema.parse({companionVersion:9,recentProgress:[]})))).not.toContain('research_note');
+ });
+ it('allows catalogue data to arrive before prose while rejecting empty non-results',()=>{
+  const chat={id:'10000000-0000-4000-8000-000000000001',title:'A search',updatedAt:1,lines:[{role:'assistant',text:'',titles:[{id:1,type:'movie',title:'A catalogue title',year:'2024'}]}]};
+  expect(TalkChatSchema.safeParse(chat).success).toBe(true);
+  expect(TalkChatSchema.safeParse({...chat,lines:[{role:'assistant',text:''}]}).success).toBe(false);
+  expect(TalkChatSchema.safeParse({...chat,lines:[{role:'user',text:''}]}).success).toBe(false);
  });
  it('accepts the new context without requiring older installed clients to send it',()=>{
   expect(TalkContextSchema.parse({companionVersion:10,textMode:true}).textMode).toBe(true);
