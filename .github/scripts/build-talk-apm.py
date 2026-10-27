@@ -68,7 +68,7 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     absl = source / 'subprojects' / 'abseil-cpp-20240722.0'
     run(compiler, '-std=c++17', '-shared', '-O2', *common,
-        '-DWEBRTC_POSIX', '-DWEBRTC_ANDROID', '-DWEBRTC_LINUX',
+        '-DWEBRTC_POSIX', '-DWEBRTC_ANDROID', '-DWEBRTC_LINUX', '-DWEBRTC_APM_DEBUG_DUMP=0', '-DNDEBUG',
         '-I' + str(source / 'webrtc'), '-I' + str(absl),
         ROOT / 'app/src/mobile/cpp/talk_apm.cpp', '-Wl,--start-group', *libraries,
         '-Wl,--end-group', '-static-libstdc++', '-Wl,--exclude-libs,ALL',
