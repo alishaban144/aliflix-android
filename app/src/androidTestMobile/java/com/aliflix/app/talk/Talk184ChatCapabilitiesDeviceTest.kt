@@ -26,6 +26,8 @@ class Talk184ChatCapabilitiesDeviceTest {
    }
    val collection=ask("Give me ten ended series similar to Severance (2022): unsettling institutions, concealed identities and layered mysteries. Include non-English shows. Exclude Severance itself and any still-running series.")
    receipt.put("collection",JSONArray(collection.titles.map{it.json()})).put("reply",collection.text).put("sourceCount",collection.sources.size)
+   assertTrue("Public research evidence must remain attached to the completed reply",collection.sources.isNotEmpty())
+   assertEquals("One question owns one collection",1,voice.state.value.lines.drop(voice.state.value.lines.indexOfLast{it.role=="user"}+1).count{it.titles.isNotEmpty()})
    assertTrue("The similarity search must return genuine matches rather than padding",collection.titles.size>=3)
    assertTrue(collection.titles.all{it.type==MediaType.TV&&it.id!=95396})
    val context=voice.state.value.cards
