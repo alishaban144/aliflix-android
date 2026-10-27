@@ -44,7 +44,7 @@ class TalkGroundedJourneyDeviceTest {
    assertFalse("A completed selection cannot append a phantom lookup error",Regex("(?i)system encountered|try again later").containsMatchIn(answer))
    assertTrue("Every spoken recommendation must equal the selected cards: $answer",talkAnswerNamesAllTitles(answer,group))
    val delivered=session.state.value.lines.drop(recommendationFrom).filter{it.role=="assistant"&&!it.stopped}
-   assertTrue("Only the approved bridge may precede the selected recommendations",delivered.filter{it.titles.isEmpty()}.all{talkIsApprovedBridge(it.text,talkResearchBridge("science fiction","en"))})
+   assertTrue("No canned search filler may precede the selected recommendations",delivered.filter{it.titles.isEmpty()}.isEmpty())
    for(card in group) {
     compose.waitUntil(20000){compose.onAllNodesWithTag("talk-poster-${card.key}-loaded",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
     val media=com.aliflix.app.recommendation.RecommendationAiClient(com.aliflix.app.BuildConfig.RECOMMENDATION_AI_BASE_URL).getTitleDetails(card.type.routeName,card.id).media

@@ -78,6 +78,8 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
     fun openTitle(title:TalkTitleCard){titleContext.startActivity(Intent(titleContext,TalkTitleActivity::class.java).putExtra("title",title.media().toJson().toString()))}
     val chats by session.history.chats.collectAsState()
     val syncStatus by session.history.status.collectAsState()
+    val missions by session.agent.missions.collectAsState()
+    val downloads by session.downloadWork.jobs.collectAsState()
     var recent by remember { mutableStateOf(false) }
     var privacy by remember { mutableStateOf(false) }
     var voices by remember { mutableStateOf(false) }
@@ -91,7 +93,14 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
     }
     val localTracker=remember { DiscoverTouchTracker() }
     val tracker=touchTracker ?: localTracker
-    val motion=rememberMobileMotionEnabled() && rememberMobileResumed()
+    val resumed=rememberMobileResumed()
+    val motion=rememberMobileMotionEnabled() && resumed
+    LaunchedEffect(resumed,agentTasks){
+        if(resumed&&!agentTasks)while(true){
+            runCatching{session.agent.refresh()}
+            kotlinx.coroutines.delay(if(missions.any{it.optString("status") in setOf("queued","running")})6000 else 30000)
+        }
+    }
     val keyboardOpen=WindowInsets.ime.getBottom(LocalDensity.current)>0
     val density=LocalDensity.current
     var orbAnchor by remember{mutableStateOf(Rect.Zero)}
@@ -115,17 +124,21 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 AliflixIconButton(onClick={session.setTextMode(!state.textMode);onStart()},modifier=Modifier.testTag("talk-chat-mode").semantics { stateDescription=if(state.textMode)"Text chat selected" else "Voice selected" }) {
                     Icon(if(state.textMode)Icons.Rounded.GraphicEq else Icons.Rounded.EditNote,if(state.textMode)"Voice conversation" else "Chat",tint=AliflixAccentSecondary)
                 }
-                AliflixIconButton(onClick={agentTasks=true},modifier=Modifier.testTag("talk-agent-tasks")) { Icon(Icons.Rounded.AutoAwesome,"Tasks",tint=AliflixAccentSecondary) }
                 Box {
                     AliflixIconButton(onClick={settings=true}) { Icon(Icons.Rounded.MoreHoriz,"Conversation settings",tint=AliflixContentSecondary) }
                     DropdownMenu(expanded=settings,onDismissRequest={settings=false}) {
                         DropdownMenuItem(text={Text("Recent chats")},onClick={recent=true;session.history.refresh();settings=false},leadingIcon={Icon(Icons.Rounded.History,null)},modifier=Modifier.testTag("talk-recent-chats"))
-                        DropdownMenuItem(text={Text("New chat")},onClick={session.newChat();draft="";settings=false},leadingIcon={Icon(Icons.Rounded.AddComment,null)})
+                        DropdownMenuItem(text={Text("New chat")},onClick={session.newChat();draft="";settings=false;onStart()},leadingIcon={Icon(Icons.Rounded.AddComment,null)})
                         DropdownMenuItem(text={Text("Choose voice")},onClick={voices=true;settings=false},leadingIcon={Icon(Icons.Rounded.GraphicEq,null)},modifier=Modifier.testTag("talk-voice-picker"))
+                        DropdownMenuItem(text={Text("Background work")},onClick={agentTasks=true;settings=false},leadingIcon={Icon(Icons.Rounded.Workspaces,null)})
                         DropdownMenuItem(text={Text("Privacy")},onClick={privacy=true;settings=false},leadingIcon={Icon(Icons.Rounded.PrivacyTip,null)})
                     }
                 }
                 AliflixIconButton(onClick=onClose) { Icon(Icons.Rounded.Close,"Close conversation",tint=AliflixContentPrimary) }
+            }
+            val activeWork=missions.count{it.optString("status") in setOf("queued","running","waiting","needs_input","paused")}+downloads.count{it.stage !in setOf("Cancelled","Completed")}
+            if(activeWork>0)TextButton(onClick={agentTasks=true},modifier=Modifier.align(Alignment.End).testTag("talk-active-work")){
+                Icon(Icons.Rounded.Workspaces,null,Modifier.size(16.dp));Spacer(Modifier.width(8.dp));Text("$activeWork active",fontSize=12.sp)
             }
             if(state.textMode) {
                 Row(Modifier.fillMaxWidth().padding(bottom=8.dp),verticalAlignment=Alignment.CenterVertically) {
@@ -136,7 +149,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                         }
                         Text(talkConnectionLabel(state),color=AliflixContentTertiary,fontSize=11.sp,modifier=Modifier.semantics { liveRegion=LiveRegionMode.Polite })
                     }
-                    AliflixIconButton(onClick={session.newChat();draft=""}) { Icon(Icons.Rounded.AddComment,"New chat",tint=AliflixAccentSecondary) }
+                    AliflixIconButton(onClick={session.newChat();draft="";onStart()}) { Icon(Icons.Rounded.AddComment,"New chat",tint=AliflixAccentSecondary) }
                 }
                 TalkTitleCards(state.cards.visible,::openTitle,motion=motion)
                 val list=rememberLazyListState()
@@ -149,9 +162,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                     Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)) {
                         if(!keyboardOpen)Box(anchor(Modifier.size(116.dp)))
                         Text("What are you in the mood for?",color=AliflixContentPrimary,fontSize=19.sp,fontWeight=FontWeight.Medium)
-                        if(!keyboardOpen)talkTaskStarts.forEach { (label,prompt) ->
-                            SuggestionChip(onClick={session.sendText(prompt)},label={Text(label)},shape=RoundedCornerShape(16.dp))
-                        }
+
                     }
                 } else Box(Modifier.weight(1f).fillMaxWidth()) {
                   LazyColumn(Modifier.fillMaxSize().testTag("talk-messages"),state=list,verticalArrangement=Arrangement.spacedBy(18.dp),contentPadding=PaddingValues(top=16.dp,bottom=24.dp)) {
@@ -202,8 +213,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 Box(Modifier.fillMaxWidth().weight(.32f),contentAlignment=Alignment.Center) { TalkDottedTopic(state.words,motion) }
                 TalkTitleCards(state.cards.visible,::openTitle,Modifier.padding(bottom=8.dp),motion=motion)
                 if(idle&&state.phase!="Ready") Text(state.phase,color=AliflixContentSecondary,fontSize=12.sp,modifier=Modifier.align(Alignment.CenterHorizontally).padding(bottom=12.dp))
-                Row(Modifier.fillMaxWidth().padding(bottom=20.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(20.dp,Alignment.CenterHorizontally)) {
-                    AliflixIconButton(onClick=session::stopAnswer,modifier=Modifier.size(52.dp)) { Icon(Icons.Rounded.Stop,"Stop response",tint=AliflixContentSecondary) }
+                Row(Modifier.fillMaxWidth().padding(bottom=20.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(36.dp,Alignment.CenterHorizontally)) {
                     AliflixIconButton(onClick={if(idle)onStart()else session.toggleMute()},modifier=Modifier.size(64.dp)) {
                         AnimatedContent(if(idle)0 else if(state.muted)1 else 2,label="voice-control") { mode -> Icon(if(mode==0)Icons.Rounded.Refresh else if(mode==1)Icons.Rounded.MicOff else Icons.Rounded.Mic,
                             if(idle)"Retry connection" else if(state.muted)"Unmute microphone" else "Mute microphone",tint=AliflixAccentSecondary,modifier=Modifier.size(29.dp)) }
@@ -218,7 +228,12 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
             val base=if(compact)minOf(orbAnchor.width,orbAnchor.height)else minOf(orbAnchor.width*.86f,orbAnchor.height,with(density){320.dp.toPx()})
             val names=state.cards.visible.map{listOfNotNull(it.title,it.originalTitle)}
             val narration=if(state.phase=="Speaking")state.lines.lastOrNull{it.role=="assistant"}?.text.orEmpty()else state.words
-            val focus=talkOrbMention(narration,names)
+            val mentioned=talkOrbMention(narration,names)
+            var focus by remember(state.cards.visible.map{it.key}){mutableIntStateOf(-1)}
+            LaunchedEffect(mentioned,state.phase){
+                if(state.phase=="Speaking"&&mentioned>=0){kotlinx.coroutines.delay(480);focus=mentioned}
+                else if(state.phase=="Listening")focus=-1
+            }
             val intent=talkOrbIntent(state.phase,state.cards.visible.size,focus)
             val diameter=base*(if(compact)1f else intent.scale)
             val roam=if(small)0f else with(density){(if(compact)3f else 11f).dp.toPx()}

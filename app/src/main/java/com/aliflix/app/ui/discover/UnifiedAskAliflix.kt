@@ -184,7 +184,7 @@ internal fun UnifiedAskAliflix(
             }
             Row(Modifier.fillMaxWidth().padding(horizontal=20.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 AskAction("Similar",Icons.Rounded.Layers,similar,Modifier.weight(1f),AskActionGlyph.Similar){similar=!similar;onEditor(editor.copy(mode=if(similar)1 else 0))}
-                AskAction("Filters",Icons.Rounded.Tune,selectedFilterCount(editor.spec)>0,Modifier.weight(1f),AskActionGlyph.Filters){sheet=true}
+                AskAction("Filters",Icons.Rounded.Tune,selectedFilterCount(editor.spec.copy(requiredStatus=null))>0,Modifier.weight(1f),AskActionGlyph.Filters){sheet=true}
                 AskAction("Surprise Me",Icons.Rounded.Shuffle,false,Modifier.weight(1.25f),AskActionGlyph.Surprise){
                     if(busy)return@AskAction
                     val prefs=context.getSharedPreferences("aliflix-ask-surprises-"+(com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid?:"guest"),0);val prior=prefs.getStringSet("seen",emptySet()).orEmpty()

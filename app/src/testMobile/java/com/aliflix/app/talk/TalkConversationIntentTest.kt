@@ -37,11 +37,6 @@ class TalkConversationIntentTest {
         }
         assertEquals(TalkIntent.DECISION,talkConversationIntent("Choose Arrival or Moon. Do not choose Dune."))
     }
-    @Test fun bridgeDescribesTheNewRequestRatherThanAnExcludedPreviousGenre() {
-        assertTrue(talkResearchBridge("Two science-fiction films, no space battles. Do not reuse either comedy.","en").contains("science fiction"))
-        assertFalse(talkResearchBridge("A quiet drama, not comedy or science fiction.","en").contains("science fiction"))
-        assertTrue(talkResearchBridge("Two deadpan comedies. Do not choose Brazil or Office Space.","en").contains("comedy"))
-    }
     @Test fun completedContentNeverRetainsWritingJustBecauseAuxiliaryWorkIsPending() {
         assertTrue(talkShowsResponseProgress(true,false))
         assertFalse(talkShowsResponseProgress(true,true))
@@ -57,17 +52,6 @@ class TalkConversationIntentTest {
             assertEquals(prompt,TalkIntent.STOP,talkConversationIntent(prompt))
         for(prompt in listOf("If I say wait a second, will you stop?","Explain the ending of Never Let Me Go","Stop and compare Arrival with Moon instead"))
             assertNotEquals(prompt,TalkIntent.STOP,talkConversationIntent(prompt))
-    }
-    @Test fun echoAndClicksDoNotGrabTheFloorButSustainedNearSpeechCan() {
-        val gate=TalkBargeInGate()
-        repeat(8){assertFalse(gate.accept(.99f,it*32L,true,false))}
-        assertFalse(gate.accept(.95f,1000,true,true))
-        assertFalse(gate.accept(.1f,1032,true,true))
-        assertFalse(gate.accept(.96f,1100,true,true))
-        assertFalse(gate.accept(.96f,1132,true,true))
-        assertFalse(gate.accept(.96f,1164,true,true))
-        assertTrue(gate.accept(.96f,1196,true,true))
-        assertFalse(gate.accept(.96f,1228,true,true))
     }
     @Test fun questionsAndQuotesNeverAuthorizeMutationsWhileCompoundCommandsKeepTheirScope() {
         assertFalse(talkActionRequested("save","If I asked you to save Arrival, what would you need?"))

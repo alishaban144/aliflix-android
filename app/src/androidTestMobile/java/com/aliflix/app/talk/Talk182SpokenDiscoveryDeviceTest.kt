@@ -19,10 +19,13 @@ class Talk182SpokenDiscoveryDeviceTest {
   try{runBlocking{
    for(name in listOf("comedy","science","beehive")){
     if(name!="comedy")withContext(Dispatchers.Main){voice.newChat()}
-    val interruptions=voice.debugInterruptions
+    val unsolicited=voice.debugUnsolicitedInterruptions
     val pcm=File(i.targetContext.getExternalFilesDir(null),"talk-validation/$name-182.pcm").readBytes()
     val began=SystemClock.elapsedRealtime();val first=voice.state.value.lines.size
     withContext(Dispatchers.Main){voice.debugInjectMicrophonePcm(pcm)}
+    // The owned request may deliberately barge into the new startup welcome.
+    // Capture resumes only now: any further interruption is a false floor take.
+    val interruptions=voice.debugInterruptions
     withTimeout(100000){
      var settledAt=0L
      while(true){
@@ -42,6 +45,7 @@ class Talk182SpokenDiscoveryDeviceTest {
     assertTrue("A response must contain substance",answer.length>40)
     assertEquals("Assistant output must use the assistant stream",android.media.AudioAttributes.USAGE_ASSISTANT,voice.debugAudioSnapshot().getInt("outputUsage"))
     assertEquals("The physical speaker cannot interrupt its own response",interruptions,voice.debugInterruptions)
+    assertEquals("Tools/recovery cannot interrupt their own generation",unsolicited,voice.debugUnsolicitedInterruptions)
     if(name=="beehive"){
      assertTrue("Developed discussion must go beyond an opening remark: $answer",answer.split(Regex("\\s+")).size>=65)
      val concrete=listOf("colour","color","light","fram","camera","compos","honey","amber","window","shadow","yellow","palette","contrast","close-up","projection","interior","tone")
@@ -60,7 +64,7 @@ class Talk182SpokenDiscoveryDeviceTest {
     }
    }
   }}finally{
-   receipt.writeText(JSONObject().put("turns",receipts).put("audio",JSONArray(voice.debugAudioTimeline.toList())).put("tools",JSONObject(voice.debugToolCalls.toMap())).put("lines",JSONArray(voice.state.value.lines.map{JSONObject().put("role",it.role).put("text",it.text)})).put("events",JSONArray(voice.debugWireEvents.toList())).toString(2))
+   receipt.writeText(JSONObject().put("turns",receipts).put("audio",JSONArray(voice.debugAudioTimeline.toList())).put("activity",JSONArray(voice.debugActivityEvents.toList())).put("interruptions",voice.debugInterruptions).put("unsolicitedInterruptions",voice.debugUnsolicitedInterruptions).put("tools",JSONObject(voice.debugToolCalls.toMap())).put("lines",JSONArray(voice.state.value.lines.map{JSONObject().put("role",it.role).put("text",it.text)})).put("events",JSONArray(voice.debugWireEvents.toList())).toString(2))
    i.runOnMainSync{voice.suspendSession();activity.finish()}
   }
  }

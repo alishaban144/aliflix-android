@@ -23,6 +23,7 @@ import org.json.JSONObject
 @Composable
 internal fun TalkAgentSheet(session:TalkVoiceSession,onDismiss:()->Unit,onOpen:(TalkTitleCard)->Unit) {
  val missions by session.agent.missions.collectAsState()
+ val downloads by session.downloadWork.jobs.collectAsState()
  val scope=rememberCoroutineScope()
  val uri=LocalUriHandler.current
  var busy by remember{mutableStateOf(false)}
@@ -31,14 +32,33 @@ internal fun TalkAgentSheet(session:TalkVoiceSession,onDismiss:()->Unit,onOpen:(
  LaunchedEffect(Unit){while(true){busy=true;failed=runCatching{session.agent.refresh()}.isFailure;busy=false;delay(6000)}}
  ModalBottomSheet(onDismissRequest=onDismiss,modifier=Modifier.testTag("talk-agent-workspace")) {
   Row(Modifier.fillMaxWidth().padding(horizontal=20.dp),verticalAlignment=Alignment.CenterVertically){
-   Text("Tasks",Modifier.weight(1f),style=MaterialTheme.typography.headlineSmall)
+   Text("Background work",Modifier.weight(1f),style=MaterialTheme.typography.headlineSmall)
    IconButton(onClick={refresh()},enabled=!busy){Icon(if(failed)Icons.Rounded.Refresh else Icons.Rounded.Sync,"Refresh tasks")}
   }
   LazyColumn(Modifier.fillMaxWidth().heightIn(min=220.dp,max=620.dp).navigationBarsPadding(),contentPadding=PaddingValues(20.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
-   if(missions.none{it.optString("status")!="cancelled"})item("task-starts"){
-    Column(verticalArrangement=Arrangement.spacedBy(8.dp)){talkTaskStarts.forEach{(label,prompt)->
-     SuggestionChip(onClick={onDismiss();session.sendText(prompt)},label={Text(label)})
-    }}
+   if(downloads.none{it.stage!="Cancelled"}&&missions.none{it.optString("status")!="cancelled"})item("idle"){Text("Idle",color=MaterialTheme.colorScheme.onSurfaceVariant)}
+   items(downloads.filterNot{it.stage=="Cancelled"},key={"download:"+it.id}){job->
+    Column(Modifier.fillMaxWidth().testTag("talk-download-${job.id}")){
+     Row(verticalAlignment=Alignment.CenterVertically){
+      Column(Modifier.weight(1f)){
+       Text(job.card.title,style=MaterialTheme.typography.titleMedium)
+       Text(listOfNotNull(job.season?.let{"S$it · E${job.episode}"},job.quality,job.subtitles.takeIf{it.isNotBlank()}?.uppercase()).joinToString(" · "),fontSize=12.sp)
+       Text(listOfNotNull(job.stage,job.detail.takeIf{it.isNotBlank()&&job.stage!="Failed"}).joinToString(" · "),fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+      when(job.stage){
+       "Failed"->IconButton(onClick={session.downloadWork.retry(job.id)}){Icon(Icons.Rounded.Refresh,"Retry download")}
+       "Verification required"->TextButton(onClick={session.downloadWork.verify(job.id)}){Text("Verify")}
+       "Paused"->IconButton(onClick={session.downloadWork.resume(job.id)}){Icon(Icons.Rounded.PlayArrow,"Resume download")}
+       "Downloading","Waiting for network"->IconButton(onClick={session.downloadWork.pause(job.id)}){Icon(Icons.Rounded.Pause,"Pause download")}
+      }
+      if(job.stage!="Completed")IconButton(onClick={session.downloadWork.cancel(job.id)}){Icon(Icons.Rounded.Close,"Cancel download")}
+     }
+     if(job.active&&job.stage!="Paused"){
+      val progress=job.progress
+      if(progress!=null)LinearProgressIndicator(progress={progress},modifier=Modifier.fillMaxWidth()) else LinearProgressIndicator(Modifier.fillMaxWidth())
+     }
+     if(job.detail.isNotBlank()&&job.stage=="Failed")Text(job.detail,fontSize=12.sp,color=MaterialTheme.colorScheme.error)
+    }
    }
    items(missions.filterNot{it.optString("status")=="cancelled"},key={it.getString("id")}){mission->
     val plan=mission.getJSONObject("plan");val status=mission.optString("status")

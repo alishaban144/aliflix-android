@@ -63,7 +63,7 @@ class TalkCompanionDeviceTest {
      .put("input",session.state.value.lines.lastOrNull{it.role=="user"}?.text))
    }
    val data=talkAppContext(context)
-   assertEquals("Android mobile",data.getString("platform"));assertTrue(data.getJSONArray("features").length()>=9)
+   assertEquals("Android mobile",data.getString("platform"));assertTrue(data.getJSONObject("capabilities").getJSONObject("downloads").getBoolean("queuedIsCompleted").not())
    withContext(Dispatchers.Main){talk.finish()}
    withTimeout(10000){while(resumed()!==main)delay(50)};delay(1000)
    assertEquals("Resume",session.state.value.phase);assertFalse(main.isFinishing)

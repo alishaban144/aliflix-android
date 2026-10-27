@@ -89,7 +89,7 @@ fun AskAliflixFilters(
     onSearchCompanies: suspend (String) -> List<ProductionCompanyFilter> = { emptyList() },
     modifier: Modifier = Modifier,
 ) {
-    var genresOpen by rememberSaveable { mutableStateOf(true) }
+    var genresOpen by rememberSaveable { mutableStateOf(false) }
     var exclusionsOpen by rememberSaveable { mutableStateOf(false) }
     var yearRuntimeOpen by rememberSaveable { mutableStateOf(false) }
     var ratingOpen by rememberSaveable { mutableStateOf(false) }
@@ -127,7 +127,7 @@ fun AskAliflixFilters(
     val genres = askTmdbGenres(spec.mediaKind).map(AskTmdbGenre::name)
     val genreChoices = askGenreChoices(spec.mediaKind)
     val selectedGenreChoices = spec.includedGenres.filterNot { it == "Animation" } +
-        listOfNotNull(spec.animationFilter?.label)
+        spec.animationChoices.map { it.label }
     val activeCount = selectedFilterCount(spec)
     val hasFilters = activeCount > 0
     val rangeValidationMessage = spec.askRangeValidationMessage()
@@ -168,7 +168,7 @@ fun AskAliflixFilters(
                 FilterSection(
                     title = "Genres",
                     icon = Icons.Rounded.Movie,
-                    badgeCount = spec.includedGenres.size + if (spec.animationFilter != null) 1 else 0,
+                    badgeCount = spec.includedGenres.size + spec.animationChoices.size,
                     expanded = genresOpen,
                     onToggle = { genresOpen = !genresOpen },
                 ) {
@@ -179,13 +179,14 @@ fun AskAliflixFilters(
                         onToggle = { choice ->
                             val animationChoice = AnimationFilter.entries.firstOrNull { it.label == choice }
                             if (animationChoice != null) {
-                                val next = animationChoice.takeUnless { spec.animationFilter == animationChoice }
+                                val next = spec.animationChoices.toggle(animationChoice)
                                 onSpecChanged(spec.copy(
-                                    animationFilter = next,
+                                    animationFilter = null,
+                                        animationFilters = next,
                                     includedGenres = spec.includedGenres - "Animation",
                                     excludedGenres = spec.excludedGenres - "Animation",
-                                    originalLanguage = if (next != null) null else spec.originalLanguage,
-                                    countries = if (next != null) emptyList() else spec.countries,
+                                    originalLanguage = if (next.isNotEmpty()) null else spec.originalLanguage,
+                                    countries = if (next.isNotEmpty()) emptyList() else spec.countries,
                                 ))
                             } else {
                                 val next = spec.includedGenres.toggle(choice)
@@ -304,6 +305,7 @@ fun AskAliflixFilters(
                                 excludedGenres = next,
                                 includedGenres = spec.includedGenres - genre,
                                 animationFilter = if (genre == "Animation") null else spec.animationFilter,
+                                animationFilters = if (genre == "Animation") emptyList() else spec.animationFilters,
                             ))
                         },
                     )
@@ -408,12 +410,13 @@ fun AskAliflixFilters(
                                 onClick = {
                                     onSpecChanged(spec.copy(
                                         originalLanguage = option.code,
-                                        includedGenres = if (spec.animationFilter != null) {
+                                        includedGenres = if (spec.animationChoices.isNotEmpty()) {
                                             (spec.includedGenres + "Animation").distinct()
                                         } else {
                                             spec.includedGenres
                                         },
                                         animationFilter = null,
+                                        animationFilters = emptyList(),
                                     ))
                                 },
                             )
@@ -431,12 +434,13 @@ fun AskAliflixFilters(
                                     val next = if (option.code == null) emptyList() else spec.countries.toggle(option.code)
                                     onSpecChanged(spec.copy(
                                         countries = next,
-                                        includedGenres = if (spec.animationFilter != null) {
+                                        includedGenres = if (spec.animationChoices.isNotEmpty()) {
                                             (spec.includedGenres + "Animation").distinct()
                                         } else {
                                             spec.includedGenres
                                         },
                                         animationFilter = null,
+                                        animationFilters = emptyList(),
                                     ))
                                 },
                             )
@@ -715,7 +719,7 @@ private data class FilterOption(val label: String, val code: String?)
 
 internal fun CatalogDiscoverySpec.askFilterSummary(): String {
     val values = buildList {
-        animationFilter?.let { add(it.label) }
+        animationChoices.forEach { add(it.label) }
         if (includedGenres.isNotEmpty()) add(includedGenres.joinToString(", "))
         if (excludedGenres.isNotEmpty()) add("Avoid ${excludedGenres.joinToString(", ")}")
         when {
@@ -748,7 +752,7 @@ internal fun CatalogDiscoverySpec.askFilterSummary(): String {
 
 internal fun selectedFilterCount(spec: CatalogDiscoverySpec): Int =
     spec.includedGenres.size + spec.excludedGenres.size + spec.productionCompanies.size +
-        (if (spec.animationFilter != null) 1 else 0) +
+        (spec.animationChoices.size) +
         listOf(
             spec.yearMinimum != null || spec.yearMaximum != null,
             spec.runtimeMinimumMinutes != null || spec.runtimeMaximumMinutes != null,
@@ -768,6 +772,7 @@ private fun CatalogDiscoverySpec.clearAskFilters() = copy(
     productionCompanies = emptyList(),
     originalLanguage = null,
     animationFilter = null,
+                                        animationFilters = emptyList(),
     requiredStatus = null,
     countries = emptyList(),
     sortBy = RecommendationSort.MOST_POPULAR,

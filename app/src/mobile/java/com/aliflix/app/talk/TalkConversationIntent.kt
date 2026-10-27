@@ -52,7 +52,7 @@ internal fun talkExplicitComparisonTitles(question:String):List<String> {
 /** High-confidence speech-act boundaries, not an extra permission dialog.
  * Model-proposed actions cannot turn a quote, hypothetical or negation into a write. */
 internal fun talkActionRequested(action:String,question:String):Boolean {
-    if(action in setOf("show_card","title_state","player_state","downloads_state","library_state"))return true
+    if(action in setOf("show_card","title_state","player_state","downloads_state","library_state","download_work"))return true
     val q=question.lowercase(Locale.ROOT).trim()
     if(Regex("^(?:what if|what would|how (?:do|can|would)|if i (?:ask|asked|say|said|were|wanted|told)|suppose|hypothetically|imagine that)\\b").containsMatchIn(q))return false
     if(Regex("\\b(?:just a quote|only quoting|just an example|as an example|quoted phrase)\\b").containsMatchIn(q))return false
@@ -62,7 +62,7 @@ internal fun talkActionRequested(action:String,question:String):Boolean {
         "favorite"->"favorite|favourite|like|love|mark";"unfavorite"->"unfavorite|unfavourite|unlike|remove"
         "dislike"->"dislike|hide|reject";"undo_dislike","undo"->"undo|restore|bring back"
         "play","resume"->"play|resume|start";"pause"->"pause|stop"
-        "download"->"download";"set_setting","set_voice","set_history"->"change|set|turn|switch|enable|disable"
+        "cancel_download_work"->"cancel|stop|remove";"download"->"download";"set_setting","set_voice","set_history"->"change|set|turn|switch|enable|disable"
         "open_title","open_screen","similar","search"->"open|show|go|search|find|navigate"
         "agent_create"->"create|build|plan|monitor|watch|research|prepare|schedule|make|start|keep"
         "agent_update"->"update|change|revise|replace|adjust|modify"

@@ -50,6 +50,7 @@ internal class TalkAgentWorkspace(private val context:Context) {
  suspend fun refresh(){command(JSONObject().put("operation","list"))}
  fun preferences():JSONArray=runCatching{JSONArray(preferences(owner).getString("memories","[]"))}.getOrDefault(JSONArray())
  fun restore(){
+  details.clear()
   val raw=runCatching{JSONArray(preferences(owner).getString("missions","[]"))}.getOrDefault(JSONArray())
   _missions.value=(0 until raw.length()).mapNotNull{raw.optJSONObject(it)}
  }

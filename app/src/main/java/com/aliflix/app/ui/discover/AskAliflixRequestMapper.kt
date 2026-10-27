@@ -88,7 +88,7 @@ object AskAliflixRequestMapper {
     }
 
     private fun CatalogDiscoverySpec.toWorkerFilters(): V3RecommendationFilters {
-        val animationSelected = animationFilter != null
+        val animationSelected = animationChoices.isNotEmpty()
         val resolvedIncludedGenres = if (animationSelected) {
             (includedGenres + "Animation").distinct()
         } else {
@@ -96,7 +96,7 @@ object AskAliflixRequestMapper {
         }
         val resolvedExcludedGenres = if (animationSelected) excludedGenres - "Animation" else excludedGenres
         val resolvedOriginalLanguage = if (animationSelected) null else originalLanguage
-        val resolvedCountries = animationFilter?.let { listOf(it.tmdbOriginCountry) } ?: countries
+        val resolvedCountries = if (animationSelected) animationChoices.map { it.tmdbOriginCountry }.distinct() else countries
         return V3RecommendationFilters(
             minimumYear = yearMinimum,
             maximumYear = yearMaximum,

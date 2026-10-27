@@ -73,21 +73,10 @@ internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier =
     var idleLook by remember { mutableStateOf(Offset(0f,.08f)) }
     val speaking by rememberUpdatedState(conversing)
     val speechEnergy by rememberUpdatedState(voiceEnergy)
-    // Attentive focus with brief thinking glances, not continuous random wandering.
-    // Keep this loop alive across turn boundaries to avoid a visible gaze snap.
+    // Conversation attention is stable. Pointer interaction remains responsive;
+    // speech does not choose random gaze destinations.
     LaunchedEffect(voiceCompanion,motion,resumed) {
         idleLook=Offset(0f,if(voiceCompanion).06f else .08f)
-        if(voiceCompanion&&motion&&resumed)while(true) {
-            kotlinx.coroutines.delay(if(speaking)kotlin.random.Random.nextLong(2500,4600) else kotlin.random.Random.nextLong(4300,6800))
-            val glance=speaking&&kotlin.random.Random.nextFloat()<.72f
-            idleLook=if(glance)Offset((if(kotlin.random.Random.nextBoolean())1f else -1f)*(.10f+kotlin.random.Random.nextFloat()*.08f),
-                .02f+kotlin.random.Random.nextFloat()*.1f)
-                else Offset(kotlin.random.Random.nextFloat()*.05f-.025f,.04f+kotlin.random.Random.nextFloat()*.035f)
-            if(glance) {
-                kotlinx.coroutines.delay(kotlin.random.Random.nextLong(450,900))
-                idleLook=Offset(0f,.06f)
-            }
-        }
     }
     LaunchedEffect(voiceCompanion,motion,resumed) {
         if(voiceCompanion&&motion&&resumed)while(true) {

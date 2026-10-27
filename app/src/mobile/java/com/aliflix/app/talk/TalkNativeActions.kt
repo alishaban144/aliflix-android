@@ -27,6 +27,12 @@ internal class TalkNativeActions(private val context:Context,private val catalog
     fun clearUndo(){lastChange=null;lastBatch=emptyList()}
     suspend fun execute(args:JSONObject):TalkNativeResult {
         val action=args.optString("action")
+        if(action=="download_work")return TalkNativeResult(JSONObject().put("status","current").put("jobs",JSONArray(TalkDownloadWork.get(context).jobs.value.map{it.json()})))
+        if(action=="cancel_download_work"){
+            val id=args.getString("workId");val work=TalkDownloadWork.get(context)
+            require(work.jobs.value.any{it.id==id}){"Unknown download work"}
+            return TalkNativeResult(JSONObject().put("status",work.cancel(id)).put("workId",id))
+        }
         if(action=="library_state")return libraryState(args)
         if(action=="batch_library")return batch(args)
         if(action=="undo")return undo()
@@ -56,6 +62,7 @@ internal class TalkNativeActions(private val context:Context,private val catalog
         val before=current()
         if(action=="title_state")return TalkNativeResult(JSONObject().put("status","observed").put("card",card.json())
             .put("saved",library.isInMyList(media)).put("favorite",library.isLiked(media)).put("disliked",media.key in AskTaste(context).rejected()))
+        if(action=="download")return TalkNativeResult(TalkDownloadWork.get(context).start(card,args))
         when(action){
             "save","unsave"->if(library.isInMyList(media)!=(action=="save"))library.toggleMyList(media)
             "favorite","unfavorite"->if(library.isLiked(media)!=(action=="favorite"))library.toggleLike(media)

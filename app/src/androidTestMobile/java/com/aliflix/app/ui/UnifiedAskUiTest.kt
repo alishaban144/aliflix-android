@@ -15,6 +15,23 @@ import org.junit.Test
 /** No remote research, provider traffic or mutation of the viewer's library. */
 class UnifiedAskUiTest {
  @get:Rule val compose=createComposeRule()
+ private fun capture(name:String){
+  val i=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+  i.uiAutomation.takeScreenshot()?.let{bitmap->java.io.File(i.targetContext.getExternalFilesDir(null),name).outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()}
+ }
+ @Test fun genresStartsCollapsedAndBothAnimationOriginsRemainSelected(){
+  var editor by mutableStateOf(AskAliflixEditorState())
+  compose.setContent{AliflixMobileTheme{UnifiedAskAliflix(AskAliflixUiState.Editing,editor,{editor=it},{},{},{},{},emptyList(),false,{}, {emptyList()},rememberLazyListState(),emptySet(),{},Modifier,dailyProvider={emptyList()})}}
+  compose.onAllNodesWithText("Filters",useUnmergedTree=true).onFirst().performClick()
+  compose.onNodeWithText("Japanese Animation").assertDoesNotExist()
+  compose.onNodeWithText("Genres").performClick()
+  compose.onNodeWithText("Japanese Animation").performScrollTo().performClick()
+  compose.onNodeWithText("American Animation").performScrollTo().performClick()
+  compose.runOnIdle{assertEquals(2,editor.spec.animationChoices.size)}
+  compose.onNodeWithText("Japanese Animation").assertIsOn()
+  compose.onNodeWithText("American Animation").assertIsOn()
+  capture("ask-183-animation-filters.png")
+ }
  @Test fun switchingFromDescribeResultsSubmitsTheSelectedSimilarAnchor(){
   val anchor=Media(1396,MediaType.TV,"Breaking Bad",year="2008")
   val spec=com.aliflix.app.recommendation.CatalogDiscoverySpec(mediaKind=com.aliflix.app.recommendation.RecommendationMediaKind.SERIES)
@@ -85,11 +102,18 @@ class UnifiedAskUiTest {
  }
  @Test fun researchHasOneLargeLoaderAndHidesForYou(){
   val movie=Media(27205,MediaType.MOVIE,"Inception",year="2010")
+  compose.mainClock.autoAdvance=false
   compose.setContent{AliflixMobileTheme{UnifiedAskAliflix(AskAliflixUiState.Searching("identity"),AskAliflixEditorState(),{},{},{},{},{},emptyList(),false,{}, {emptyList()},rememberLazyListState(),emptySet(),{},Modifier,dailyProvider={listOf(movie)})}}
+  compose.mainClock.advanceTimeBy(850)
+  compose.waitForIdle()
   compose.onNodeWithTag("ask-daily").assertDoesNotExist()
   compose.onNodeWithText("Inception").assertDoesNotExist()
   compose.onNodeWithTag("ask-primary-loader").assertIsDisplayed()
   compose.onAllNodesWithContentDescription("Loading matches").assertCountEquals(1)
+  capture("ask-183-morph-loading.png")
+  compose.mainClock.advanceTimeBy(350)
+  compose.waitForIdle()
+  capture("ask-183-morph-loading-later.png")
  }
  @Test fun composerAnchorsFiltersAndMediaSelectionShareOneScreen(){
   var editor by mutableStateOf(AskAliflixEditorState())
@@ -118,10 +142,12 @@ class UnifiedAskUiTest {
   compose.onNodeWithTag("ask-series-status").assertIsDisplayed()
   compose.onNodeWithTag("ask-status-running").performClick()
   compose.runOnIdle{assertEquals("Returning Series",editor.spec.requiredStatus)}
+  compose.onNodeWithText("Filters",useUnmergedTree=true).onParent().assertIsNotSelected()
   compose.onNodeWithTag("ask-send").performClick()
   compose.runOnIdle{assertEquals("returning",com.aliflix.app.ui.discover.AskAliflixRequestMapper.map(requireNotNull(submitted)).workerRequest.filters.seriesStatus)}
   compose.onNodeWithTag("ask-status-ended").performClick()
   compose.runOnIdle{assertEquals("Ended",editor.spec.requiredStatus)}
+  compose.onNodeWithText("Filters",useUnmergedTree=true).onParent().assertIsNotSelected()
   compose.onNodeWithText("Surprise Me",useUnmergedTree=true).performClick()
   compose.runOnIdle{assertEquals("Ended",(submitted as AskAliflixRequest.Describe).filters?.requiredStatus)}
   compose.onNodeWithTag("ask-status-all").performClick()

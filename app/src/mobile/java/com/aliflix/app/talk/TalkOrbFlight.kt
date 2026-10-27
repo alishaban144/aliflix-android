@@ -22,7 +22,7 @@ internal class TalkOrbFlight {
   // return to the viewer. No random body destinations or roaming timer.
   if(state!=phase){
    phase=state;fromX=attentionX;fromY=attentionY
-   toX=if(state=="Thinking")-.6f else 0f;toY=if(state=="Thinking")-.8f else 0f
+   toX=if(state=="Thinking")-.20f else 0f;toY=if(state=="Thinking")-.25f else 0f
    duration=.36f+.34f*hypot(toX-fromX,toY-fromY);age=0f
   }
   arousal+=(energy.coerceIn(0f,1f)-arousal)*(1f-exp(-dt/if(energy>arousal).055f else .32f))
@@ -37,13 +37,13 @@ internal class TalkOrbFlight {
   // keyboard or mode changes the target; no animation is restarted mid-flight.
   val steps=maxOf(1,ceil(dt/.008f).toInt());val h=dt/steps
   repeat(steps){
-   val omega=7f
+   val omega=5f
    vx+=((aimX-p.x)*omega*omega-2f*omega*vx)*h
    vy+=((aimY-p.y)*omega*omega-2f*omega*vy)*h
    vs+=((size-p.diameter)*36f-12f*vs)*h
    p=p.copy(x=p.x+vx*h,y=p.y+vy*h,diameter=(p.diameter+vs*h).coerceAtLeast(1f))
   }
-  p=p.copy(bank=(-vx/170f).coerceIn(-2.5f,2.5f))
+  p=p.copy(bank=(-vx/300f).coerceIn(-.8f,.8f))
   pose=p;return p
  }
 }
