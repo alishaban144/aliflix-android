@@ -26,6 +26,8 @@ struct Processor {
   std::array<float, 240> render{};
   std::array<int16_t, 160> capture{};
   std::array<float, 160> capture_float{};
+  uint64_t render_frames = 0;
+  uint64_t capture_frames = 0;
   Processor() {
     webrtc::AudioProcessing::Config config;
     config.echo_canceller.enabled = true;
@@ -36,6 +38,7 @@ struct Processor {
     apm = webrtc::AudioProcessingBuilder().SetConfig(config).SetEchoControlFactory(std::make_unique<EchoFactory>()).Create();
   }
   int initialize() {
+    render_frames = capture_frames = 0;
     webrtc::ProcessingConfig config;
     config.input_stream() = webrtc::StreamConfig(16000, 1);
     config.output_stream() = webrtc::StreamConfig(16000, 1);
@@ -70,7 +73,9 @@ Java_com_aliflix_app_talk_TalkApmNative_render(JNIEnv* env, jobject, jlong h, js
   const float* src[] = {p->render.data()};
   float* dst[] = {p->render.data()};
   const webrtc::StreamConfig stream(24000, 1);
-  return p->apm->ProcessReverseStream(src, stream, stream, dst) == 0;
+  int result = p->apm->ProcessReverseStream(src, stream, stream, dst);
+  if (result == 0) ++p->render_frames;
+  return result == 0;
 }
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_aliflix_app_talk_TalkApmNative_capture(JNIEnv* env, jobject, jlong h, jshortArray pcm, jint delay) {
@@ -78,12 +83,29 @@ Java_com_aliflix_app_talk_TalkApmNative_capture(JNIEnv* env, jobject, jlong h, j
   auto* p = get(h);
   env->GetShortArrayRegion(pcm, 0, 160, p->capture.data());
   if (env->ExceptionCheck()) return false;
-  p->apm->set_stream_delay_ms(std::clamp(static_cast<int>(delay), 0, 500));
+  // A live microphone keeps ticking between replies. AEC3's external-delay
+  // path requires the reverse clock to keep ticking too, including silence.
+  // Otherwise its render-capture counter difference eventually underflows the
+  // circular spectrum buffer. Bounded recovery also covers a stalled capture.
+  if (p->render_frames > p->capture_frames + 50 && p->initialize() != 0) return false;
+  if (p->render_frames <= p->capture_frames) {
+    std::array<float, 240> silence{};
+    const float* src[] = {silence.data()};
+    float* dst[] = {silence.data()};
+    const webrtc::StreamConfig reverse(24000, 1);
+    if (p->apm->ProcessReverseStream(src, reverse, reverse, dst) != 0) return false;
+    ++p->render_frames;
+  }
+  // AEC3 already accounts for reverse calls queued ahead of capture. Deduct
+  // that lead from Android's measured reference-to-capture delay, not twice.
+  int lead_ms = static_cast<int>(p->render_frames - p->capture_frames - 1) * 10;
+  p->apm->set_stream_delay_ms(std::clamp(static_cast<int>(delay) - lead_ms, 0, 500));
   const webrtc::StreamConfig stream(16000, 1);
   for (size_t i = 0; i < p->capture.size(); ++i) p->capture_float[i] = p->capture[i] / 32768.f;
   const float* src[] = {p->capture_float.data()};
   float* dst[] = {p->capture_float.data()};
   int result = p->apm->ProcessStream(src, stream, stream, dst);
+  if (result == 0) ++p->capture_frames;
   for (size_t i = 0; i < p->capture.size(); ++i) p->capture[i] = static_cast<int16_t>(std::clamp(p->capture_float[i] * 32768.f, -32768.f, 32767.f));
   if (result == 0) env->SetShortArrayRegion(pcm, 0, 160, p->capture.data());
   return result == 0 && !env->ExceptionCheck();
