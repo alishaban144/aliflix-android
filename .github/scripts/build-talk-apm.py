@@ -67,12 +67,15 @@ def main():
     out = args.output / args.abi / 'libaliflix_apm.so'
     out.parent.mkdir(parents=True, exist_ok=True)
     absl = source / 'subprojects' / 'abseil-cpp-20240722.0'
-    run(compiler, '-std=c++17', '-shared', '-O2', *common,
+    arch = (['-DWEBRTC_ARCH_ARM64', '-DWEBRTC_HAS_NEON'] if args.abi=='arm64-v8a' else
+            ['-DWEBRTC_ARCH_ARM', '-DWEBRTC_ARCH_ARM_V7', '-DWEBRTC_HAS_NEON', '-mfpu=neon'] if args.abi=='armeabi-v7a' else
+            ['-DWEBRTC_ENABLE_AVX2'])
+    run(compiler, '-std=c++17', '-shared', '-O2', *common, *arch,
         '-DWEBRTC_POSIX', '-DWEBRTC_ANDROID', '-DWEBRTC_LINUX', '-DWEBRTC_APM_DEBUG_DUMP=0', '-DNDEBUG',
         '-I' + str(source / 'webrtc'), '-I' + str(absl),
         ROOT / 'app/src/mobile/cpp/talk_apm.cpp', '-Wl,--start-group', *libraries,
         '-Wl,--end-group', '-static-libstdc++', '-Wl,--exclude-libs,ALL',
-        '-Wl,--gc-sections', '-Wl,-z,defs', '-Wl,-z,max-page-size=16384',
+        '-Wl,--gc-sections', '-Wl,-z,defs', '-Wl,-Map,' + str(out.parent / 'link-map.txt'), '-Wl,-z,max-page-size=16384',
         '-Wl,-z,common-page-size=16384', '-llog', '-latomic', '-ldl', '-lm', '-o', out)
     run(bin_dir / 'llvm-strip', '--strip-unneeded', out)
     manifest = {'abi': args.abi, 'webrtcAudioProcessing': VERSION,
