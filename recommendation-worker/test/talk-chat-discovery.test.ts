@@ -38,4 +38,11 @@ describe('one conversation with mode-appropriate discovery',()=>{
   expect(TalkContextSchema.parse({companionVersion:10,textMode:true}).textMode).toBe(true);
   expect(TalkContextSchema.parse({companionVersion:9}).textMode).toBeUndefined();
  });
+ it('gives voice an actionable contextual observation path without adding it to text chat',()=>{
+  const voice=liveSetup(TalkContextSchema.parse({companionVersion:10,textMode:false,recentProgress:[]}));
+  const chat=liveSetup(TalkContextSchema.parse({companionVersion:10,textMode:true,recentProgress:[]}));
+  expect(voice.systemInstruction.parts[0].text).toContain('then call research_note once');
+  expect(voice.systemInstruction.parts[0].text).toContain('If final results have already arrived, skip');
+  expect(chat.systemInstruction.parts[0].text).not.toContain('then call research_note once');
+ });
 });
