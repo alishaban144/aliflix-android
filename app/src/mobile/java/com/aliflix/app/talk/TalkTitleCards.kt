@@ -36,6 +36,7 @@ import kotlinx.coroutines.delay
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.semantics.*
 
 internal data class TalkTitleCard(val id:Int,val type:MediaType,val title:String,val year:String="",val posterPath:String?=null,val originalTitle:String?=null) {
@@ -43,7 +44,7 @@ internal data class TalkTitleCard(val id:Int,val type:MediaType,val title:String
     fun media()=Media(id,type,title,year=year,posterPath=posterPath)
     fun json()=JSONObject().put("id",id).put("type",type.routeName).put("title",title).put("year",year).apply{posterPath?.let{put("posterPath",it)};originalTitle?.let{put("originalTitle",it)}}
 }
-internal fun parseTalkTitles(rows:JSONArray?,limit:Int=3):List<TalkTitleCard> =
+internal fun parseTalkTitles(rows:JSONArray?,limit:Int=8):List<TalkTitleCard> =
     (0 until (rows?.length()?:0)).mapNotNull { i -> runCatching {
         val row=rows!!.getJSONObject(i);val id=row.optInt("tmdbId",row.optInt("id"));val title=row.getString("title").trim()
         val type=row.optString("mediaType",row.optString("type"));require(id>0&&title.isNotBlank()&&type in setOf("movie","tv"))
@@ -65,6 +66,7 @@ internal fun talkPosterPath(value:String?):String? {
     motion:Boolean=com.aliflix.app.ui.common.rememberMobileMotionEnabled(),
     collection:Boolean=false,focusedKey:String?=null,onBounds:(String,Rect)->Unit={_,_->},
 ) {
+    if(!collection){TalkVoiceCardStage(titles,onOpen,modifier,motion,focusedKey,onBounds);return}
     if(titles.isEmpty())return
     if(collection) BoxWithConstraints(modifier.fillMaxWidth()) {
       val columns=if(maxWidth>=320.dp&&LocalDensity.current.fontScale<=1.3f)3 else 2
@@ -76,28 +78,21 @@ internal fun talkPosterPath(value:String?):String? {
             }
         }
       }
-    } else Row(modifier.fillMaxWidth().padding(vertical=8.dp),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
-            val width=minOf(88.dp,(maxWidth-20.dp)/3)
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp,Alignment.CenterHorizontally)) {
-                titles.take(3).forEach { title -> key(title.key) { TalkRailCard(title,onOpen,Modifier.width(width),motion,focusedKey==title.key,onBounds) } }
-            }
-        }
     }
 }
 
-@Composable private fun TalkRailCard(title:TalkTitleCard,onOpen:(TalkTitleCard)->Unit,modifier:Modifier,motion:Boolean,focused:Boolean,onBounds:(String,Rect)->Unit) {
+@Composable internal fun TalkRailCard(title:TalkTitleCard,onOpen:(TalkTitleCard)->Unit,modifier:Modifier,motion:Boolean,focused:Boolean,onBounds:(String,Rect)->Unit,enabled:Boolean=true) {
     val depth by animateFloatAsState(if(focused)1f else .96f,spring(dampingRatio=1f,stiffness=if(motion)170f else 10000f),label="rail-depth")
-    Column(modifier.graphicsLayer{scaleX=depth;scaleY=depth}.onGloballyPositioned{onBounds(title.key,it.boundsInRoot())}
-        .clickable(role=Role.Button,onClick={onOpen(title)}).semantics(mergeDescendants=true){}.testTag("talk-title-${title.key}"),verticalArrangement=Arrangement.spacedBy(7.dp)) {
+    Column(modifier.graphicsLayer{scaleX=depth;scaleY=depth}.onGloballyPositioned{onBounds(title.key,it.findRootCoordinates().localBoundingBoxOf(it,clipBounds=false))}
+        .clickable(enabled=enabled,role=Role.Button,onClick={onOpen(title)}).semantics(mergeDescendants=true){}.testTag("talk-title-${title.key}"),verticalArrangement=Arrangement.spacedBy(7.dp)) {
         Box(Modifier.fillMaxWidth().aspectRatio(2f/3f).clip(RoundedCornerShape(16.dp))
             .border(if(focused)1.5.dp else .5.dp,if(focused)AliflixAccentSecondary else Color.White.copy(alpha=.12f),RoundedCornerShape(16.dp))) {
             TalkPoster(title,Modifier.fillMaxSize())
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha=.18f),Color.Transparent,Color.Black.copy(alpha=.18f)))))
-            if(title.year.isNotBlank())Text(title.year,color=Color.White,fontSize=10.sp,fontWeight=FontWeight.Medium,
+            if(title.year.isNotBlank())Text(title.year,color=Color.White,fontSize=10.sp,lineHeight=12.sp,fontWeight=FontWeight.Medium,
                 modifier=Modifier.padding(8.dp).clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha=.68f)).padding(horizontal=6.dp,vertical=3.dp))
         }
         Text(title.title,color=AliflixContentPrimary,fontSize=13.sp,lineHeight=17.sp,fontWeight=FontWeight.Medium,maxLines=2,overflow=TextOverflow.Ellipsis)
-        Text(if(title.type==MediaType.TV)"Series" else "Film",color=AliflixContentTertiary,fontSize=11.sp)
+        Text(if(title.type==MediaType.TV)"Series" else "Film",color=AliflixContentTertiary,fontSize=11.sp,lineHeight=13.sp)
     }
 }

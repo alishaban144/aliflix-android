@@ -30,8 +30,8 @@ export function canRetainTalkResearch(failure:{status:number;code:string}|undefi
  return !!failure&&([429,500,502,503,504].includes(failure.status)||(failure.status===422&&failure.code==='NO_RESEARCH'));
 }
 export function talkRecommendationCount(question:string,proposed?:number):number {
- const number=/\b(one|two|three|[123])\s+(?:[\p{L}-]+\s+){0,4}(?:titles?|movies?|films?|series|shows?|choices?|recommendations?)\b/iu.exec(question)?.[1]?.toLowerCase();
- return number?(({one:1,two:2,three:3} as Record<string,number>)[number]||Number(number)):proposed||3;
+ const number=/\b(one|two|three|four|five|six|seven|eight|[1-8])\s+(?:[\p{L}-]+\s+){0,4}(?:titles?|movies?|films?|series|shows?|choices?|recommendations?)\b/iu.exec(question)?.[1]?.toLowerCase();
+ return number?(({one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8} as Record<string,number>)[number]||Number(number)):proposed||3;
 }
 /** Chat is a collection surface; voice retains a small spoken selection. */
 export function talkChatRecommendationCount(question:string):number {

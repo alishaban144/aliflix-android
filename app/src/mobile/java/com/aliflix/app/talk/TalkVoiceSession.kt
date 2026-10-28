@@ -129,6 +129,21 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         quietTurn=false
         update { it.copy(sending=true,answerComplete=false,connectionDetail="") }
     }
+    private fun acceptLookupBridge(thought:String):Boolean {
+        val accepted=talkResearchNoteEligible(state.value.textMode,tools.values.any{it.isActive},speaking,researchNoteUsedTurn,userTurn.get())&&talkResearchNoteAllowed(thought)
+        if(!accepted)return false
+        researchNoteUsedTurn=userTurn.get();researchNote=TalkResearchNote(userTurn.get(),thought,SystemClock.elapsedRealtime()+12000)
+        recommendationDelivery.clear();outputText="";assistantLine=-1;turnHasAudio=false;responseTurn=-1L;answerDeadline.awaiting(12000)
+        if(BuildConfig.DEBUG)debugToolCalls.merge("lookup_bridge_accepted",1){a,b->a+b}
+        return true
+    }
+    private fun sendTurnContext() {
+        if(!socketReady)return
+        val prior=if(lastQuestionTurn==userTurn.get()&&state.value.lines.lastOrNull()?.role=="user")state.value.lines.dropLast(1)else state.value.lines
+        if(prior.isEmpty()&&state.value.cards.known.isEmpty())return
+        val content=JSONObject().put("turns",JSONArray().put(talkTurnContext(prior,state.value.cards))).put("turnComplete",false)
+        emit(JSONObject().put("clientContent",content))
+    }
     private var quietTurn=false
     private var comparisonPreparation:Job?=null
     private var comparisonTurn=-1L
@@ -183,6 +198,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if(!permitted)connect()
                 withTimeout(20000){while(!socketReady){check(permitted){"Connection ended"};delay(30)}}
                 answerDeadline.awaiting(45000)
+                sendTurnContext()
                 emit(JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",JSONArray().put(JSONObject().put("text",question))))).put("turnComplete",true)))
             } catch(cancelled:CancellationException){if(cancelled is TimeoutCancellationException){if(turnTicket==userTurn.get())failedTextTurn()}else throw cancelled}
             catch(_:Exception){if(turnTicket==userTurn.get())failedTextTurn()}
@@ -477,7 +493,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         // Deliberately omit every TMDB text field. Only the viewer's own progress
         // and opaque identifiers are used to look up permitted, independent data.
         val progress = (context.applicationContext as AliflixApplication).playbackProgressStore.entries.value.values.maxByOrNull { it.updatedAtMillis }
-        conversationContext = JSONObject().put("companionVersion",10).put("textMode",state.value.textMode).put("clientDate",java.time.LocalDate.now().toString()).put("locale",Locale.getDefault().toLanguageTag()).put("agentPreferences",agent.preferences()).put("voice",state.value.voice).put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
+        conversationContext = JSONObject().put("companionVersion",11).put("textMode",state.value.textMode).put("clientDate",java.time.LocalDate.now().toString()).put("locale",Locale.getDefault().toLanguageTag()).put("agentPreferences",agent.preferences()).put("voice",state.value.voice).put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
             .put("position", progress?.positionSeconds ?: 0).put("completed", progress?.let { talkPlaybackCompleted(it.positionSeconds,it.durationSeconds,it.completed) } == true)
         progress?.let { p -> conversationContext.put("id", p.media.id).put("type", p.media.type.routeName)
             p.media.imdbId?.takeIf { it.matches(Regex("tt\\d{1,12}")) }?.let { conversationContext.put("imdbId", it) } }
@@ -768,6 +784,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             for((i,original) in ordered.withIndex()) {
                 val wireName=original.getString("name")
                 val call=talkCanonicalLookup(original,currentQuestion(original.optJSONObject("args")?.optString("query").orEmpty()),state.value.cards.group.isNotEmpty());val id=call.getString("id")
+                val proposedBridge=call.optJSONObject("args")?.optString("bridge").orEmpty().trim()
+                call.optJSONObject("args")?.remove("bridge")
                 val toolKey="$providerContext:$id"
                 if(tools[toolKey]?.isActive==true)continue
                 if(call.optString("name")=="wait_for_user"&&!quietTurn&&talkConversationIntent(currentQuestion())!=TalkIntent.STOP) {
@@ -917,12 +935,12 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     val names=args.optJSONArray("titles")?:JSONArray()
                     val grounded=if(!args.optBoolean("restore")&&!args.optBoolean("dismiss"))state.value.cards.references(currentQuestion())else emptyList()
                     val useGrounded=grounded.isNotEmpty()&&!(talkConversationIntent(currentQuestion(),state.value.cards.group.size)==TalkIntent.DECISION&&names.length()>grounded.size)
-                    val requested=if(useGrounded)grounded.map{it.key}else (0 until minOf(names.length(),3)).map{names.optString(it)}
+                    val requested=if(useGrounded)grounded.map{it.key}else (0 until minOf(names.length(),8)).map{names.optString(it)}
                     val keepRecommendationGroup=(recommendationResultTurn==userTurn.get()||comparisonTurn==userTurn.get())&&state.value.cards.visible.size>1&&requested.size==1
                     val cards=if(keepRecommendationGroup)state.value.cards.visible
                         else if(args.optBoolean("restore"))state.value.cards.group
                         else if(useGrounded)grounded
-                        else if(requested.isEmpty())state.value.cards.visible.ifEmpty{state.value.cards.known.take(3)} else requested.flatMap{state.value.cards.resolve(it,args.optString("kind").takeIf{v->v in setOf("movie","tv")},args.optInt("year"))}
+                        else if(requested.isEmpty())state.value.cards.visible.ifEmpty{state.value.cards.known.take(8)} else requested.flatMap{state.value.cards.resolve(it,args.optString("kind").takeIf{v->v in setOf("movie","tv")},args.optInt("year"))}
                     if(keepRecommendationGroup||args.optBoolean("dismiss")||cards.size==requested.size&&cards.isNotEmpty()||requested.isEmpty()&&cards.isNotEmpty()) {
                         update{
                             val compared=cards.size>1&&talkConversationIntent(currentQuestion(),it.cards.group.size)==TalkIntent.DECISION
@@ -1021,15 +1039,15 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         val references=result.optJSONArray("evidence")
                         finalReferences=references?.let {a->(0 until a.length()).map {n->a.getJSONObject(n).let {TalkReference(it.getString("title"),it.getString("url"),it.optString("license",it.optString("attribution","Source")))}}}.orEmpty()
                         val needsPresentation=call.optString("name")=="recommendations"&&result.optBoolean("requiresPresentation")
-                        val returnedTitles=parseTalkTitles(result.optJSONArray("results")?:result.optJSONArray("titles"),if(state.value.textMode)24 else if(needsPresentation)8 else 3)
-                        if(needsPresentation&&returnedTitles.isNotEmpty()){recommendationPool=returnedTitles;recommendationCount=result.optInt("requestedCount",3).coerceIn(1,3);recommendationLookup=true}
+                        val returnedTitles=parseTalkTitles(result.optJSONArray("results")?:result.optJSONArray("titles"),if(state.value.textMode)24 else 8)
+                        if(needsPresentation&&returnedTitles.isNotEmpty()){recommendationPool=returnedTitles;recommendationCount=result.optInt("requestedCount",3).coerceIn(1,8);recommendationLookup=true}
                         else if(returnedTitles.isNotEmpty()) {
                             if(call.optString("name")=="recommendations")recommendationResultTurn=toolTurn
                             pendingTitles=returnedTitles
                             update{
                                 val compared=call.optString("name") in setOf("title_facts","show_title_cards")&&talkConversationIntent(toolQuestion,it.cards.group.size)==TalkIntent.DECISION
                                 val keepCompared=comparisonTurn==toolTurn&&it.cards.visible.size>1&&returnedTitles.size==1&&call.optString("name")=="show_title_cards"
-                                val cards=if(keepCompared)it.cards else it.cards.show(returnedTitles,replaceGroup=call.optString("name")=="recommendations"||compared,limit=if(it.textMode)24 else 3)
+                                val cards=if(keepCompared)it.cards else it.cards.show(returnedTitles,replaceGroup=call.optString("name")=="recommendations"||compared,limit=if(it.textMode)24 else 8)
                                 it.copy(cards=if(compared)cards.compared(returnedTitles)else cards)
                             }
                             hydrateCards(returnedTitles.filter{it.posterPath==null},toolTurn,ticket)
@@ -1050,6 +1068,11 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 }
                 tools[toolKey]=lookupJob
                 lookupJob.start()
+                if(proposedBridge.isNotBlank()&&acceptLookupBridge(proposedBridge)) {
+                    val progress=JSONObject().put("pending",true).put("speechText",proposedBridge)
+                        .put("instruction","Speak exactly speechText once, naturally. This is a contextual bridge, not the answer. Do not call another tool or add titles. The actual lookup is running; its final result follows after this speech.")
+                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,wireName,progress,"WHEN_IDLE",willContinue=true)))))
+                }
             }
         }
         message.optJSONObject("serverContent")?.let { content->
@@ -1242,7 +1265,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     return@launch
                 }
                 recommendationReply=result;recommendationPool=parseTalkTitles(result.optJSONArray("results"),8)
-                recommendationCount=result.optInt("requestedCount",3).coerceIn(1,3)
+                recommendationCount=result.optInt("requestedCount",3).coerceIn(1,8)
                 recommendationLookup=recommendationPool.isNotEmpty()
                 debugRecommendationCount=recommendationPool.size
                 debugRecommendationYears=recommendationPool.mapNotNull{it.year.toIntOrNull()}
@@ -1354,6 +1377,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 update{it.copy(phase="Listening")}
                 if(interrupted)debugLocalBarges++
                 if(BuildConfig.DEBUG)debugActivityEvents.add(JSONObject().put("start",SystemClock.elapsedRealtime()).put("barge",interrupted).put("probability",probability))
+                sendTurnContext()
                 emit(JSONObject().put("realtimeInput",JSONObject().put("activityStart",JSONObject())))
             }
             for(bytes in decision.frames)emitPcm(bytes)
@@ -1570,6 +1594,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         scope.launch {connect()}
         if(!oldSession.isNullOrBlank())scope.launch {runCatching{post("close",JSONObject().put("session",oldSession))}}
     }
+    internal val debugCardBounds=java.util.concurrent.ConcurrentHashMap<String,androidx.compose.ui.geometry.Rect>()
     internal fun debugPreviewUserQuestion(question:String){check(BuildConfig.DEBUG);beginUserTurn();inputText=question;commitQuestion()}
     internal fun debugReplayServerMessage(message:JSONObject){check(BuildConfig.DEBUG);receiveLive(message,epoch,false)}
     internal fun debugPreviewOrbContext(phase:String,narration:String){check(BuildConfig.DEBUG);update{it.copy(phase=phase,spokenCardKey=it.cards.visible.getOrNull(talkOrbMention(narration,it.cards.visible.map{card->listOfNotNull(card.title,card.originalTitle)}))?.key,lines=it.lines.filter{line->line.role!="assistant"}+TalkLine("assistant",narration))}}
@@ -1582,6 +1607,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         withTimeout(20000){while(if(state.value.textMode)!socketReady else captureJob?.isActive!=true)delay(20)}
         beginUserTurn();inputText=text;commitQuestion();answerDeadline.awaiting();debugFirstAudioAt=0;debugTurnCompleteAt=0
         debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L;endOfAudio=false
+        sendTurnContext()
         emit(JSONObject().put("realtimeInput",JSONObject().put("text",text)))
         if(forceNativeRecommendation)check(startNativeRecommendations())
     }

@@ -16,7 +16,7 @@ export const TALK_DAILY_SESSION_LIMIT=400;
 const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{'cache-control':'no-store'}});
 const sessionSchema=z.object({context:TalkContextSchema.default(()=>TalkContextSchema.parse({}))}).strict();
 const requestSchema=z.object({session:z.string().uuid(),question:z.string().max(1600),request:KnowledgeSchema}).strict();
-const TitlesRequest=z.object({titles:z.array(z.string().trim().min(1).max(180)).min(1).max(3),kind:z.enum(['movie','tv']).optional(),year:z.number().int().min(1870).max(2200).optional(),dismiss:z.boolean().optional()}).strict();
+const TitlesRequest=z.object({titles:z.array(z.string().trim().min(1).max(180)).min(1).max(8),kind:z.enum(['movie','tv']).optional(),year:z.number().int().min(1870).max(2200).optional(),dismiss:z.boolean().optional()}).strict();
 export async function talkRoute(request:Request,env:RecommendationEnv):Promise<Response|null> {
  const path=new URL(request.url).pathname;if(!path.startsWith('/v1/talk'))return null;
  if(request.method!=='POST'||!['/v1/talk/session','/v1/talk/renew','/v1/talk/knowledge','/v1/talk/titles','/v1/talk/close','/v1/talk/viewing','/v1/talk/research','/v1/talk/recommendations','/v1/talk/cancel','/v1/talk/chats'].includes(path))return json({error:'UPDATE_REQUIRED'},426);
@@ -218,7 +218,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   // paraphrase must not invent a premise or break simple quota recovery.
   state.recommendationRequest=id;this.put('live:'+session,state,state.expires);
   const chat=(state.context.companionVersion||0)>=10&&state.context.textMode===true;
-  q.count=chat?talkChatRecommendationCount(question||q.query):Math.min(3,talkRecommendationCount(question||q.query,q.count));
+  q.count=chat?talkChatRecommendationCount(question||q.query):Math.min((state.context.companionVersion||0)>=11?8:3,talkRecommendationCount(question||q.query,q.count));
   const query=talkRecommendationQuery(question,q.query,state.recommendationQuery);
   const inherited=query!==question?.trim()&&!!state.recommendationQuery&&query.includes(state.recommendationQuery);
   const narrowed=chat&&inherited?refineTalkCollection(state.recommendationCollection||[],question||q.query)?.filter(value=>!(q.excludeTitles||[]).includes(value.title)).slice(0,q.count):null;

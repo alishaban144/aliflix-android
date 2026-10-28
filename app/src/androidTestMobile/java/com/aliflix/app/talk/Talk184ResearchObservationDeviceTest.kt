@@ -25,7 +25,7 @@ class Talk184ResearchObservationDeviceTest {
    withTimeout(110000){while(voice.debugFirstAudioAt<began||voice.state.value.sending||voice.state.value.phase=="Speaking"||voice.state.value.lines.none{it.role=="assistant"&&it.titles.isNotEmpty()})delay(50)}
    val delay=voice.debugFirstAudioAt-began
    val notes=voice.state.value.lines.filter{it.role=="assistant"&&it.titles.isEmpty()&&it.text.isNotBlank()}
-   if(delay>=8000){assertTrue("Long research must use the model-composed observation",(voice.debugToolCalls["research_note_accepted"]?:0)>0);assertTrue(notes.any{talkResearchNoteAllowed(it.text)})}
+   if(delay>=8000){assertTrue("Long research must use the model-composed observation",((voice.debugToolCalls["research_note_accepted"]?:0)+(voice.debugToolCalls["lookup_bridge_accepted"]?:0))>0);assertTrue(notes.any{talkResearchNoteAllowed(it.text)})}
    assertFalse(voice.state.value.lines.any{it.text.contains("stories that stay with you",true)})
    assertTrue("The request must use its real research path",lookupTools.any{(voice.debugToolCalls[it]?:0)>0})
   }}finally{
