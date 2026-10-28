@@ -4,6 +4,17 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkResearchNotePolicyTest {
+ @Test fun acknowledgedWorkCannotSendItsFinalFactsToAClosedFunctionId() {
+  assertTrue(talkLookupUsesContinuation(true,true))
+  assertTrue(talkLookupUsesContinuation(true,false))
+  assertTrue(talkLookupUsesContinuation(false,false))
+  assertFalse(talkLookupUsesContinuation(false,true))
+ }
+ @Test fun completionOfTheInitialToolTurnDoesNotConsumeItsFutureBridge() {
+  assertFalse(talkResearchNoteHasOutput("",false))
+  assertTrue(talkResearchNoteHasOutput("The bridge has begun",false))
+  assertTrue(talkResearchNoteHasOutput("",true))
+ }
  @Test fun anObservationNeedsActualPendingWorkAndCannotSeizeAudibleOutput() {
   assertTrue(talkResearchNoteEligible(false,true,false,-1,7))
   assertFalse(talkResearchNoteEligible(false,false,false,-1,7))

@@ -29,7 +29,9 @@ internal fun talkRecommendationArgs(question:String)=JSONObject().put("query",qu
 /** The caller retains the original tool name/id for the FunctionResponse wire envelope. */
 internal fun talkCanonicalLookup(call:JSONObject,question:String,hasRecommendations:Boolean=false):JSONObject =
     if(call.optString("name")=="web_research"&&talkDiscoveryQuestion(question,hasRecommendations))
-        JSONObject(call.toString()).put("name","recommendations").put("args",talkRecommendationArgs(question))
+        JSONObject(call.toString()).put("name","recommendations").put("args",talkRecommendationArgs(question).apply{
+            call.optJSONObject("args")?.optString("bridge")?.takeIf{it.isNotBlank()}?.let{put("bridge",it)}
+        })
     else call
 
 internal fun talkCatalogueRefinementQuestion(question:String):Boolean {

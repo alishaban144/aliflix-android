@@ -50,9 +50,9 @@ internal class TalkCatalogue(private val known:()->TalkCardContext) {
     suspend fun cards(args:JSONObject):List<TalkTitleCard> {
         if(args.optBoolean("restore"))return known().group
         val names=args.optJSONArray("titles")
-        val requested=(0 until minOf(names?.length()?:0,3)).map{names!!.optString(it)}
-        if(requested.isEmpty())return known().visible.ifEmpty{known().group}.ifEmpty{known().known.take(3)}
-        return requested.flatMap{find(it,args.optString("kind").takeIf{v->v in setOf("movie","tv")},args.optInt("year"))}.distinctBy{it.key}.take(3)
+        val requested=(0 until minOf(names?.length()?:0,8)).map{names!!.optString(it)}
+        if(requested.isEmpty())return known().visible.ifEmpty{known().group}.ifEmpty{known().known.take(8)}
+        return requested.flatMap{find(it,args.optString("kind").takeIf{v->v in setOf("movie","tv")},args.optInt("year"))}.distinctBy{it.key}.take(8)
     }
     suspend fun hydrate(card:TalkTitleCard):TalkTitleCard = withTimeout(7000) {
         val m=client.getTitleDetails(card.type.routeName,card.id).media

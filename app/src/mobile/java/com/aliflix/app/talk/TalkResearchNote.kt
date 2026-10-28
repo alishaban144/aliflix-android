@@ -8,6 +8,10 @@ internal fun talkResearchNoteAllowed(text:String)=text.length in 12..240&&
 
 internal data class TalkResearchNote(val turn:Long,val text:String,val expiresAt:Long)
 
+/** A tool-only turn can complete before its continuing response starts
+ * speaking. That empty boundary does not belong to the accepted bridge. */
+internal fun talkResearchNoteHasOutput(text:String,hasAudio:Boolean)=text.isNotBlank()||hasAudio
+
 internal fun talkResearchNoteEligible(textMode:Boolean,lookupPending:Boolean,outputPlaying:Boolean,usedTurn:Long,currentTurn:Long)=
     !textMode&&lookupPending&&!outputPlaying&&usedTurn!=currentTurn
 

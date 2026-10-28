@@ -17,14 +17,15 @@ internal data class TalkCardContext(
         if(cards.size<2)return this
         val keys=cards.map{it.key}
         if(choiceGroups.lastOrNull()?.map{it.key}==keys)return this
-        val updated=choiceGroups+listOf(cards.take(3))
+        val updated=choiceGroups+listOf(cards.take(24))
         return copy(choiceGroups=if(updated.size<=8)updated else listOf(updated.first())+updated.takeLast(7))
     }
-    fun show(cards: List<TalkTitleCard>,replaceGroup:Boolean=false,limit:Int=3): TalkCardContext {
+    fun show(cards: List<TalkTitleCard>,replaceGroup:Boolean=false,limit:Int=8): TalkCardContext {
         if (cards.isEmpty()) return this
-        return copy(visible = cards.distinctBy { it.key }.take(limit.coerceIn(1,24)),
+        val next=copy(visible = cards.distinctBy { it.key }.take(limit.coerceIn(1,24)),
             known = (cards + known).distinctBy { it.key }.take(96),
             group = if(cards.size>1&&(replaceGroup||group.isEmpty()))cards.take(limit.coerceIn(1,24)) else group)
+        return if(replaceGroup&&cards.size>1)next.compared(next.visible)else next
     }
     fun resolve(name:String,kind:String?=null,year:Int=0,id:Int=0):List<TalkTitleCard> {
         val pool=(visible+group+known).distinctBy{it.key}.filter{kind==null||it.type.routeName==kind}
@@ -43,7 +44,7 @@ internal data class TalkCardContext(
         // The active recommendation wins over an older same-name edition.
         return matches.take(1)
     }
-    fun select(names: List<String>): List<TalkTitleCard> = names.flatMap{resolve(it)}.distinctBy { it.key }.take(3)
+    fun select(names: List<String>): List<TalkTitleCard> = names.flatMap{resolve(it)}.distinctBy { it.key }.take(8)
     fun snapshot()=org.json.JSONObject().put("focused",visible.singleOrNull()?.json())
         .put("visible",org.json.JSONArray(visible.map{it.json()})).put("recommendationGroup",org.json.JSONArray(group.map{it.json()}))
         .put("recent",org.json.JSONArray(known.take(24).map{it.json()}))
@@ -60,10 +61,7 @@ internal data class TalkCardContext(
         fun List<TalkTitleCard>.updated()=map{old->cards.firstOrNull{it.key==old.key}?:old}
         return copy(visible=visible.updated(),known=known.updated(),group=group.updated())
     }
-    fun topic(topic: String): TalkCardContext {
-        val match = select(listOf(topic))
-        return if (match.isNotEmpty()) show(match) else this
-    }
+    fun topic(@Suppress("UNUSED_PARAMETER") topic: String): TalkCardContext = this
     fun question(question: String): TalkCardContext {
         val text=question.lowercase(java.util.Locale.ROOT)
         if(choiceGroups.isNotEmpty()&&Regex("\\b(?:first|initial|earliest)\\s+(?:question|comparison|pair)|\\boriginal (?:two|pair|comparison|choices|options)\\b").containsMatchIn(text))return show(choiceGroups.first())
@@ -78,6 +76,8 @@ internal data class TalkCardContext(
         val movieFollowup=Regex("\\b(?:plot|story|ending|character|cast|director|scene|tone|runtime|soundtrack|violence|violent|spoiler|subtitles?|film|movie|series|watch|save|list|favorite|favourite)\\b").containsMatchIn(text)
         val standalone=Regex("^(?:what (?:is|are)|who (?:is|are)|where|when|why (?:is|does)|how (?:does|do)|can you|translate|tell me about|explain)\\b").containsMatchIn(text)
         val refersBack=Regex("\\b(?:it|its|this|that|these|those|they|them|their)\\b").containsMatchIn(text)
+        val continuation=text.trim().removePrefix("can you ").removePrefix("could you ").removePrefix("would you ").removePrefix("please ").trimEnd('.','!','?')
+        if(Regex("^(?:go on|continue|keep going|elaborate|tell me (?:a little )?more|say more|explain (?:more|further)|more details?)(?: please)?$").matches(continuation))return this
         if(standalone&&!movieFollowup&&!refersBack)return copy(visible=emptyList())
         return this
     }
@@ -89,7 +89,7 @@ internal data class TalkCardContext(
             if(title.length<4)emptyList()else titlePattern(title).findAll(question).map{card to it.range}.toList()
         }}
         val named=matches.filter{(_,range)->matches.none{(_,other)->other!=range&&other.first<=range.first&&other.last>=range.last}}
-        if(named.isNotEmpty())return named.sortedBy{it.second.first}.map{it.first.title}.distinct().flatMap{resolve(it,year=explicitYear(question))}.distinctBy{it.key}.take(3)
+        if(named.isNotEmpty())return named.sortedBy{it.second.first}.map{it.first.title}.distinct().flatMap{resolve(it,year=explicitYear(question))}.distinctBy{it.key}.take(8)
         val ordinals=Regex("(?i)\\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|last|[1-9][0-9]?(?:st|nd|rd|th))(?:(?: one| title| movie| film| series| option| choice| recommendation)\\b|[.!?]*$)").findAll(question)
             .mapNotNull{group.getOrNull(talkCardOrdinal(it.groupValues[1],group.size))}.distinctBy{it.key}.toList()
         if(ordinals.isNotEmpty())return ordinals
@@ -109,6 +109,7 @@ private fun cardName(value: String) = java.text.Normalizer.normalize(value,java.
 internal fun talkRestoredCards(lines:List<TalkLine>):TalkCardContext = TalkCardContext(
     known=lines.asReversed().flatMap{it.titles}.distinctBy{it.key}.take(96),
     group=(lines.lastOrNull{it.titles.size>1})?.titles.orEmpty(),
+    choiceGroups=lines.filter{it.titles.size>1}.map{it.titles}.distinctBy{it.map{c->c.key}}.let{if(it.size<=8)it else listOf(it.first())+it.takeLast(7)},
 ).show(lines.lastOrNull{it.titles.isNotEmpty()}?.titles.orEmpty(),limit=24)
 
 internal fun talkCanDismissCards(question:String,visible:List<TalkTitleCard>):Boolean {
@@ -117,7 +118,7 @@ internal fun talkCanDismissCards(question:String,visible:List<TalkTitleCard>):Bo
     if(Regex("\\b(?:show|display|bring|retrieve|get|open|see)\\b.*\\bcards?\\b|\\bcards? please\\b|(?:أظهر|اعرض|أرني).*بطاق|(?:zeig|zeige).*karte").containsMatchIn(text))return false
     if(Regex("\\b(?:change (?:the )?(?:subjects?|topics?)|different (?:subject|topic)|something (?:entirely )?else)\\b").containsMatchIn(text))return true
     if(visible.size==1&&(text.contains(visible.single().title.lowercase(java.util.Locale.ROOT))||Regex("\\b(?:it|its|this film|that film|this movie|that movie|this series|that series)\\b").containsMatchIn(text)))return false
-    return true
+    return TalkCardContext(visible=visible,known=visible,group=visible).question(question).visible.isEmpty()
 }
 
 internal fun talkCardOrdinal(value:String,size:Int):Int {

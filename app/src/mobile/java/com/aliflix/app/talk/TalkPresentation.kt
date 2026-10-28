@@ -8,7 +8,7 @@ internal data class TalkPresentation(val cards:List<TalkTitleCard>,val speechTex
  * spoken names. Cards and their short narration are derived in one commit. */
 internal fun talkPresentation(pool:List<TalkTitleCard>,args:JSONObject,count:Int=3,natural:Boolean=false):TalkPresentation {
     val picks=args.getJSONArray("picks")
-    require(picks.length()==minOf(count.coerceIn(1,3),pool.size)&&picks.length()>0){"Choose requestedCount returned keys, or all if fewer."}
+    require(picks.length()==minOf(count.coerceIn(1,8),pool.size)&&picks.length()>0){"Choose requestedCount returned keys, or all if fewer."}
     val rows=(0 until picks.length()).map{picks.getJSONObject(it)}
     val cards=rows.map{row->requireNotNull(pool.firstOrNull{it.key==row.getString("key")}){"Use only returned catalogue keys."}}
     require(cards.distinctBy{it.key}.size==cards.size){"Choose distinct titles."}

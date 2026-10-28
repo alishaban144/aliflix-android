@@ -219,7 +219,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
             } else {
                 Box(anchor(Modifier.fillMaxWidth().weight(.56f)),contentAlignment=Alignment.Center) {}
                 Box(Modifier.fillMaxWidth().weight(.32f),contentAlignment=Alignment.Center) { TalkDottedTopic(state.words,motion) }
-                TalkTitleCards(state.cards.visible,::openTitle,Modifier.padding(bottom=8.dp),motion=motion,focusedKey=state.spokenCardKey,onBounds={key,bounds->cardBounds[key]=bounds})
+                TalkTitleCards(state.cards.visible,::openTitle,Modifier.padding(bottom=8.dp),motion=motion,focusedKey=state.spokenCardKey,onBounds={key,bounds->cardBounds[key]=bounds;if(com.aliflix.app.BuildConfig.DEBUG)session.debugCardBounds[key]=bounds})
                 if(idle&&state.phase!="Ready") Text(state.phase,color=AliflixContentSecondary,fontSize=12.sp,modifier=Modifier.align(Alignment.CenterHorizontally).padding(bottom=12.dp))
                 Row(Modifier.fillMaxWidth().padding(bottom=20.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(36.dp,Alignment.CenterHorizontally)) {
                     AliflixIconButton(onClick={if(idle)onStart()else session.toggleMute()},modifier=Modifier.size(64.dp)) {
@@ -234,9 +234,10 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
             val compact=state.textMode
             val small=compact&&(state.lines.isNotEmpty()||keyboardOpen)
             val base=if(compact)minOf(orbAnchor.width,orbAnchor.height)else minOf(orbAnchor.width*.86f,orbAnchor.height,with(density){320.dp.toPx()})
-            val visible=state.cards.visible.take(3)
-            val focus=visible.indexOfFirst{it.key==state.spokenCardKey}
-            val focusedBounds=if(focus>=0)state.spokenCardKey?.let{cardBounds[it]}else null
+            val visible=state.cards.visible.take(8)
+            val attentionKey=state.spokenCardKey?:visible.singleOrNull()?.key?.takeIf{state.phase=="Speaking"}
+            val focus=visible.indexOfFirst{it.key==attentionKey}
+            val focusedBounds=if(focus>=0)attentionKey?.let{cardBounds[it]}else null
             val intent=talkOrbIntent(state.phase,visible.size,focus)
             val diameter=if(!compact&&state.cards.visible.isNotEmpty()) {
                 minOf(base*intent.scale,with(density){(if(state.phase=="Thinking")156.dp else 176.dp).toPx()}).coerceAtLeast(minOf(base,with(density){128.dp.toPx()}))

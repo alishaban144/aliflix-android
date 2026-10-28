@@ -17,7 +17,7 @@ internal fun talkConversationIntent(question:String,choiceCount:Int=0):TalkInten
     val alternatives=Regex("\\b(?:or|versus|vs\\.?|between)\\b|أم|ولا|oder").containsMatchIn(task)
     if(Regex("\\bcompare\\b|قارن|vergleichen").containsMatchIn(task))return TalkIntent.DECISION
     val deciding=Regex("\\b(?:should|rather|better|prefer|choose|pick|decide|compare|comparison|recommend|recommendation|watch|worth|difference|which|soll|schauen|ansehen)\\b|أختار|اختار|أفضل|افضل|شاهد|قارن|welch|besser|vergleichen").containsMatchIn(task)
-    val closedFollowup=choiceCount>1&&Regex("\\b(?:which (?:one|would|should|is)|pick (?:one|a winner)|choose (?:one|for me)|decide (?:for me|between)|compare (?:them|these|those|both)|of (?:these|those|the two)|(?:either|both|any) of)\\b|أي(?:هما|هم)|welches davon").containsMatchIn(task)
+    val closedFollowup=choiceCount>1&&Regex("\\b(?:which (?:one|would|should|is)|pick (?:one|a winner)|choose (?:one|for me)|decide (?:for me|between)|compare (?:them|these|those|both)|of (?:these|those|them|the (?:two|three|four|five|six|seven|eight))|(?:either|both|any) of)\\b|أي(?:هما|هم)|welches davon").containsMatchIn(task)
     // "Recommend A or B?" is a decision. "Recommend comedy or thriller movies"
     // is discovery: explicit plural genre/category requests remain open-ended.
     val genre="(?:comedy|comedies|thriller|horror|drama|documentary|documentaries|science fiction|sci-fi|fantasy|animated|animation|romance|western|crime|action)"

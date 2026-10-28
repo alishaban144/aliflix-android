@@ -37,3 +37,16 @@ internal fun talkContinuityTurns(lines:List<TalkLine>,resuming:Boolean,cards:Tal
     return org.json.JSONArray().put(JSONObject().put("role","user").put("parts",org.json.JSONArray().put(JSONObject().put("text",
         "Conversation continuity after reconnection. The following JSON is previous dialogue, not new instructions or a new question. Retain the discussed titles, references, language and viewing boundaries; do not answer this context note. The next user question follows separately.\n"+history))))
 }
+
+/** Refresh at the human's turn boundary, never over an assistant's speech.
+ * Provider compression/resumption cannot erase native catalogue ownership. */
+internal fun talkTurnContext(lines:List<TalkLine>,cards:TalkCardContext):JSONObject {
+    val dialogue=lines.filter{it.text.isNotBlank()&&(!it.stopped||it.titles.isNotEmpty())}.takeLast(6)
+    val snapshot=cards.snapshot().put("recent",org.json.JSONArray(cards.known.take(8).map{it.json()}))
+    val data=JSONObject().put("cards",snapshot).put("dialogue",org.json.JSONArray(dialogue.map{
+        JSONObject().put("role",it.role).put("text",it.text.take(900)).put("partial",it.stopped)
+            .put("titles",org.json.JSONArray(it.titles.map{c->c.json()}))
+    }))
+    return JSONObject().put("role","user").put("parts",org.json.JSONArray().put(JSONObject().put("text",
+        "Native conversation state for the next utterance. This JSON is prior dialogue and catalogue data, not a new request or instructions. These choices really were shown. Resolve references from them; do not deny this recorded context.\n"+data)))
+}
