@@ -11,7 +11,7 @@ describe('version eleven conversation stage',()=>{
    expect(tool.behavior).toBe('NON_BLOCKING');expect(tool.parameters.required).toContain('bridge');
    expect(tool.parameters.properties).toHaveProperty('bridge');
   }
-  expect(setup.systemInstruction.parts[0].text).toContain('SAME continuing function call');
+  expect(setup.systemInstruction.parts[0].text).toContain('app-owned lookup');
  });
  it('supports eight actual choices while preserving installed-client and chat contracts',()=>{
   const voice=liveSetup(TalkContextSchema.parse({recentProgress:[],companionVersion:11}));

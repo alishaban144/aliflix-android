@@ -5,6 +5,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkRecommendationRoutingTest {
+    @org.junit.Test fun canonicalDiscoveryRoutingPreservesItsModelComposedBridge() {
+        val bridge="An ordinary rule becomes unsettling when nobody can opt out."
+        val original=org.json.JSONObject().put("id","lookup-1").put("name","web_research")
+            .put("args",org.json.JSONObject().put("query","films about an impossible rule").put("bridge",bridge))
+        val routed=talkCanonicalLookup(original,"Suggest five films about an impossible rule")
+        org.junit.Assert.assertEquals("recommendations",routed.getString("name"))
+        org.junit.Assert.assertEquals(bridge,routed.getJSONObject("args").getString("bridge"))
+        org.junit.Assert.assertEquals("web_research",original.getString("name"))
+    }
     @Test fun discoveredTitlesCannotEscapeIntoGeneralWebNarration() {
         for(question in listOf("movies about gentlemen","Recommend three thoughtful science fiction movies","Find two recent science fiction films about identity.","Search the web for two recent science fiction films about identity.","Something less violent, but still stylish. Give me two titles.","Suggest a series for tonight")) {
             val original=JSONObject("""{"id":"lookup-1","name":"web_research","args":{"query":"web query","recent":true}}""")

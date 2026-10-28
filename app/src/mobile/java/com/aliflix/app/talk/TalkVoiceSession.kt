@@ -129,12 +129,15 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         quietTurn=false
         update { it.copy(sending=true,answerComplete=false,connectionDetail="") }
     }
+    private var debugBridgeCandidate=""
+    private var debugBridgeTranscript=""
+    private var debugBridgeBoundary=""
     private fun acceptLookupBridge(thought:String):Boolean {
         val accepted=talkResearchNoteEligible(state.value.textMode,tools.values.any{it.isActive},speaking,researchNoteUsedTurn,userTurn.get())&&talkResearchNoteAllowed(thought)
         if(!accepted)return false
         researchNoteUsedTurn=userTurn.get();researchNote=TalkResearchNote(userTurn.get(),thought,SystemClock.elapsedRealtime()+12000)
         recommendationDelivery.clear();outputText="";assistantLine=-1;turnHasAudio=false;responseTurn=-1L;answerDeadline.awaiting(12000)
-        if(BuildConfig.DEBUG)debugToolCalls.merge("lookup_bridge_accepted",1){a,b->a+b}
+        if(BuildConfig.DEBUG){debugToolCalls.merge("lookup_bridge_accepted",1){a,b->a+b};debugBridgeCandidate=thought;debugBridgeBoundary="accepted";debugBridgeTranscript=""}
         return true
     }
     private fun sendTurnContext() {
@@ -389,7 +392,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     @Volatile private var debugRenderedBaseline = 0L
     internal val debugRenderedSamples get() = synchronized(outputLock) { runCatching { (output?.playbackHeadPosition?.toLong()?.and(0xffffffffL) ?: 0L)-debugRenderedBaseline }.getOrDefault(0L) }
     internal val debugAudioTimeline=java.util.concurrent.ConcurrentLinkedDeque<JSONObject>()
-    internal fun debugAudioSnapshot():JSONObject=JSONObject().put("at",SystemClock.elapsedRealtime()).put("phase",state.value.phase).put("written",writtenSamples).put("rendered",output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0).put("queued",audio?.bytes?.get()?:0).put("writing",audio?.writing?:false).put("playing",debugOutputPlaying).put("speaking",speaking).put("end",endOfAudio).put("primingFrom",primingFrom).put("awaitingInterrupt",awaitingInterrupt).put("remoteSpeechActive",remoteSpeechActive).put("recommendationLookup",recommendationLookup).put("pendingAnswerNeedsTitle",pendingAnswerNeedsTitle).put("presentationDelivered",presentationDelivered).put("pendingTools",tools.size).put("awaitingToolAnswer",awaitingToolAnswer).put("route",output?.routedDevice?.type?:-1).put("communicationDevice",if(android.os.Build.VERSION.SDK_INT>=31)manager.communicationDevice?.type?:-1 else -1).put("outputUsage",talkAudioAttributes().usage).put("outputVolume",manager.getStreamVolume(talkAudioAttributes().volumeControlStream)).put("outputEnergy",outputEnergy).put("audioMode",manager.mode).put("recordSource",capture?.audioSource?:-1).put("aecEnabled",echo?.enabled).put("nsEnabled",noise?.enabled).put("echoProcessing",if(echo!=null)"platform" else if(echoProcessor!=null)"software" else "probe").put("deadlinePending",answerDeadline.pending).put("generationOpen",generationOpen).put("recommendationPool",recommendationPool.size).put("epoch",epoch).put("userTurn",userTurn.get()).put("recommendationOwner",recommendationRequestTurn).put("leaseActive",audioLease?.held==true).put("underruns",debugUnderruns)
+    internal fun debugAudioSnapshot():JSONObject=JSONObject().put("at",SystemClock.elapsedRealtime()).put("phase",state.value.phase).put("written",writtenSamples).put("rendered",output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0).put("queued",audio?.bytes?.get()?:0).put("writing",audio?.writing?:false).put("playing",debugOutputPlaying).put("speaking",speaking).put("end",endOfAudio).put("primingFrom",primingFrom).put("awaitingInterrupt",awaitingInterrupt).put("remoteSpeechActive",remoteSpeechActive).put("recommendationLookup",recommendationLookup).put("pendingAnswerNeedsTitle",pendingAnswerNeedsTitle).put("presentationDelivered",presentationDelivered).put("pendingTools",tools.size).put("awaitingToolAnswer",awaitingToolAnswer).put("route",output?.routedDevice?.type?:-1).put("communicationDevice",if(android.os.Build.VERSION.SDK_INT>=31)manager.communicationDevice?.type?:-1 else -1).put("outputUsage",talkAudioAttributes().usage).put("outputVolume",manager.getStreamVolume(talkAudioAttributes().volumeControlStream)).put("outputEnergy",outputEnergy).put("audioMode",manager.mode).put("recordSource",capture?.audioSource?:-1).put("aecEnabled",echo?.enabled).put("nsEnabled",noise?.enabled).put("echoProcessing",if(echo!=null)"platform" else if(echoProcessor!=null)"software" else "probe").put("deadlinePending",answerDeadline.pending).put("generationOpen",generationOpen).put("recommendationPool",recommendationPool.size).put("epoch",epoch).put("userTurn",userTurn.get()).put("recommendationOwner",recommendationRequestTurn).put("leaseActive",audioLease?.held==true).put("underruns",debugUnderruns).put("bridgeCandidate",debugBridgeCandidate).put("bridgeTranscript",debugBridgeTranscript).put("bridgeBoundary",debugBridgeBoundary)
     internal val debugOutputPlaying get()=runCatching{output?.playState==AudioTrack.PLAYSTATE_PLAYING}.getOrDefault(false)
     internal val debugResumeAvailable get() = !resumeHandle.isNullOrBlank()
     internal var debugConnectionIssue=""
@@ -977,6 +980,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     recommendationDelivery.clear();outputText="";assistantLine=-1;turnHasAudio=false;responseTurn=-1L
                 }
                 if(call.optString("name") in setOf("web_research","recommendations")) answerDeadline.awaiting(45000)
+                var acknowledgedLookup=false
                 val lookupJob=scope.launch(start=CoroutineStart.LAZY) {
                     val result=runCatching {
                         if(call.optString("name")=="agent_workspace") {
@@ -1058,7 +1062,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         assistantLine=-1;outputText="";turnHasAudio=false;responseTurn=-1L;debugTurnCompleteAt=0
                         if(state.value.textMode&&call.optString("name")=="recommendations")publishChatCollection()
                         if(BuildConfig.DEBUG&&call.optString("name")=="film_knowledge")debugKnowledgeAppliedAt=SystemClock.elapsedRealtime()
-                        deliverToolResult(ticket,id,wireName,result)
+                        deliverToolResult(ticket,id,wireName,result,acknowledgedLookup)
                     }
                     tools.remove(toolKey)
                     if(toolTurn==userTurn.get()&&tools.isEmpty()) {
@@ -1068,10 +1072,11 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 }
                 tools[toolKey]=lookupJob
                 lookupJob.start()
-                if(proposedBridge.isNotBlank()&&acceptLookupBridge(proposedBridge)) {
+                if(proposedBridge.isNotBlank()&&lookupJob.isActive&&acceptLookupBridge(proposedBridge)) {
+                    acknowledgedLookup=true
                     val progress=JSONObject().put("pending",true).put("speechText",proposedBridge)
-                        .put("instruction","Speak exactly speechText once, naturally. This is a contextual bridge, not the answer. Do not call another tool or add titles. The actual lookup is running; its final result follows after this speech.")
-                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,wireName,progress,"WHEN_IDLE",willContinue=true)))))
+                        .put("instruction","The app has queued and owns this lookup. Speak exactly speechText once now, naturally. This is its contextual bridge, not the final answer. Do not call another tool, present recommendations or add titles yet. The app will deliver the verified result as completed lookup context after this speech finishes. You do not need to poll or wait for this function ID.")
+                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,wireName,progress,"WHEN_IDLE")))))
                 }
             }
         }
@@ -1172,6 +1177,12 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if(recommendationReply?.has("speechText")==true&&!recommendationLookup)presentationDelivered=true
                 val note=researchNote
                 if(note!=null&&note.turn==userTurn.get()) {
+                    if(!talkResearchNoteHasOutput(outputText,turnHasAudio)) {
+                        if(BuildConfig.DEBUG){debugBridgeBoundary="empty_tool_boundary";debugToolCalls.merge("lookup_bridge_empty_boundary",1){a,b->a+b}}
+                        answerDeadline.awaiting(maxOf(1000,note.expiresAt-SystemClock.elapsedRealtime()))
+                        return
+                    }
+                    if(BuildConfig.DEBUG){debugBridgeTranscript=outputText;debugBridgeBoundary=if(talkSpeechMatchesScript(outputText,note.text)&&turnHasAudio)"played" else "transcript_mismatch"}
                     if(talkSpeechMatchesScript(outputText,note.text)&&turnHasAudio) {
                         addLine(TalkLine("assistant",note.text))
                         recommendationDelivery.drain().forEach{enqueueAudio(it,ticket)}
@@ -1318,9 +1329,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         update{it.copy(words=subject,cards=it.cards.question(lastQuestion))}
         if(!updateExisting||talkExplicitComparisonTitles(previous)!=talkExplicitComparisonTitles(lastQuestion))prepareComparedCards(lastQuestion)
     }
-    private fun deliverToolResult(origin:Long,id:String,name:String,result:JSONObject){
+    private fun deliverToolResult(origin:Long,id:String,name:String,result:JSONObject,acknowledged:Boolean=false){
         if(!socketReady){continueAfterReconnect=true;return}
-        if(origin==epoch)emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,name,result,"WHEN_IDLE")))))
+        if(!talkLookupUsesContinuation(acknowledged,origin==epoch))emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,name,result,"WHEN_IDLE")))))
         else emitContinuation(talkPendingContinuation(lastQuestion,result,state.value.cards.snapshot()))
     }
     private fun publishChatCollection(){

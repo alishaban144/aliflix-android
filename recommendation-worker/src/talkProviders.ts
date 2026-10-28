@@ -100,7 +100,7 @@ export function liveSetup(context: TalkContext) {
   if(['recommendations','film_knowledge','web_research'].includes(tool.name)&&!context.textMode){
    upgraded.parameters.properties.bridge={type:'STRING',description:'Required: compose one complete, direct spoken sentence with a subject and verb, 12-240 characters, in the conversation language. Contribute a concrete distinction or tradeoff implicit in this request: say the insight itself, not what you are considering or looking for. No opening participial fragment such as Considering, Exploring or Looking at. No restating the request, broad claims about cinema or society, search/status narration, stock filler, unverified facts, provisional titles or personal-match explanation.'};
    upgraded.parameters.required=[...((tool.parameters as {required?:string[]}).required||[]),'bridge'];
-   upgraded.description+=' The bridge is returned immediately as approved speechText while this SAME nonblocking lookup continues. Speak it once before the final answer; do not wait silently or issue a second lookup.';
+   upgraded.description+=' This function immediately acknowledges an app-owned lookup with speechText. Read it once now. The app delivers verified findings later as completed lookup context after speech drains. Do not poll, wait on this function ID, or issue another lookup.';
   }
   return upgraded;
  });

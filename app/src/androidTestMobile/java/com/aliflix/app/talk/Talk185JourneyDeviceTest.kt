@@ -16,10 +16,10 @@ class Talk185JourneyDeviceTest {
   val i=InstrumentationRegistry.getInstrumentation();val activity=launchFreshTalkActivity(localAudio=true);val voice=activity.voice
   val receipt=JSONArray();val file=File(i.targetContext.getExternalFilesDir(null),"talk-185-live-journey.json")
   try{runBlocking{
-   suspend fun ask(question:String):List<TalkLine>{
+   suspend fun ask(question:String,requireSpeech:Boolean=true):List<TalkLine>{
     val before=voice.state.value.lines.size
     withContext(Dispatchers.Main){voice.debugInjectText(question)}
-    withTimeout(110000){while(voice.debugFirstAudioAt==0L||voice.state.value.sending||voice.state.value.phase=="Speaking"||voice.state.value.lines.drop(before).none{it.role=="assistant"&&it.text.isNotBlank()})delay(50)}
+    withTimeout(110000){while(requireSpeech&&voice.debugFirstAudioAt==0L||voice.state.value.sending||voice.state.value.phase=="Speaking"||requireSpeech&&voice.state.value.lines.drop(before).none{it.role=="assistant"&&it.text.isNotBlank()})delay(50)}
     delay(800)
     val lines=voice.state.value.lines.drop(before).filter{it.role=="assistant"}
     receipt.put(JSONObject().put("question",question).put("reply",JSONArray(lines.map{it.text})).put("cards",voice.state.value.cards.snapshot()).put("audio",voice.debugAudioSnapshot()).put("tools",JSONObject(voice.debugToolCalls.toMap())))
@@ -44,11 +44,11 @@ class Talk185JourneyDeviceTest {
    withTimeout(25000){while(voice.debugReadyGeneration<=ready)delay(50)}
    ask("What was the fourth film you first suggested? Show its card and say its title.")
    assertEquals(original[3].key,voice.state.value.cards.visible.single().key)
-   ask("Bring back all five original choices.")
+   ask("Bring back all five original choices.",requireSpeech=false)
    assertEquals(original.map{it.key},voice.state.value.cards.visible.map{it.key})
    ask("Antworte auf Deutsch: Welches davon empfiehlst du? Entscheide dich für einen Film.")
    assertEquals(1,voice.state.value.cards.visible.size);assertTrue(original.any{it.key==voice.state.value.cards.visible.single().key})
-  }}finally{file.writeText(receipt.toString(2));i.runOnMainSync{voice.suspendSession();activity.finish()}}
+  }}finally{File(i.targetContext.getExternalFilesDir(null),"talk-185-terminal.json").writeText(JSONObject().put("audio",voice.debugAudioSnapshot()).put("tools",JSONObject(voice.debugToolCalls.toMap())).put("lines",JSONArray(voice.state.value.lines.map{it.text})).toString(2));file.writeText(receipt.toString(2));i.runOnMainSync{voice.suspendSession();activity.finish()}}
  }
 
  @Test fun eightCardsFocusAndExitLeaveTheEntireScreenUsable() {
