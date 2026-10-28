@@ -84,7 +84,7 @@ internal fun talkVoiceCardPlacements(width:Float,count:Int,fontScale:Float=1f):L
                     val semantics=if(active)Modifier else Modifier.clearAndSetSemantics{}
                     TalkRailCard(title,onOpen,Modifier.offset{IntOffset(with(density){x.value.dp.roundToPx()},with(density){y.value.dp.roundToPx()})}
                         .width(width.value.dp).graphicsLayer{this.alpha=alpha.value;rotationZ=tilt.value}.then(semantics),
-                        motion,focusedKey==title.key||current.size==1,{key,bounds->if(active)onBounds(key,bounds)},enabled=active)
+                        motion,active&&(focusedKey==title.key||current.size==1),{key,bounds->if(active)onBounds(key,bounds)},enabled=active)
                 }}
             }
         }
