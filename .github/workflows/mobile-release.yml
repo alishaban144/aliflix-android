@@ -43,8 +43,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "275"
-  RELEASE_VERSION_NAME: "3.1.185"
+  RELEASE_VERSION_CODE: "276"
+  RELEASE_VERSION_NAME: "3.1.186"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -403,14 +403,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: |
-            Talk retains the actual conversation choices across follow-ups and reconnections. Asking which one to watch focuses a real choice while keeping the original ordered shortlist available for restoration and ordinal references.
-
-            Voice supports up to eight genuine titles. A model-composed contextual bridge is bound into the continuing research call. Cards retain their poster identity through coordinated exits, placement changes and enlarged focus; topic bookkeeping can no longer dismiss them. Complete captions, a readable orb and accessible controls share the measured stage.
-
-            [Full change list and validation](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/releases/mobile-3.1.185.md)
-
-            Mobile 3.1.185 / 275. Production signer, original neural model and approved speech processing retained. No TV update.
+          body: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           files: |
             aliflix-mobile.apk
             update-mobile.json

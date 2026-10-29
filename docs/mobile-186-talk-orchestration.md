@@ -1,0 +1,41 @@
+# Mobile 3.1.186: Talk orchestration
+
+TV code, TV version and TV publication are unchanged.
+
+## Operating contract
+
+- One explicit request can carry up to sixteen ordered app/player commands. All arguments and title editions are checked before the first write. Series specials retain season zero. An episode without an established season asks for that missing season instead of choosing another episode.
+- Application-owned tasks retain their full plan and individual results across navigation, spoken interruptions and the voice session releasing its audio lease. Explicit cancellation stops remaining operations. A bounded account-scoped native tool-call ledger prevents replayed calls from restarting completed work. A content identity and launch-task fence prevents an older task from seeking or configuring a different title/episode.
+- Compound playback prepares paused. Source/audio, subtitles, synchronization and the final position are established before resuming. A missing requested audio/subtitle track leaves playback paused and records the failed operation; unrelated steps still receive results. A sync that cannot establish an independent timing match reports that result and preserves the selected captions; a separately requested resume still runs. Missing intro markers never become guessed seeks.
+- Provider verification opens the existing native verification UI. The task waits with its remaining plan intact. Cast selection and Watch Together retain their native viewer-input flows.
+- The player owns its compact draggable animated Talk orb. Expanding it exposes voice, typing, the full conversation and dismissal. Opening Talk pauses video in place. Resume releases the voice lease and verifies actual playback. Conversation identity, language, title cards and dialogue transfer in memory between Talk and the player, including when archived history is disabled. Account changes and history deletion clear the in-memory route.
+- Player tools use the same activity/service methods as native controls: source/server and audio editions, external captions, Sync with Audio/reset, absolute/relative seeks, verified skip markers, exact/next episodes, adaptive/explicit quality, speed, subtitle settings, fit/zoom, audio boost, volume, brightness, rotation, retry, casting and Watch Together. They report observed state or a concrete unavailable/input-required result.
+- The voice model submits supported compound player/library/settings work through one `execute_task` call. Downloads, navigation and research retain their specific tools and sequence around that task when required. Current native player state arrives before each human turn. `task_state` and `cancel_task` use actual task IDs. Older clients retain their versioned tool contracts.
+- The app starts a researched bridge after an exact, meaningful transcript prefix matches its authored sentence. An approved bridge acknowledgement requests immediate generation only while no audible answer owns the floor; leaving this acknowledgement at `WHEN_IDLE` could leave it unspoken. The app retains the final transcript check and waits for rendered audio to drain before delivering the researched answer. Bridges must contribute a distinction specific to the request; an attribution lookup cannot assert what the subject said before evidence arrives. No phrase bank or UI explanatory banner is added.
+
+## Research applied
+
+- [OpenAI Dots](https://learn.chatgpt.com/docs/dots): goal ownership and progress across conversations inform the application-owned task lifecycle and explicit state reads.
+- [How Meta designed Muse](https://introducing.muse.ai/): interruptions, multiple ongoing requests, retained context and meaningful completion updates inform the separation of speech from task execution. No unpublished implementation is assumed.
+- [OpenAI GPT-Live](https://developers.openai.com/api/docs/guides/live): separate conversational and execution responsibilities inform the native task boundary; this change retains Aliflix's existing Gemini provider.
+- [OpenAI voice prompting](https://developers.openai.com/api/docs/guides/voice-prompting?voice-api=realtime): clear tool/completion responsibilities inform the versioned model contract.
+- [Gemini Live tools](https://ai.google.dev/gemini-api/docs/live-api/tools), [capabilities](https://ai.google.dev/gemini-api/docs/live-api/capabilities), and [best practices](https://ai.google.dev/gemini-api/docs/live-api/best-practices): asynchronous tool responses, explicit scheduling, complete event-part processing and microphone ownership remain distinct from app work.
+- [Google Gen AI FunctionResponse](https://googleapis.github.io/js-genai/release_docs/classes/types.FunctionResponse.html): scheduling and `willContinue` are protocol fields. A completed bridge acknowledgement and a later app-owned result are distinct events; accepted text alone is not proof of speech.
+- [Media3 Player](https://developer.android.com/reference/androidx/media3/common/Player) and [track selection](https://developer.android.com/media/media3/exoplayer/track-selection): `playWhenReady` and dispatched preferences do not prove actual playback or selected tracks. Native tasks observe readiness, selected tracks, position and `isPlaying`.
+- [Cloudflare Worker best practices](https://developers.cloudflare.com/workers/best-practices/workers-best-practices/): the backend remains a versioned contract; no unbounded background execution or new model/provider fallback is introduced.
+
+## Acceptance evidence
+
+Validation uses the authorized physical Pixel 7a and a separate debug-signed validation package. Public signed-artifact and production-install checks are recorded separately. Private playback requests and synthesized speech fixtures stay in ignored local validation storage.
+
+The baseline was the public v3.1.185 release, versionCode 275. This release advances mobile to 3.1.186 / 276. TV remains 3.1.69 / 159.
+
+Host checks passed 822 mobile unit tests (819 passed, three skipped), mobile assembly, test-APK assembly, mobile lint and unchanged TV assembly under Java 17. The Worker passed TypeScript checking, 288 tests across 33 files and Wrangler's deployment dry run. The explicitly approved production deployment was `57830d46-7f3b-4755-b762-efd2823e10da`; the publication workflow validates and deploys the committed source again.
+
+The eight new physical player cases cover ordered partial results, unavailable audio/intro markers, cancellation before a later seek through the real text-send path, stale-target protection, replayed tool IDs, pause/resume with advancing position, already-prepared playback, English/German model-generated compound tasks, and measured portrait/landscape orb controls and Back behavior. Whole-screen screenshots were reviewed separately from bounds assertions.
+
+Spoken public-provider journeys passed for The Big Bang Theory and Dark, season one, episode one. Synthesized PCM input traversed the actual live model and native playback path on the phone without a Play tap. Each returned a result for every requested operation: prepare paused, German audio, Arabic captions, conditional verified intro skip, seek to dialogue, Sync with Audio, final seek and resume. Dark had a verified intro marker; Big Bang reported the conditional skip as not applicable. Both sync attempts correctly declined an uncertain dialogue match, preserved the chosen captions and continued the independent final seek/resume. These runs prove orchestration and honest sync rejection, not an applied timing correction. Conversation and card identity survived the native player handoff.
+
+The research-speech case uses the real text-send path in voice mode and requires rendered audio, an exact completed bridge transcript, streaming before the full sentence boundary, and two distinct canonical title cards. A measured successful run began streaming 535 ms after the bridge acknowledgement, before its complete generation at 6,733 ms. This measures the acknowledgement-to-speech boundary, not total user-request latency. Private receipts retain the complete timings and ordered native results.
+
+Signed draft artifacts, production-signer installation and the public canonical updater are verified separately before publication is considered complete.

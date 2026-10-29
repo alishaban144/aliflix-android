@@ -1,6 +1,7 @@
 package com.aliflix.app.talk
 
 import com.aliflix.app.BuildConfig
+import com.aliflix.app.toStableMobileMedia
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.recommendation.RecommendationAiClient
 import com.aliflix.app.recommendation.V3CatalogMedia
@@ -26,6 +27,11 @@ internal fun talkCatalogueMatches(rows:List<V3CatalogMedia>,title:String,kind:St
 }
 internal class TalkCatalogue(private val known:()->TalkCardContext) {
     private val client=RecommendationAiClient(BuildConfig.RECOMMENDATION_AI_BASE_URL)
+    suspend fun playbackMedia(card:TalkTitleCard)=withTimeout(7000) {
+        val details=client.getTitleDetails(card.type.routeName,card.id)
+        require(details.media.tmdbId==card.id&&details.media.mediaType==card.type.routeName){"Playback identity changed"}
+        details.toStableMobileMedia(card.media())
+    }
     suspend fun find(title:String,kind:String?=null,year:Int=0,id:Int=0):List<TalkTitleCard> {
         val established=known().resolve(title,kind,year,id)
         if(established.isNotEmpty())return established
