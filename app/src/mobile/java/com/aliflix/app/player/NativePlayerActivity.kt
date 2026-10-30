@@ -56,6 +56,10 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     } }
     internal fun talkHandoff()=if(talkCreated)talkVoice.handoff()else null
     private var talkCreated = false
+    private val sceneMemory by lazy { PlayerSceneMemory({ if (::video.isInitialized) video else null }, ::talkSnapshot) }
+    private var sceneCaptureJob: Job? = null
+    override fun talkScene() = sceneMemory.current()
+    override suspend fun prepareTalkScene() = sceneMemory.current()?.takeIf { controller?.isPlaying != true && it.frames.isNotEmpty() && it.metadata.optBoolean("audioChecked") } ?: sceneMemory.capture(includeAudio = true)
     private var talkPreparationPaused = false
     private val talkPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
         if (granted && talkVisible) lifecycleScope.launch { talkVoice.connect() } else if (talkCreated) talkVoice.permissionDenied()
@@ -65,7 +69,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         talkCreated = true
         talkVisible = true
         if (talkVoice.state.value.textMode || ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED)
-            lifecycleScope.launch { talkVoice.connect() }
+            lifecycleScope.launch { sceneMemory.capture(includeAudio = true); talkVoice.connect() }
         else talkPermission.launch(android.Manifest.permission.RECORD_AUDIO)
     }
     internal fun closeTalk() {
@@ -81,8 +85,11 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                 .put("language", format.language).put("label", format.label).put("height", format.height).put("selected", group.isTrackSelected(index))
         } }
         return JSONObject().put("status", if (player == null) "no_active_playback" else "current")
+            .put("title", current?.media?.title ?: player?.mediaMetadata?.title?.toString())
+            .put("requestId", NativePlaybackService.activeRequestId)
+            .put("sceneSurfaceReady", ::video.isInitialized && video.holder.surface.isValid && NativePlaybackService.canRecordProgress && !ui.external && player?.playbackState in setOf(Player.STATE_READY, Player.STATE_ENDED))
             .put("launchTaskId",intent.getStringExtra("talkTaskId"))
-            .put("contentKey", current?.key?.substringBefore(":via:") ?: player?.currentMediaItem?.mediaId?.substringBefore(":via:"))
+            .put("contentKey", current?.key?.substringBefore(":via:") ?: player?.currentMediaItem?.mediaId?.substringBefore(":via:")?.takeIf { it.isNotBlank() } ?: NativePlaybackService.activeRequestId)
             .put("id", current?.media?.id).put("type", current?.media?.type?.routeName).put("season", current?.seasonNumber).put("episode", current?.episodeNumber)
             .put("position", (player?.currentPosition ?: 0L) / 1000.0).put("positionSeconds", (player?.currentPosition ?: 0L) / 1000.0)
             .put("durationSeconds", player?.duration?.takeIf { it > 0 }?.div(1000.0)).put("playing", player?.isPlaying == true)
@@ -91,6 +98,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
             .put("providers", JSONArray(ui.availableProviders.map { it.name })).put("tracks", JSONArray(tracks))
             .put("audioLanguage", ui.sourceAudioLanguage).put("sourceAudio", JSONArray(ui.sourceAudioOptions.map { JSONObject().put("language", it.language).put("label", it.label) }))
             .put("subtitles", ui.activeSubtitleTrack?.languageCode).put("subtitleLoading", ui.subtitleLoading).put("syncState", ui.audioSyncState)
+            .put("subtitleEdition", ui.activeSubtitleTrack?.id)
             .put("syncAvailable", ui.audioSyncAvailable).put("verificationRequired", ui.verificationRequired).put("error", ui.error ?: player?.playerError?.errorCodeName)
             .put("volume", audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toDouble() / audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1))
             .put("brightness", window.attributes.screenBrightness).put("speed", player?.playbackParameters?.speed)
@@ -120,6 +128,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         }
         if (!owns()) return@withContext result("playback_changed")
         if (action == "player_state") return@withContext result("current")
+        if (action == "scene_context") return@withContext (sceneMemory.capture()?.metadata ?: result("scene_preparing"))
         when (action) {
             "verify_provider" -> { if (providerVerification == null) return@withContext result("verification_unavailable"); showProviderVerification = true; return@withContext result("user_input_required") }
             "open_cast" -> { if (party.state.value.active) return@withContext result("leave_watch_together_first"); openReceiverPicker(); return@withContext result("user_input_required") }
@@ -138,6 +147,16 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         val player = controller ?: return@withContext result("no_active_playback")
         fun sameLanguage(a: String?, b: String) = !a.isNullOrBlank() && canonicalSubtitleLanguageCode(a) == canonicalSubtitleLanguageCode(b)
         when (action) {
+            "replay_scene" -> {
+                val scene = sceneMemory.current() ?: sceneMemory.capture() ?: return@withContext result("scene_preparing")
+                val target = (scene.metadata.getDouble("replayStartSeconds") * 1000).toLong()
+                talkPreparationPaused = false; closeTalk()
+                com.aliflix.app.talk.TalkAudioLease.awaitOwnRelease(this@NativePlayerActivity)
+                if (!owns()) return@withContext result("playback_changed")
+                player.seekTo(target); player.play()
+                if (!until { player.isPlaying && player.currentPosition in target..(target + 5000) }) return@withContext result("not_playing")
+                return@withContext result("playing").put("replayStartSeconds", target / 1000.0).put("sceneAnchorSeconds", scene.anchorSeconds)
+            }
             "await_prepared" -> { player.pause();if(!until { !player.playWhenReady && !player.isPlaying })return@withContext result("not_paused");return@withContext result("prepared") }
             "await_playback" -> {
                 talkPreparationPaused = false
@@ -413,6 +432,10 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         override fun onDisplayRemoved(displayId: Int) = updateOutput()
     }
     private val listener = object : Player.Listener {
+        override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+            sceneMemory.invalidate()
+            lifecycleScope.launch { delay(250); sceneMemory.capture() }
+        }
         override fun onEvents(player: Player, events: Player.Events) {
             updateOutput()
             updateSubtitleCues()
@@ -2195,6 +2218,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     }
 
     private fun renderCaptions(cues: List<Cue>) {
+        sceneMemory.captions(cues.mapNotNull { it.text?.toString() })
         renderedCaptions = cues.map { mobileCaptionCue(it).buildUpon().setPosition(0.5f)
             .setPositionAnchor(Cue.ANCHOR_TYPE_MIDDLE).setSize(0.92f)
             .setLine(Cue.DIMEN_UNSET, Cue.LINE_TYPE_FRACTION)
@@ -2220,6 +2244,13 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         if(talkCreated)talkVoice.restoreRoutedConversation()
         com.aliflix.app.talk.TalkPlayerConnection.attach(this)
         startSubtitleRenderLoop()
+        sceneCaptureJob?.cancel()
+        sceneCaptureJob = lifecycleScope.launch {
+            while (isActive) {
+                if (controller?.isPlaying == true || talkVisible && sceneMemory.current() == null) sceneMemory.capture()
+                delay(2500)
+            }
+        }
         displays.registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
         val future = MediaController.Builder(this, SessionToken(this, ComponentName(this, NativePlaybackService::class.java))).buildAsync()
         controllerFuture = future
@@ -2286,6 +2317,8 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         startService(Intent(this, NativePlaybackService::class.java).setAction(NativePlaybackService.ACTION_STOP)); finish()
     }
     override fun onStop() {
+        sceneCaptureJob?.cancel(); sceneCaptureJob = null
+        sceneMemory.invalidate()
         if (talkCreated) { talkVoice.handoff();talkVoice.pauseSession() }
         com.aliflix.app.talk.TalkPlayerConnection.detach(this)
         audioSyncJob?.cancel(); audioSyncJob = null

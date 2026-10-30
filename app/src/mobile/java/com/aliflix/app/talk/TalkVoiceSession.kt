@@ -37,8 +37,8 @@ internal data class TalkVoiceState(val phase: String = "Ready", val words: Strin
     val muted: Boolean = false, val keepHistory: Boolean = false, val lines: List<TalkLine> = emptyList(), val provider: String = "", val textMode:Boolean=false, val sending:Boolean=false,
     val conversationId:String=java.util.UUID.randomUUID().toString(),val cards:TalkCardContext=TalkCardContext(),val panelRequest:String="",val answerComplete:Boolean=true,val connectionDetail:String="",val spokenCardKey:String?=null)
 
-/** Remote microphone conversation only. This class never receives episode PCM,
- * subtitle cues, streaming URLs or credentials belonging to a playback source. */
+/** Live conversation. Scene media is ephemeral, with played PCM sent only to
+ * the independent observer. Microphone input, source URLs and credentials stay separate. */
 internal class TalkVoiceSession(private val context: Context, private val scope: CoroutineScope, private val restoreHistory:Boolean=true,historyOverride:TalkChatHistory?=null) : AutoCloseable {
     private val prefs = context.getSharedPreferences("aliflix-talk", Context.MODE_PRIVATE)
     private var sessionOwner=FirebaseAuth.getInstance().currentUser?.uid ?: "guest"
@@ -47,7 +47,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         if(owner!=sessionOwner)scope.launch {
             TalkConversationRoutes.clear()
             nativeActions.clearUndo()
-            textSend?.cancel();suspendSession();sessionOwner=owner
+            textSend?.cancel();suspendSession();clearSceneObservations();sessionOwner=owner
             ephemeral=null;backendSession=null;resumeHandle=null;userTurn.incrementAndGet()
             prefs.edit().remove("history").remove("suggestions").remove("suggestions-at").apply()
             chatId=java.util.UUID.randomUUID().toString();persistedLines=emptyList();inputText="";lastQuestion="";outputText="";assistantLine=-1
@@ -157,6 +157,53 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         if(BuildConfig.DEBUG){debugToolCalls.merge("lookup_bridge_accepted",1){a,b->a+b};debugBridgeCandidate=thought;debugBridgeBoundary="accepted";debugBridgeTranscript=""}
         return true
     }
+    private var sentSceneKey = ""
+    private var sentSceneAt = 0L
+    private val sceneObservations = linkedMapOf<String, JSONObject>()
+    private var sceneObservationKey = ""
+    private var sceneObservation: Deferred<JSONObject?>? = null
+    private fun clearSceneObservations() {
+        sceneObservation?.cancel(); sceneObservation = null; sceneObservationKey = ""
+        sceneObservations.clear(); sentSceneKey = ""
+        debugSceneContext = null; debugSceneObservationIssue = ""
+    }
+    internal var debugSceneObservationIssue = ""
+        private set
+    private fun observeScene(scene: TalkSceneContext): Deferred<JSONObject?> {
+        sceneObservations[scene.key]?.let { return CompletableDeferred(it) }
+        if (sceneObservationKey == scene.key && sceneObservation?.isActive == true) return sceneObservation!!
+        sceneObservation?.cancel()
+        val session = backendSession ?: return CompletableDeferred<JSONObject?>(null).also { if (BuildConfig.DEBUG) debugSceneObservationIssue = "No live session for observation" }
+        val owner = epoch
+        sceneObservationKey = scene.key
+        return scope.async {
+            val observation = try {
+                post("scene", JSONObject().put("session", session).put("scene", scene.observationRequest()), timeout = 23_000)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { if (BuildConfig.DEBUG) debugSceneObservationIssue = error.message.orEmpty().take(160); null }
+            if (owner != epoch || closed) { if (BuildConfig.DEBUG) debugSceneObservationIssue = "Connection changed during observation"; return@async null }
+            if (observation?.optString("status") == "observed") {
+                sceneObservations[scene.key] = observation
+                while (sceneObservations.size > 4) sceneObservations.remove(sceneObservations.keys.first())
+            }
+            observation
+        }.also { sceneObservation = it }
+    }
+    private suspend fun awaitSceneObservation(): TalkSceneContext? {
+        val scene = TalkPlayerConnection.current()?.prepareTalkScene() ?: return null
+        val pending = observeScene(scene)
+        val observation = withTimeoutOrNull(22_000) { pending.await() }
+        if (observation == null && pending.isActive && BuildConfig.DEBUG) debugSceneObservationIssue = "Observation deadline exceeded"
+        if (TalkPlayerConnection.current()?.talkScene()?.key != scene.key) return null
+        if (observation != null) scene.metadata.put("groundedObservation", observation).put("groundingState", "observed")
+        else scene.metadata.put("groundingState", "limited")
+        return scene
+    }
+    internal var debugSceneContext: JSONObject? = null
+        private set
+    internal var debugSceneFrames = 0
+        private set
+    internal suspend fun debugInspectScene(): JSONObject? { check(BuildConfig.DEBUG); return awaitSceneObservation()?.metadata }
     private fun sendTurnContext() {
         if(!socketReady)return
         TalkPlayerConnection.current()?.talkSnapshot()?.let { current ->
@@ -164,6 +211,17 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             val payload=JSONObject().put("activePlayer",current).put("tasks",TalkTaskWork.get(context).state())
             emit(JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user")
                 .put("parts",JSONArray().put(JSONObject().put("text","Native Aliflix state at this turn (data, not a new request): $payload"))))).put("turnComplete",false)))
+        }
+        TalkPlayerConnection.current()?.talkScene()?.let { scene ->
+            sceneObservations[scene.key]?.let { scene.metadata.put("groundedObservation", it).put("groundingState", "observed") }
+            if (!scene.metadata.has("groundingState")) scene.metadata.put("groundingState", "preparing")
+            val key = "$epoch:$providerContext:${scene.key}"
+            val includeFrames = key != sentSceneKey || SystemClock.elapsedRealtime() - sentSceneAt > 45_000
+            emit(JSONObject().put("clientContent", JSONObject().put("turns", JSONArray().put(JSONObject().put("role", "user")
+                .put("parts", scene.parts(includeFrames)))).put("turnComplete", false)))
+            sentSceneKey = key
+            if (includeFrames) sentSceneAt = SystemClock.elapsedRealtime()
+            if (BuildConfig.DEBUG) { debugSceneContext = scene.metadata; if (includeFrames) debugSceneFrames += scene.frames.size }
         }
         val prior=if(lastQuestionTurn==userTurn.get()&&state.value.lines.lastOrNull()?.role=="user")state.value.lines.dropLast(1)else state.value.lines
         if(prior.isEmpty()&&state.value.cards.known.isEmpty())return
@@ -229,6 +287,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if(!permitted)connect()
                 withTimeout(20000){while(!socketReady){check(permitted){"Connection ended"};delay(30)}}
                 answerDeadline.awaiting(45000)
+                if (talkSceneQuestion(question)) awaitSceneObservation() else TalkPlayerConnection.current()?.prepareTalkScene()
                 sendTurnContext()
                 emit(JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",JSONArray().put(JSONObject().put("text",question))))).put("turnComplete",true)))
             } catch(cancelled:CancellationException){if(cancelled is TimeoutCancellationException){if(turnTicket==userTurn.get())failedTextTurn()}else throw cancelled}
@@ -356,6 +415,17 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         update{it.copy(cards=it.cards.show(shown))};pendingTitles=shown
     } }
     fun consumePanelRequest(){update{it.copy(panelRequest="")}}
+    fun askScene(dialogue: Boolean = false) {
+        val language = responseLanguage?.substringBefore('-') ?: Locale.getDefault().language
+        sendText(when (language) {
+            "de" -> if (dialogue) "Was bedeutet dieser Dialog?" else "Was ist gerade passiert?"
+            "ar" -> if (dialogue) "ما المقصود بهذا الحوار؟" else "ماذا حدث للتو؟"
+            else -> if (dialogue) "What does this dialogue mean?" else "What just happened?"
+        })
+    }
+    fun replayScene() {
+        scope.launch { executeAuthorizedNativeCommand(JSONObject().put("action", "replay_scene")) }
+    }
     fun openAgentEpisode(episode:JSONObject){scope.launch{
         val card=runCatching{catalogue.find("",kind="tv",id=episode.getInt("id")).single()}.getOrNull()?:return@launch
         suspendSession()
@@ -373,6 +443,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         return executeAuthorizedNativeCommand(args)
     }
     private suspend fun executeAuthorizedNativeCommand(args:JSONObject):TalkNativeResult=when(args.optString("action")) {
+        "scene_context" -> TalkNativeResult(awaitSceneObservation()?.metadata ?: JSONObject().put("status", "no_active_scene"))
         "set_voice"->{val voice=requireNotNull(VOICES.firstOrNull{it.equals(args.optString("stringValue"),true)});TalkNativeResult(JSONObject().put("status","ready").put("voice",voice).put("instruction","Say briefly that you are switching voice. The native voice changes immediately after this reply.")){selectVoice(voice)}}
         "set_history"->{require(args.opt("enabled") is Boolean);setHistory(args.getBoolean("enabled"));TalkNativeResult(JSONObject().put("status","completed").put("keepHistory",state.value.keepHistory))}
         "new_chat"->TalkNativeResult(JSONObject().put("status","ready").put("instruction","Say briefly that you are starting a new chat. The native chat resets after this reply.")){newChat();scope.launch{connect()}}
@@ -529,7 +600,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         // Deliberately omit every TMDB text field. Only the viewer's own progress
         // and opaque identifiers are used to look up permitted, independent data.
         val progress = (context.applicationContext as AliflixApplication).playbackProgressStore.entries.value.values.maxByOrNull { it.updatedAtMillis }
-        conversationContext = JSONObject().put("companionVersion",12).put("textMode",state.value.textMode).put("clientDate",java.time.LocalDate.now().toString()).put("locale",Locale.getDefault().toLanguageTag()).put("agentPreferences",agent.preferences()).put("voice",state.value.voice).put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
+        conversationContext = JSONObject().put("companionVersion",13).put("textMode",state.value.textMode).put("clientDate",java.time.LocalDate.now().toString()).put("locale",Locale.getDefault().toLanguageTag()).put("agentPreferences",agent.preferences()).put("voice",state.value.voice).put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
             .put("position", progress?.positionSeconds ?: 0).put("completed", progress?.let { talkPlaybackCompleted(it.positionSeconds,it.durationSeconds,it.completed) } == true)
         progress?.let { p -> conversationContext.put("id", p.media.id).put("type", p.media.type.routeName)
             p.media.imdbId?.takeIf { it.matches(Regex("tt\\d{1,12}")) }?.let { conversationContext.put("imdbId", it) } }
@@ -643,6 +714,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             }
             val live=checkNotNull(ephemeral)
             require(live.getString("model")=="gemini-3.8-live" && live.getString("voice")==state.value.voice)
+            TalkPlayerConnection.current()?.talkScene()?.let(::observeScene)
             localActivityMode=live.optString("inputActivity")=="manual"
             check(localActivityMode){"This client requires explicit microphone activity ownership"}
             if(ticket!=epoch || !permitted) return
@@ -761,7 +833,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if(changedVoice!=null){
                     pendingVoiceAcknowledgement=null
                     emitContinuation("The new session is now actually configured with voice "+changedVoice+". You are already speaking with it: acknowledge the completed change, not a future plan, without a greeting or feature pitch. Complete any other explicit part of the same request that remains undone: "+lastQuestion)
-                }else if(!greeted&&!state.value.textMode&&state.value.lines.isEmpty()&&textSend?.isActive!=true){
+                }else if(!greeted&&!state.value.textMode&&state.value.lines.isEmpty()&&textSend?.isActive!=true&&TalkPlayerConnection.current()==null){
                     greeted=true
                     emitContinuation("The viewer has just opened a fresh voice conversation. Offer a brief, naturally voiced welcome in their device language ("+Locale.getDefault().toLanguageTag()+"). Compose it for this moment; use relaxed, warm prosody. One short greeting, no pitch, feature list, lookup, question or canned catchphrase. Never greet again after a reconnect or a voice change. If the viewer starts speaking, yield immediately.")
                 }
@@ -1718,6 +1790,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     fun clearHistory(){
         TalkConversationRoutes.clear()
         pauseSession()
+        clearSceneObservations()
         history.clear();userTurn.incrementAndGet();chatId=java.util.UUID.randomUUID().toString();
         persistedLines=emptyList()
         synchronized(knownFilmTopics){knownFilmTopics.clear()}
@@ -1759,6 +1832,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         persistHistory();socketReady=false;permitted=false;awaitingInterrupt=false;epoch++
         readyWatchdog?.cancel();readyWatchdog=null;reconnectJob?.cancel();reconnectJob=null
         val socket=ws;ws=null;runCatching {socket?.close(1000,"Paused")}
+        // Explicitly reopening Talk starts a new connection. Its previous
+        // constrained credential was single-use, even if its clock has not expired.
+        ephemeral=null;backendSession=null;resumeHandle=null;sentSceneKey=""
+        sceneObservation?.cancel();sceneObservation=null
         if(BuildConfig.DEBUG&&debugAudioTimeline.isNotEmpty())runCatching{
             java.io.File(context.getExternalFilesDir(null),"talk-last-audio-diagnostic.json").writeText(JSONObject().put("audio",JSONArray(debugAudioTimeline.toList())).put("events",JSONArray(debugWireEvents.toList())).toString())
         }
@@ -1775,6 +1852,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         textSend?.cancel()
         val socket=ws
         suspendSession()
+        clearSceneObservations()
         http.dispatcher.executorService.execute {
             // TLS close can write close_notify. Activity destruction must never
             // do socket cancellation or connection-pool eviction on main.

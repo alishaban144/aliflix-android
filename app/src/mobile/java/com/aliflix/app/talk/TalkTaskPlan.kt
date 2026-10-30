@@ -3,7 +3,7 @@ package com.aliflix.app.talk
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal val talkPlayerCommands = setOf("player_state", "pause", "resume", "seek", "seek_relative", "audio_language", "subtitle_language",
+internal val talkPlayerCommands = setOf("player_state", "pause", "resume", "replay_scene", "seek", "seek_relative", "audio_language", "subtitle_language",
     "sync_subtitles", "reset_subtitle_sync", "skip_intro", "next_episode", "select_episode", "playback_speed", "quality", "select_server", "select_provider", "retry_playback",
     "volume", "brightness", "rotate", "stop_playback", "stop_cast", "open_cast", "watch_together", "verify_provider")
 

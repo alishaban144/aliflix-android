@@ -11,6 +11,8 @@ import java.lang.ref.WeakReference
 internal interface TalkPlayerHost {
     fun talkSnapshot(): JSONObject
     suspend fun talkCommand(command: JSONObject): JSONObject
+    fun talkScene(): TalkSceneContext? = null
+    suspend fun prepareTalkScene(): TalkSceneContext? = talkScene()
 }
 
 internal object TalkPlayerConnection {
