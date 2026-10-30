@@ -21,10 +21,14 @@ class TalkVoiceUiTest {
                 AliflixMobileTheme { TalkVoiceScreen(session,{}, {}) }
             }
             compose.onNodeWithTag("talk-composer").performClick().performTextInput("Recent sci-fi")
-            compose.onNodeWithContentDescription("Recent chats").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Conversation settings").assertIsDisplayed()
             compose.onNodeWithContentDescription("Close conversation").assertIsDisplayed()
             compose.onNodeWithTag("talk-composer").assertIsDisplayed()
             compose.onNodeWithContentDescription("Send message").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Conversation settings").performClick()
+            compose.onNodeWithTag("talk-recent-chats").assertIsDisplayed().performClick()
+            compose.onNodeWithContentDescription("Close panel").assertIsDisplayed().performClick()
+            compose.onNodeWithTag("talk-composer").assertTextContains("Recent sci-fi")
             compose.runOnIdle { assertEquals(0L,session.debugReadyGeneration) }
             Thread.sleep(500)
             val instrumentation=InstrumentationRegistry.getInstrumentation()
@@ -60,7 +64,8 @@ class TalkVoiceUiTest {
             compose.onNodeWithText("Keep history").assertIsDisplayed()
             compose.onNodeWithText("Delete history").assertIsDisplayed()
             compose.onNodeWithContentDescription("Close panel").performClick()
-            compose.onNodeWithContentDescription("Recent chats").performClick()
+            compose.onNodeWithContentDescription("Conversation settings").performClick()
+            compose.onNodeWithTag("talk-recent-chats").performClick()
             compose.onNodeWithText("Recent chats").assertIsDisplayed()
             compose.onNodeWithContentDescription("Close panel").performClick()
             compose.onNodeWithContentDescription("Close conversation").performClick()
