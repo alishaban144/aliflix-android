@@ -223,6 +223,7 @@ internal fun NativePlayerScreen(
     settings: PlayerSettings = PlayerSettings(),
     onBack: () -> Unit = {},
     onResumeClicked: () -> Unit = {},
+    onResumeRequested: (() -> Unit)? = null,
     onRetry: () -> Unit = {},
     onVerifyProvider: () -> Unit = {},
     onWatchTogether: () -> Unit = {},
@@ -633,7 +634,7 @@ internal fun NativePlayerScreen(
                             player?.let { p ->
                                 if (p.playerError != null) p.prepare()
                                 if (ended) p.seekTo(0)
-                                if (p.playWhenReady && !ended) p.pause() else { onResumeClicked(); p.play() }
+                                if (p.playWhenReady && !ended) p.pause() else { onResumeClicked(); if(onResumeRequested!=null)onResumeRequested()else p.play() }
                             }
                             interaction++
                         },

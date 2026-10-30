@@ -506,7 +506,14 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                     player = controller,
                     settings = playerSettings,
                     onBack = ::pauseAndLeavePlayer,
-                    onResumeClicked = { selection?.let { (application as AliflixApplication).libraryStore.markPlayed(it.media) } },
+                    onResumeClicked = { talkPreparationPaused=false;closeTalk();selection?.let { (application as AliflixApplication).libraryStore.markPlayed(it.media) } },
+                    onResumeRequested = {
+                        val target=controller;val content=selection?.key
+                        lifecycleScope.launch {
+                            com.aliflix.app.talk.TalkAudioLease.awaitOwnRelease(this@NativePlayerActivity)
+                            if(!isFinishing&&!isDestroyed&&controller===target&&selection?.key==content)target?.play()
+                        }
+                    },
                     onRetry = retry@{
                         if (NativePlaybackService.retryCineJoyPlayback(manual = true)) {
                             ui = ui.copy(error = null, stage = null)

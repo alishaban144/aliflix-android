@@ -18,6 +18,17 @@ class Talk186PlayerJourneyDeviceTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val context get() = instrumentation.targetContext
     private fun step(action:String,number:Double?=null,text:String?=null)=JSONObject().put("action",action).apply { number?.let{put("numberValue",it)};text?.let{put("stringValue",it)} }
+    private suspend fun bound(activity:NativePlayerActivity,key:String)=withTimeout(8000){
+        while(true){withContext(Dispatchers.Main){activity.talkVoice.debugCardBounds[key]}?.let{return@withTimeout it};delay(40)}
+        @Suppress("UNREACHABLE_CODE") error("Missing $key")
+    }
+    private fun tap(rectangle:androidx.compose.ui.geometry.Rect) {
+        val now=android.os.SystemClock.uptimeMillis()
+        for(action in listOf(android.view.MotionEvent.ACTION_DOWN,android.view.MotionEvent.ACTION_UP)) {
+            val event=android.view.MotionEvent.obtain(now,android.os.SystemClock.uptimeMillis(),action,rectangle.center.x,rectangle.center.y,0)
+            event.source=android.view.InputDevice.SOURCE_TOUCHSCREEN;instrumentation.sendPointerSync(event);event.recycle()
+        }
+    }
     private fun fixture(body:suspend (NativePlayerActivity)->Unit) {
         grantNativeFixtureNetworkPermission()
         val bytes=instrumentation.context.assets.open("cast-test.mp4").use{it.readBytes()}
@@ -132,7 +143,7 @@ class Talk186PlayerJourneyDeviceTest {
             event.source=android.view.InputDevice.SOURCE_TOUCHSCREEN
             instrumentation.sendPointerSync(event);event.recycle()
         }
-        delay(250)
+        repeat(10){delay(40);assertEquals("The orb must keep its anchor throughout expansion",orb.center.x.toDouble(),bound(activity,"player-orb").center.x.toDouble(),2.0)}
         suspend fun checkControls(name:String) {
             val rectangles=listOf("player-microphone","player-type","player-expand","player-close").map{key->
                 val view=viewport()
@@ -146,10 +157,83 @@ class Talk186PlayerJourneyDeviceTest {
         withTimeout(6000){while(viewport().x<viewport().y)delay(80)}
         delay(400);checkControls("landscape")
         instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);delay(250)
+        assertTrue("Back first folds the controls",withContext(Dispatchers.Main){activity.talkVisible})
+        instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);delay(250)
         assertFalse(withContext(Dispatchers.Main){activity.talkVisible})
         assertFalse(withContext(Dispatchers.Main){activity.isFinishing})
         assertFalse(withContext(Dispatchers.Main){activity.playbackController!!.playWhenReady})
         activity.talkCommand(step("rotate",text="portrait"))
+    }
+    @Test fun anUnsentDraftAndItsCursorSurviveTheFullConversationAndReturnToThePlayer()=fixture { activity ->
+        withContext(Dispatchers.Main){activity.talkVoice.debugCardBounds.clear();activity.openTalk()}
+        tap(bound(activity,"player-orb"));delay(500);tap(bound(activity,"player-type"));bound(activity,"player-input");delay(700)
+        instrumentation.sendStringSync("Pause this video")
+        tap(bound(activity,"player-expand"));bound(activity,"player-full-input");delay(500)
+        assertFalse("Typing must retain the voice session",withContext(Dispatchers.Main){activity.talkVoice.state.value.textMode})
+        instrumentation.uiAutomation.takeScreenshot()?.let{bitmap->File(context.getExternalFilesDir(null),"talk186-player-full-composer.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()}
+        tap(bound(activity,"player-full-close"));delay(600)
+        assertTrue(withContext(Dispatchers.Main){activity.talkVisible})
+        tap(bound(activity,"player-type"));bound(activity,"player-input");delay(600)
+        instrumentation.sendStringSync(" and set playback speed to 0.75.")
+        tap(bound(activity,"player-send"))
+        val question="Pause this video and set playback speed to 0.75."
+        withTimeout(5000){while(activity.talkVoice.state.value.lines.none{it.role=="user"&&it.text==question})delay(50)}
+        withTimeout(65_000){while(withContext(Dispatchers.Main){activity.playbackController!!.playbackParameters.speed!=.75f})delay(80)}
+        assertFalse(withContext(Dispatchers.Main){activity.playbackController!!.playWhenReady})
+    }
+    @Test fun theTaskCancelControlBelongsOnlyToThisConversationAndStopsItsRemainingSeek()=fixture { activity ->
+        var entered=CompletableDeferred<Unit>()
+        val wrapped=object:TalkPlayerHost {
+            override fun talkSnapshot()=activity.talkSnapshot()
+            override suspend fun talkCommand(command:JSONObject):JSONObject {if(command.optString("action")=="pause"){entered.complete(Unit);delay(10_000)};return activity.talkCommand(command)}
+        }
+        val work=TalkTaskWork.get(context)
+        withContext(Dispatchers.Main){activity.talkVoice.setTextMode(true);activity.talkVoice.debugCardBounds.clear();activity.openTalk();TalkPlayerConnection.attach(wrapped)}
+        val foreign=withContext(Dispatchers.Main){work.start(context.applicationContext,listOf(step("pause"),step("seek",30.0)),emptyList())}
+        withTimeout(3000){entered.await()};tap(bound(activity,"player-orb"));delay(500)
+        assertNull("Another conversation must not own this bubble's cancel control",activity.talkVoice.debugCardBounds["player-cancel"])
+        withContext(Dispatchers.Main){work.cancel(foreign);work.await(foreign);entered=CompletableDeferred()}
+        val local=withContext(Dispatchers.Main){work.start(activity,listOf(step("pause"),step("seek",30.0)),emptyList())}
+        withTimeout(3000){entered.await()};delay(500);tap(bound(activity,"player-cancel"))
+        val cancelled=withContext(Dispatchers.Main){work.await(local)}
+        assertEquals("cancelled",cancelled.getString("status"));assertFalse(cancelled.getBoolean("cancellable"))
+        assertTrue(withContext(Dispatchers.Main){activity.playbackController!!.currentPosition<15_000})
+        withContext(Dispatchers.Main){TalkPlayerConnection.attach(activity)}
+    }
+    @Test fun theManualPlayButtonReleasesTalkBeforePlaybackResumes()=fixture { activity ->
+        withContext(Dispatchers.Main){activity.openTalk()}
+        withTimeout(15_000){while(!activity.talkVoice.debugAudioSnapshot().optBoolean("leaseActive"))delay(60)}
+        val size=android.graphics.Point().also{activity.windowManager.defaultDisplay.getRealSize(it)}
+        tap(androidx.compose.ui.geometry.Rect(size.x/2f-2,size.y/2f-2,size.x/2f+2,size.y/2f+2))
+        withTimeout(10_000){while(withContext(Dispatchers.Main){activity.talkVisible||activity.playbackController!!.isPlaying!=true})delay(60)}
+        assertFalse(activity.talkVoice.debugAudioSnapshot().getBoolean("leaseActive"))
+        val before=withContext(Dispatchers.Main){activity.playbackController!!.currentPosition};delay(400)
+        assertTrue(withContext(Dispatchers.Main){activity.playbackController!!.currentPosition>before+100})
+    }
+    @Test fun landscapeTypingMovesIntoTheFullComposerWithoutChangingVoiceModeOrClippingTheKeyboard()=fixture { activity ->
+        fun viewport()=android.graphics.Point().also{activity.windowManager.defaultDisplay.getRealSize(it)}
+        try {
+            activity.talkCommand(step("rotate",text="landscape"));withTimeout(6000){while(viewport().x<viewport().y)delay(60)}
+            withContext(Dispatchers.Main){activity.talkVoice.debugCardBounds.clear();activity.openTalk()}
+            tap(bound(activity,"player-orb"));delay(500);tap(bound(activity,"player-type"))
+            bound(activity,"player-full-input");delay(800)
+            val field=bound(activity,"player-full-input");val view=viewport()
+            // The dialog, rather than the underlying player window, owns this IME.
+            val ime=withTimeout(5000){
+                while(true){
+                    val bottom=withContext(Dispatchers.Main){android.view.inspector.WindowInspector.getGlobalWindowViews().mapNotNull{it.rootWindowInsets?.getInsets(android.view.WindowInsets.Type.ime())?.bottom}.maxOrNull()?:0}
+                    if(bottom>0)return@withTimeout bottom
+                    delay(50)
+                }
+                @Suppress("UNREACHABLE_CODE") error("Keyboard unavailable")
+            }
+            assertTrue("The full composer stays above the keyboard: $field, ime=$ime, viewport=$view",field.top>=0&&field.bottom<=view.y-ime+2&&field.right<=view.x)
+            assertFalse(withContext(Dispatchers.Main){activity.talkVoice.state.value.textMode})
+            instrumentation.uiAutomation.takeScreenshot()?.let{bitmap->File(context.getExternalFilesDir(null),"talk186-player-landscape-composer.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()}
+            tap(bound(activity,"player-full-close"));delay(500)
+            assertTrue(withContext(Dispatchers.Main){activity.talkVisible})
+            assertFalse(withContext(Dispatchers.Main){activity.playbackController!!.playWhenReady})
+        } finally {activity.talkCommand(step("rotate",text="portrait"))}
     }
     @Test fun theLiveModelExecutesEnglishAndGermanCompoundRequestsThroughOneNativeTaskEach()=fixture { activity ->
         val voice=activity.talkVoice

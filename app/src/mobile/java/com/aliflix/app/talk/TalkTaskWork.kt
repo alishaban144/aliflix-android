@@ -73,7 +73,7 @@ internal class TalkTaskWork private constructor(private val app: AliflixApplicat
         val account = talkTaskAccount()
         _tasks.value = (_tasks.value.filter { it.optString("taskId") in jobs } + _tasks.value.filter { it.optString("taskId") !in jobs }.takeLast(8) + JSONObject().put("taskId", id).put("status", "queued")
             .put("conversationId",handoff?.state?.conversationId)
-            .put("commands", talkTaskJson(steps)).put("results", JSONArray()))
+            .put("commands", talkTaskJson(steps)).put("results", JSONArray()).put("cancellable",true))
         val job = app.accountScope.launch(Dispatchers.Main.immediate, start = CoroutineStart.LAZY) {
             val results = JSONArray()
             try {
@@ -167,7 +167,7 @@ internal class TalkTaskWork private constructor(private val app: AliflixApplicat
             } catch (cancelled: CancellationException) {
                 update(id) { it.put("status", "cancelled") }; throw cancelled
             } catch (error: Exception) { update(id) { it.put("status", "failed").put("reason", error.message.orEmpty().take(180)) } }
-            finally { jobs.remove(id) }
+            finally { jobs.remove(id);update(id){it.put("cancellable",false)} }
         }
         jobs[id] = job
         job.start()
