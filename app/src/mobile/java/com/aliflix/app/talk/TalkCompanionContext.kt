@@ -7,7 +7,7 @@ import com.aliflix.app.model.Media
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Only user-owned state and opaque identifiers leave the device; no catalogue prose. */
+/** User state and identifiers; catalogue descriptions are never model context. */
 internal fun talkLibraryIdentity(item:Media,kind:String)=JSONObject().put("id",item.id)
     .put("type",item.type.routeName).put("kind",kind).apply {
         item.imdbId?.takeIf{it.matches(Regex("tt\\d{1,12}"))}?.let{put("imdbId",it)}
@@ -45,7 +45,9 @@ internal fun talkAppContext(context:Context):JSONObject {
                 .put("progressAction","download_work").put("cancelAction","cancel_download_work").put("verification","native source verification when required").put("queuedIsCompleted",false))
             .put("voice",JSONObject().put("action","set_voice").put("choices",JSONArray(VOICES)).put("takesEffect","new_session_before_acknowledgement"))
             .put("library",JSONArray(listOf("title_state","library_state","save","unsave","favorite","unfavorite","dislike","undo_dislike","batch_library","undo")))
-            .put("player",JSONArray((talkPlayerCommands+setOf("play","execute_task","task_state","cancel_task")).toList()))
+            .put("player",JSONArray((talkPlayerCommands+setOf("play","execute_task","task_state","cancel_task","scene_context")).toList()))
+            .put("scene",JSONObject().put("tool","scene_context").put("evidence","Recent player video frames, selected timed captions, played dialogue and exact viewing boundary; ephemeral and bounded")
+                .put("uses",JSONArray(listOf("explain_current_scene","explain_dialogue","translate_visible_line","recap_recent_events","replay_scene"))).put("futureSpoilers",false))
             .put("navigation",JSONArray(listOf("home","discover","ask","my_list","favorites","history","downloads","settings","account","talk_voices","talk_privacy","recent_chats","agent_tasks")))
             .put("settings",JSONArray(listOf("play_next_episode","audio_boost","zoom","auto_subtitles","playback_speed","subtitle_size","subtitle_opacity","subtitle_delay_seconds","subtitle_vertical_offset","preferred_quality","subtitle_language","provider","recommendations_enabled")))
             .put("agent",JSONObject().put("tool","agent_workspace").put("background",true).put("explicitMonitoringConsent",true).put("scope","Aliflix only")))

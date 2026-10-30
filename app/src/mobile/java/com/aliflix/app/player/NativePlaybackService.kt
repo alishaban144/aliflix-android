@@ -792,6 +792,13 @@ class NativePlaybackService : MediaSessionService() {
                 .map { androidx.media3.common.text.Cue.Builder().setText(mobileCaptionText(it.text)).build() }.toList()
         }
 
+        /** Already selected/corrected captions, bounded to what has reached the playhead. */
+        internal fun sceneCaptionEvidence(position: Double): List<SubtitleCue> {
+            val service = activeService ?: return emptyList()
+            if (embeddedSubtitlesActive) return emptyList()
+            return service.externalCaptionCues.filter { it.startSeconds <= position && it.endSeconds >= position - 45 }.takeLast(12)
+        }
+
         internal fun speechEvidence(): List<SpeechWindow> = activeService?.let { it.speechCapture.windows(it.playedUntil) }.orEmpty()
         internal val canRecordProgress: Boolean get() = activeService?.let {
             it.pendingResumeMs == null && (renderedStreamUrl == activeStreamUrl ||
@@ -815,6 +822,9 @@ class NativePlaybackService : MediaSessionService() {
             }
         }
         internal fun playedDialoguePcm(position: Double): PlayedDialoguePcm? = activeService?.speechCapture?.playedDialoguePcm(position)
+        /** Short scene clips are bounded by the actual playhead, independently of the longer sync window. */
+        internal fun sceneDialoguePcm(position: Double): PlayedDialoguePcm? = activeService?.speechCapture
+            ?.decodedDialoguePcm((position - 12).coerceAtLeast(0.0), position)
         internal fun pauseContinuousRecognition(paused: Boolean) {
             if (android.os.Build.VERSION.SDK_INT >= 34) activeService?.dialogueRecognition?.pauseForFiniteRecognition(paused)
         }

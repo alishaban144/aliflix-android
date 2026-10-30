@@ -27,6 +27,8 @@ internal class TalkNativeActions(private val context:Context,private val catalog
     fun clearUndo(){lastChange=null;lastBatch=emptyList()}
     suspend fun execute(args:JSONObject):TalkNativeResult {
         val action=args.optString("action")
+        if(action=="scene_context")return TalkNativeResult(TalkPlayerConnection.current()?.prepareTalkScene()?.metadata
+            ?: JSONObject().put("status","no_active_scene"))
         if(action=="task_state")return TalkNativeResult(TalkTaskWork.get(context).state(args.optString("taskId")))
         if(action=="cancel_task")return TalkNativeResult(TalkTaskWork.get(context).cancel(args.getString("taskId")))
         if(action=="execute_task"||action=="play")return task(args)

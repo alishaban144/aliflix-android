@@ -56,7 +56,7 @@ internal fun talkExplicitComparisonTitles(question:String):List<String> {
 /** High-confidence speech-act boundaries, not an extra permission dialog.
  * Model-proposed actions cannot turn a quote, hypothetical or negation into a write. */
 internal fun talkActionRequested(action:String,question:String):Boolean {
-    if(action in setOf("show_card","title_state","player_state","downloads_state","library_state","download_work"))return true
+    if(action in setOf("show_card","title_state","player_state","scene_context","downloads_state","library_state","download_work"))return true
     val q=question.lowercase(Locale.ROOT).replace('’','\'').trim()
     if(Regex("^(?:what if|what would|how (?:do|can|would)|if i (?:ask|asked|say|said|were|wanted|told)|suppose|hypothetically|imagine that)\\b").containsMatchIn(q))return false
     if(Regex("\\b(?:just a quote|only quoting|just an example|as an example|quoted phrase)\\b").containsMatchIn(q))return false
@@ -67,6 +67,7 @@ internal fun talkActionRequested(action:String,question:String):Boolean {
         "favorite"->"favorite|favourite|like|love|mark";"unfavorite"->"unfavorite|unfavourite|unlike|remove"
         "dislike"->"dislike|hide|reject";"undo_dislike","undo"->"undo|restore|bring back"
         "play","resume"->"play|resume|start";"pause"->"pause|stop"
+        "replay_scene"->"replay|repeat|rewind|hear|play"
         "cancel_download_work"->"cancel|stop|remove";"download"->"download";"set_setting","set_voice","set_history"->"change|set|turn|switch|enable|disable"
         "open_title","open_screen","similar","search"->"open|show|go|search|find|navigate"
         "agent_create"->"create|build|plan|monitor|watch|research|prepare|schedule|make|start|keep"
@@ -79,6 +80,8 @@ internal fun talkActionRequested(action:String,question:String):Boolean {
         "batch_library"->"save|unsave|add|remove|favorite|favourite|unfavorite|dislike|hide|reject|put|mark"
         else->action.replace('_',' ')
     }
+    if(Regex("\\bi (?:don't|do not|didn't|did not) (?:really )?understand\\b").containsMatchIn(q)&&
+        !Regex("(?:^|\\b(?:and|then)\\s+)(?:(?:please|can you|could you)\\s+)?(?:$verb)\\b").containsMatchIn(q))return false
     if(Regex("^(?:what|why|who|when|where|explain|tell me about)\\b").containsMatchIn(q)&&
         clauses.drop(1).none{Regex("^(?:(?:then|and|please) )*(?:$verb)\\b").containsMatchIn(it)})return false
     if(Regex("(?:don't|do not|never|not to)\\s+[^,.;!?]{0,20}\\b(?:$verb)\\b").containsMatchIn(q))return false
