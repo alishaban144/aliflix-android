@@ -217,7 +217,7 @@ class Talk186PlayerJourneyDeviceTest {
             withContext(Dispatchers.Main){activity.talkVoice.debugCardBounds.clear();activity.openTalk()}
             tap(bound(activity,"player-orb"));delay(500);tap(bound(activity,"player-type"))
             bound(activity,"player-full-input");delay(800)
-            val field=bound(activity,"player-full-input");val view=viewport()
+            val view=viewport()
             // The dialog, rather than the underlying player window, owns this IME.
             val ime=withTimeout(5000){
                 while(true){
@@ -227,9 +227,12 @@ class Talk186PlayerJourneyDeviceTest {
                 }
                 @Suppress("UNREACHABLE_CODE") error("Keyboard unavailable")
             }
+            delay(600)
+            val field=bound(activity,"player-full-input");val minimum=48*activity.resources.displayMetrics.density
+            instrumentation.uiAutomation.takeScreenshot()?.let{bitmap->File(context.getExternalFilesDir(null),"talk186-player-landscape-composer.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()}
+            assertTrue("The composer must retain a real touchable height: $field",field.height>=minimum&&field.width>=minimum*2)
             assertTrue("The full composer stays above the keyboard: $field, ime=$ime, viewport=$view",field.top>=0&&field.bottom<=view.y-ime+2&&field.right<=view.x)
             assertFalse(withContext(Dispatchers.Main){activity.talkVoice.state.value.textMode})
-            instrumentation.uiAutomation.takeScreenshot()?.let{bitmap->File(context.getExternalFilesDir(null),"talk186-player-landscape-composer.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()}
             tap(bound(activity,"player-full-close"));delay(500)
             assertTrue(withContext(Dispatchers.Main){activity.talkVisible})
             assertFalse(withContext(Dispatchers.Main){activity.playbackController!!.playWhenReady})

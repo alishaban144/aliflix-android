@@ -128,13 +128,14 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
     LaunchedEffect(Unit) { onStart() }
     val idle=state.phase in listOf("Ready","Resume","Reconnect","Microphone permission","Audio unavailable","Try again later","Opened elsewhere")
     fun send(){if(draft.text.isNotBlank()){session.sendText(draft.text);draft=TextFieldValue()}}
-    Box(Modifier.fillMaxSize().background(AliflixBackgroundBase).observeDiscoverTouches(tracker).onGloballyPositioned{screenOrigin=it.boundsInRoot().topLeft;screenSize=it.size}.testTag("talk-screen")) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(AliflixBackgroundBase).imePadding().observeDiscoverTouches(tracker).onGloballyPositioned{screenOrigin=it.boundsInRoot().topLeft;screenSize=it.size}.testTag("talk-screen")) {
+        val compactComposer=chatLayout&&maxHeight<320.dp
         TalkPixelField("",state.phase,{state.level},motion&&!chatLayout,Modifier.fillMaxSize().graphicsLayer { alpha=if(chatLayout).15f else .52f })
-        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.displayCutout)).imePadding().padding(horizontal=20.dp)) {
-            Row(Modifier.fillMaxWidth().padding(top=8.dp,bottom=8.dp),verticalAlignment=Alignment.CenterVertically) {
+        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.displayCutout)).padding(horizontal=20.dp)) {
+            Row(Modifier.fillMaxWidth().padding(vertical=if(compactComposer)0.dp else 8.dp),verticalAlignment=Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("ALIFLIX",color=AliflixAccentSecondary,fontSize=9.sp,letterSpacing=3.sp,fontWeight=FontWeight.Bold)
-                    Text(if(state.textMode)"Ask Aliflix" else "Talk",color=AliflixContentPrimary,fontSize=25.sp,fontWeight=FontWeight.SemiBold)
+                    if(!compactComposer)Text("ALIFLIX",color=AliflixAccentSecondary,fontSize=9.sp,letterSpacing=3.sp,fontWeight=FontWeight.Bold)
+                    Text(if(state.textMode)"Ask Aliflix" else "Talk",color=AliflixContentPrimary,fontSize=if(compactComposer)20.sp else 25.sp,fontWeight=FontWeight.SemiBold,maxLines=1)
                 }
                 AliflixIconButton(onClick={session.setTextMode(!state.textMode);onStart()},modifier=Modifier.testTag("talk-chat-mode").semantics { stateDescription=if(state.textMode)"Text chat selected" else "Voice selected" }) {
                     Icon(if(state.textMode)Icons.Rounded.GraphicEq else Icons.Rounded.EditNote,if(state.textMode)"Voice conversation" else "Chat",tint=AliflixAccentSecondary)
@@ -156,7 +157,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 Icon(Icons.Rounded.Workspaces,null,Modifier.size(16.dp));Spacer(Modifier.width(8.dp));Text("$activeWork active",fontSize=12.sp)
             }
             if(chatLayout) {
-                Row(Modifier.fillMaxWidth().padding(bottom=8.dp),verticalAlignment=Alignment.CenterVertically) {
+                if(!compactComposer)Row(Modifier.fillMaxWidth().padding(bottom=8.dp),verticalAlignment=Alignment.CenterVertically) {
                     if(state.lines.isNotEmpty()||keyboardOpen){Box(anchor(Modifier.size(56.dp)));Spacer(Modifier.width(12.dp))}
                     Column(Modifier.weight(1f)) {
                         AnimatedContent(if(state.lines.isEmpty())"" else state.words,transitionSpec={fadeIn(tween(if(motion)220 else 0)) togetherWith fadeOut(tween(if(motion)120 else 0))},label="talk-chat-topic") { topic ->
@@ -174,7 +175,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 }
                 if(state.lines.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(),contentAlignment=Alignment.Center) {
                     Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                        if(!keyboardOpen)Box(anchor(Modifier.size(116.dp)))
+                        if(!keyboardOpen&&!compactComposer)Box(anchor(Modifier.size(116.dp)))
 
                     }
                 } else Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -220,9 +221,9 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                     Text(state.connectionDetail.ifBlank{if(state.phase=="Try again later")state.phase else "Connection unavailable"},Modifier.weight(1f),color=AliflixContentSecondary,fontSize=12.sp)
 
                 }
-                Row(Modifier.fillMaxWidth().padding(top=10.dp,bottom=8.dp),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.fillMaxWidth().padding(top=if(compactComposer)4.dp else 10.dp,bottom=if(compactComposer)4.dp else 8.dp),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
                     OutlinedTextField(value=draft,onValueChange={draft=if(it.text.length<=1600)it else it.copy(text=it.text.take(1600))},modifier=Modifier.weight(1f).focusRequester(composerFocus).testTag("talk-composer").playerMeasured("player-full-input"),
-                        placeholder={Text("Message Aliflix",fontSize=14.sp)},maxLines=5,shape=RoundedCornerShape(24.dp),
+                        placeholder={Text("Message Aliflix",fontSize=14.sp)},singleLine=compactComposer,maxLines=if(compactComposer)1 else 5,shape=RoundedCornerShape(24.dp),
                         keyboardOptions=KeyboardOptions(imeAction=ImeAction.Send),keyboardActions=KeyboardActions(onSend={send()}),
                         colors=OutlinedTextFieldDefaults.colors(focusedBorderColor=AliflixAccentSecondary,unfocusedBorderColor=AliflixContentTertiary.copy(alpha=.3f),focusedTextColor=AliflixContentPrimary,unfocusedTextColor=AliflixContentPrimary))
                     val stop=talkShowsResponseProgress(state.sending,state.answerComplete)&&draft.text.isBlank()
@@ -244,7 +245,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 }
             }
         }
-        if(orbAnchor.width>0f&&orbAnchor.height>0f){
+        if(orbAnchor.width>0f&&orbAnchor.height>0f&&!compactComposer){
             val compact=chatLayout
             val small=compact&&(state.lines.isNotEmpty()||keyboardOpen)
             val base=if(compact)minOf(orbAnchor.width,orbAnchor.height)else minOf(orbAnchor.width*.86f,orbAnchor.height,with(density){320.dp.toPx()})
