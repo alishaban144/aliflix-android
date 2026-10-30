@@ -28,8 +28,8 @@ class TalkTitleCardsDeviceTest {
             compose.onNodeWithTag("talk-title-movie:27205").assertDoesNotExist()
             compose.onNodeWithTag("talk-title-tv:70523").assertDoesNotExist()
             val card=compose.onNodeWithTag("talk-title-movie:522627").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
-            val rail=compose.onNodeWithTag("talk-title-cards").fetchSemanticsNode().boundsInRoot
-            assertEquals("The selected card must be centered",rail.center.x,card.center.x,2f)
+            val screen=compose.onNodeWithTag("talk-screen").fetchSemanticsNode().boundsInRoot
+            assertEquals("The selected card must be centered in its retained stage",screen.center.x,card.center.x,2f)
             compose.runOnIdle{session.debugPreviewUserQuestion("Why would I enjoy it?")}
             compose.onNodeWithTag("talk-title-movie:522627").assertIsDisplayed()
             screenshot("talk-focused-179.png")
@@ -45,8 +45,11 @@ class TalkTitleCardsDeviceTest {
             compose.onNodeWithTag("talk-orb").assertIsDisplayed()
             compose.onNodeWithTag("talk-title-movie:27205").assertIsDisplayed()
             val topic=compose.onNodeWithTag("talk-topic").fetchSemanticsNode().boundsInRoot
-            val cards=compose.onNodeWithTag("talk-title-cards").fetchSemanticsNode().boundsInRoot
-            assertTrue("Cards must sit below the animated topic",cards.top>=topic.bottom)
+            for(title in titles) {
+                val card=compose.onNodeWithTag("talk-title-${title.key}").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+                assertTrue("Each card must sit below the animated topic",card.top>=topic.bottom)
+                assertTrue("Card metadata must retain real height",card.height>100*InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density)
+            }
             screenshot("talk-cards-voice-178.png")
         } finally {session.close();scope.cancel()}
     }
@@ -58,8 +61,7 @@ class TalkTitleCardsDeviceTest {
             compose.setContent{AliflixMobileTheme{TalkVoiceScreen(session,{}, {})}}
             compose.onNodeWithTag("talk-chat-orb").assertIsDisplayed()
             compose.onNodeWithTag("talk-title-movie:27205").performScrollTo().assertIsDisplayed()
-            compose.onNodeWithTag("talk-title-cards").performScrollToIndex(1)
-            compose.onNodeWithTag("talk-title-tv:70523").assertIsDisplayed()
+            compose.onNodeWithTag("talk-title-tv:70523").performScrollTo().assertIsDisplayed()
             screenshot("talk-cards-chat-178.png")
         } finally {session.close();scope.cancel()}
     }

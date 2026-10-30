@@ -35,8 +35,9 @@ class TalkVoiceActivity : ComponentActivity() {
             lifecycleScope.launch { voice.connect() }
         else permission.launch(Manifest.permission.RECORD_AUDIO)
     }
+    override fun onStart() { super.onStart();voice.restoreRoutedConversation() }
     // The microphone and sockets never survive the visible experience.
     // Returning requires an explicit retry; a backgrounded phone cannot record.
-    override fun onStop() { voice.pauseSession(); super.onStop() }
+    override fun onStop() { voice.handoff();voice.pauseSession(); super.onStop() }
     override fun onDestroy() { voice.close(); super.onDestroy() }
 }

@@ -73,16 +73,16 @@ class TalkNativeActionsTest {
   assertFalse(actions.execute(JSONObject().put("action","undo")).value.getBoolean("saved"))
   assertEquals("nothing_to_undo",actions.execute(JSONObject().put("action","undo")).value.getString("status"))
  }
- @Test fun openingNativeFeaturesIsDeferredAndPreservesExactTitleAndEpisode()=runBlocking {
+ @Test fun openingNativeDetailsIsDeferredAndPreservesExactTitleIdentity()=runBlocking {
   val app=(RuntimeEnvironment.getApplication() as AliflixApplication)
-  val result=action().execute(JSONObject().put("action","play").put("title","Dark").put("season",1).put("episode",2))
+  val result=action().execute(JSONObject().put("action","open_title").put("title","Dark"))
   assertEquals("ready",result.value.getString("status"))
   assertNull(shadowOf(app).nextStartedActivity)
   requireNotNull(result.afterReply).invoke()
   val intent=shadowOf(app).nextStartedActivity
   assertEquals(TalkTitleActivity::class.java.name,intent.component!!.className)
   assertEquals(70523,JSONObject(intent.getStringExtra("title")!!).getInt("id"))
-  assertEquals(2,JSONObject(intent.getStringExtra("assistantAction")!!).getInt("episode"))
+  assertEquals("open_title",JSONObject(intent.getStringExtra("assistantAction")!!).getString("action"))
  }
  @Test fun batchPreflightRejectsEveryWriteWhenOneCommandIsInvalid()=runBlocking {
   val actions=action();val app=(RuntimeEnvironment.getApplication() as AliflixApplication)

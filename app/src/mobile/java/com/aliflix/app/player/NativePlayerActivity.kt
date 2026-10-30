@@ -43,10 +43,254 @@ import com.aliflix.app.ui.theme.AliflixMobileTheme
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.*
 import org.json.JSONArray
+import org.json.JSONObject
 
 /** Disposable UI and preparation; the service retains decoding, the TV surface and media session. */
 @androidx.annotation.OptIn(UnstableApi::class)
-class NativePlayerActivity : FragmentActivity() {
+class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayerHost {
+    internal var talkVisible by mutableStateOf(false)
+        private set
+    internal val talkVoice by lazy { com.aliflix.app.talk.TalkVoiceSession(this, lifecycleScope,
+        restoreHistory = !(com.aliflix.app.BuildConfig.DEBUG && intent.getBooleanExtra("validationFreshHistory",false))).also { voice ->
+        intent.getStringExtra("talkTaskId")?.let { id -> com.aliflix.app.talk.TalkTaskWork.get(this).conversation(id)?.let(voice::restoreHandoff) }
+    } }
+    internal fun talkHandoff()=if(talkCreated)talkVoice.handoff()else null
+    private var talkCreated = false
+    private var talkPreparationPaused = false
+    private val talkPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted && talkVisible) lifecycleScope.launch { talkVoice.connect() } else if (talkCreated) talkVoice.permissionDenied()
+    }
+    internal fun openTalk() {
+        controller?.pause()
+        talkCreated = true
+        talkVisible = true
+        if (talkVoice.state.value.textMode || ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED)
+            lifecycleScope.launch { talkVoice.connect() }
+        else talkPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+    }
+    internal fun closeTalk() {
+        if (talkCreated) { talkVoice.handoff();talkVoice.pauseSession() }
+        talkVisible = false
+    }
+    override fun talkSnapshot(): JSONObject {
+        val current = selection
+        val player = controller
+        val tracks = player?.currentTracks?.groups.orEmpty().flatMap { group -> (0 until group.length).map { index ->
+            val format = group.getTrackFormat(index)
+            JSONObject().put("kind", when (group.type) { C.TRACK_TYPE_AUDIO -> "audio"; C.TRACK_TYPE_TEXT -> "subtitle"; else -> "video" })
+                .put("language", format.language).put("label", format.label).put("height", format.height).put("selected", group.isTrackSelected(index))
+        } }
+        return JSONObject().put("status", if (player == null) "no_active_playback" else "current")
+            .put("launchTaskId",intent.getStringExtra("talkTaskId"))
+            .put("contentKey", current?.key?.substringBefore(":via:") ?: player?.currentMediaItem?.mediaId?.substringBefore(":via:"))
+            .put("id", current?.media?.id).put("type", current?.media?.type?.routeName).put("season", current?.seasonNumber).put("episode", current?.episodeNumber)
+            .put("position", (player?.currentPosition ?: 0L) / 1000.0).put("positionSeconds", (player?.currentPosition ?: 0L) / 1000.0)
+            .put("durationSeconds", player?.duration?.takeIf { it > 0 }?.div(1000.0)).put("playing", player?.isPlaying == true)
+            .put("playWhenReady", player?.playWhenReady == true).put("playbackState", player?.playbackState).put("completed", player?.playbackState == Player.STATE_ENDED)
+            .put("provider", current?.source?.identity?.name).put("server", ui.server).put("servers", JSONArray(ui.availableServers))
+            .put("providers", JSONArray(ui.availableProviders.map { it.name })).put("tracks", JSONArray(tracks))
+            .put("audioLanguage", ui.sourceAudioLanguage).put("sourceAudio", JSONArray(ui.sourceAudioOptions.map { JSONObject().put("language", it.language).put("label", it.label) }))
+            .put("subtitles", ui.activeSubtitleTrack?.languageCode).put("subtitleLoading", ui.subtitleLoading).put("syncState", ui.audioSyncState)
+            .put("syncAvailable", ui.audioSyncAvailable).put("verificationRequired", ui.verificationRequired).put("error", ui.error ?: player?.playerError?.errorCodeName)
+            .put("volume", audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toDouble() / audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1))
+            .put("brightness", window.attributes.screenBrightness).put("speed", player?.playbackParameters?.speed)
+            .put("casting", ui.external).put("watchTogether", party.state.value.active)
+            .put("segments", JSONArray(ui.segments.map { JSONObject().put("kind", it.kind.name.lowercase()).put("startSeconds", it.startMs / 1000.0).put("endSeconds", it.endMs / 1000.0) }))
+    }
+
+    /** Same activity methods as the visible controls; completion is observed, never inferred from dispatch. */
+    override suspend fun talkCommand(command: JSONObject): JSONObject = withContext(Dispatchers.Main.immediate) {
+        val action = command.getString("action")
+        var ownedWork: Job? = null
+        var expected = command.optString("expectedContentKey").takeIf { it.isNotBlank() }
+            ?: talkSnapshot().optString("contentKey")
+        fun owns() = !isDestroyed && !isFinishing && talkSnapshot().optString("contentKey") == expected
+        fun result(status: String, reason: String? = null) = talkSnapshot().put("status",
+            if(ui.verificationRequired && status !in setOf("completed","current","user_input_required","verification_unavailable","playback_changed")) "verification_required" else status)
+            .put("action", action).apply { reason?.let { put("reason", it) } }
+        suspend fun until(timeout: Long = 20_000, condition: () -> Boolean): Boolean {
+            try {
+                val completed = withTimeoutOrNull(timeout) {
+                    while (!condition()) { check(owns()) { "Playback changed" }; if (ui.error != null || ui.verificationRequired || controller?.playerError != null) return@withTimeoutOrNull false; delay(80) }
+                    owns()
+                } == true
+                if(!completed)ownedWork?.cancel()
+                return completed
+            } catch (cancelled: CancellationException) { ownedWork?.cancel(); throw cancelled }
+        }
+        if (!owns()) return@withContext result("playback_changed")
+        if (action == "player_state") return@withContext result("current")
+        when (action) {
+            "verify_provider" -> { if (providerVerification == null) return@withContext result("verification_unavailable"); showProviderVerification = true; return@withContext result("user_input_required") }
+            "open_cast" -> { if (party.state.value.active) return@withContext result("leave_watch_together_first"); openReceiverPicker(); return@withContext result("user_input_required") }
+            "watch_together" -> { if (ui.external) return@withContext result("stop_cast_first"); val current = selection ?: return@withContext result("no_active_playback");
+                startActivity(Intent(this@NativePlayerActivity, com.aliflix.app.party.WatchPartyActivity::class.java).putExtra("selection", current.nativeJson())); return@withContext result("user_input_required") }
+            "stop_playback" -> { stopPlayback(); return@withContext JSONObject().put("status", "completed").put("action", action).put("playing", false) }
+            "retry_playback" -> { prepareSelection(); if (!until(75_000) { ui.ready && controller?.playbackState == Player.STATE_READY }) return@withContext result("not_ready"); return@withContext result("completed") }
+            "volume" -> { val value = command.getDouble("numberValue"); require(value.isFinite() && value in 0.0..1.0)
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, kotlin.math.round(value * audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)).toInt(), 0); return@withContext result("completed") }
+            "brightness" -> { val value = command.getDouble("numberValue"); require(value.isFinite() && value in 0.0..1.0)
+                window.attributes = window.attributes.apply { screenBrightness = value.toFloat() }; return@withContext result("completed") }
+            "rotate" -> { requestedOrientation = when (command.getString("stringValue")) { "portrait" -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT; "landscape" -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE; "auto" -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR; else -> error("Invalid orientation") }; return@withContext result("completed") }
+        }
+        if (!until(75_000) { controller?.currentMediaItem != null && controller?.playbackState in setOf(Player.STATE_READY, Player.STATE_ENDED) && (selection == null || activeSelectionKey() == selection?.key) })
+            return@withContext result(if (ui.verificationRequired) "verification_required" else "not_ready")
+        val player = controller ?: return@withContext result("no_active_playback")
+        fun sameLanguage(a: String?, b: String) = !a.isNullOrBlank() && canonicalSubtitleLanguageCode(a) == canonicalSubtitleLanguageCode(b)
+        when (action) {
+            "await_prepared" -> { player.pause();if(!until { !player.playWhenReady && !player.isPlaying })return@withContext result("not_paused");return@withContext result("prepared") }
+            "await_playback" -> {
+                talkPreparationPaused = false
+                closeTalk()
+                com.aliflix.app.talk.TalkAudioLease.awaitOwnRelease(this@NativePlayerActivity)
+                if(player.playbackState==Player.STATE_ENDED)player.seekTo(0)
+                player.play()
+                val start = player.currentPosition
+                if (!until(25_000) { player.isPlaying && player.currentPosition > start + 120 }) return@withContext result("not_playing")
+                return@withContext result("playing")
+            }
+            "pause" -> { player.pause(); if (!until { !player.playWhenReady && !player.isPlaying }) return@withContext result("not_paused") }
+            "resume" -> {
+                talkPreparationPaused = false
+                closeTalk()
+                com.aliflix.app.talk.TalkAudioLease.awaitOwnRelease(this@NativePlayerActivity)
+                if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
+                player.play()
+                if (!until { player.isPlaying }) return@withContext result("not_playing")
+            }
+            "seek", "seek_relative" -> {
+                require(player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)) { "This source cannot seek" }
+                val seconds = command.getDouble("numberValue"); require(seconds.isFinite() && (action != "seek" || seconds >= 0))
+                val target = ((if (action == "seek_relative") player.currentPosition else 0L) + (seconds * 1000).toLong()).coerceIn(0, player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE)
+                player.seekTo(target)
+                if (!until { kotlin.math.abs(player.currentPosition - target) < 1000 }) return@withContext result("seek_unconfirmed")
+            }
+            "audio_language" -> {
+                val language = command.getString("stringValue")
+                val source = ui.sourceAudioOptions.firstOrNull { sameLanguage(it.language, language) }
+                if (source != null) {
+                    selectSourceAudio(source.language)
+                    ownedWork = audioEditionJob
+                    if (!until(75_000) { ui.pendingSourceAudioLanguage == null && sameLanguage(ui.sourceAudioLanguage, language) }) return@withContext result("audio_unavailable")
+                } else {
+                    val group = player.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_AUDIO && (0 until it.length).any { n -> sameLanguage(it.getTrackFormat(n).language, language) && it.isTrackSupported(n) } }
+                    if (group == null) {
+                        if (sameLanguage(language, "de") && germanEdition != null) {
+                            useGermanEdition()
+                            if (!until(75_000) { ui.ready && sameLanguage(ui.sourceAudioLanguage, language) }) return@withContext result("audio_unavailable")
+                        } else return@withContext result("audio_unavailable")
+                    } else {
+                        val index = (0 until group.length).first { sameLanguage(group.getTrackFormat(it).language, language) && group.isTrackSupported(it) }
+                        if (!ui.external) NativePlaybackService.selectAudio(group.mediaTrackGroup, index)
+                        else player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false).setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index)).build()
+                        if (!until { player.currentTracks.groups.any { it.type == C.TRACK_TYPE_AUDIO && (0 until it.length).any { n -> it.isTrackSelected(n) && sameLanguage(it.getTrackFormat(n).language, language) } } }) return@withContext result("audio_unconfirmed")
+                    }
+                }
+            }
+            "subtitle_language" -> {
+                val language = command.getString("stringValue")
+                if (language == "off") disableSubtitles()
+                else {
+                    val current = selection ?: return@withContext result("subtitle_unavailable")
+                    rememberManualSubtitle(true, language)
+                    val subtitleOwner = subtitleChoiceRevision
+                    val saved = ui.subtitleTracks.firstOrNull { it.id in setOf("offline", "account-cache") && sameLanguage(it.languageCode, language) }
+                    val requestId = NativePlaybackService.activeRequestId
+                    val selected = saved ?: if (NativePlaybackService.activeRequest?.offlineDownloadId.isNullOrBlank()) {
+                        ui = ui.copy(subtitleLoading = true)
+                        try {
+                            val repository = SubdlSubtitleRepository()
+                            withTimeoutOrNull(28_000) {
+                                AutomaticSubtitleLoader(
+                                    sourceTracks = { ui.subtitleTracks + NativePlaybackService.activeRequest?.sourceCaptionTracks().orEmpty() },
+                                    searchTracks = { repository.search(current, canonicalSubtitleLanguageCode(language)).getOrThrow() },
+                                    download = { repository.download(it, current).getOrThrow() },
+                                ).load(current, canonicalSubtitleLanguageCode(language), player.duration, NativePlaybackService.selectedVideoFrameRate(),
+                                    { owns() && NativePlaybackService.activeRequestId == requestId && subtitleChoiceRevision == subtitleOwner },
+                                    { found -> if(owns())ui = ui.copy(subtitleTracks = normalizeMobileSubtitleTracks(ui.subtitleTracks + found)) },
+                                    latestFrameRate = NativePlaybackService::selectedVideoFrameRate, latestDurationMs = { player.duration })
+                            }?.track
+                        } finally { ui = ui.copy(subtitleLoading = false) }
+                    } else null
+                    if(subtitleChoiceRevision!=subtitleOwner)return@withContext result("changed_since_action")
+                    if (selected == null) return@withContext result("subtitle_unavailable")
+                    check(owns() && NativePlaybackService.activeRequestId == requestId) { "Playback changed" }
+                    applySubtitle(selected)
+                    ownedWork = subtitleJob
+                    if (!until(45_000) { !ui.subtitleLoading && ui.activeSubtitleTrack?.id == selected.id }) return@withContext result("subtitle_unavailable", ui.subtitleError)
+                }
+            }
+            "sync_subtitles" -> {
+                if (ui.activeSubtitleTrack == null) return@withContext result("subtitle_unavailable")
+                refreshAudioCorrection()
+                if (!ui.audioSyncAvailable && audioSyncJob?.isActive != true) return@withContext result("sync_unavailable")
+                if (audioSyncJob?.isActive != true) syncWithAudio()
+                ownedWork = audioSyncJob
+                if (!until(25_000) { audioSyncJob?.isActive != true && pendingSpeechSync == null }) return@withContext result("sync_unconfirmed")
+                if (ui.audioSyncState != "Synced") return@withContext result("sync_unmatched", ui.audioSyncState)
+            }
+            "reset_subtitle_sync" -> resetSubtitleSync()
+            "stop_cast" -> {
+                if (ui.external) player.sendCustomCommand(SessionCommand(NativePlaybackService.ACTION_STOP_CAST, Bundle.EMPTY), Bundle.EMPTY)
+                if (!until { !ui.external }) return@withContext result("cast_unconfirmed")
+            }
+            "skip_intro" -> {
+                if (introJob?.isActive == true) until(15_000) { introJob?.isActive != true || ui.segments.any { it.kind == IntroSegmentKind.INTRO } }
+                val marker = ui.segments.firstOrNull { it.kind == IntroSegmentKind.INTRO && it.endMs <= player.duration }
+                    ?: return@withContext result("intro_unavailable")
+                if (player.currentPosition >= marker.endMs) return@withContext result("already_applied")
+                player.seekTo(marker.endMs)
+                if (!until { player.currentPosition >= marker.endMs - 500 }) return@withContext result("seek_unconfirmed")
+            }
+            "select_episode", "next_episode" -> {
+                val current = selection?.takeIf { it.media.type == com.aliflix.app.model.MediaType.TV } ?: return@withContext result("episode_unavailable")
+                val season = if (action == "select_episode") command.getInt("season") else current.seasonNumber ?: 1
+                var options = episodeRepository.episodes(current.media.id, season)
+                check(owns()) { "Playback changed" }
+                var episode = if (action == "select_episode") options.firstOrNull { it.number == command.getInt("episode") }
+                    else options.firstOrNull { it.number > (current.episodeNumber ?: 1) }
+                if (episode == null && action == "next_episode") {
+                    val nextSeason = episodeRepository.seasons(current.media.id).firstOrNull { it.number > season && it.episodeCount > 0 }
+                    if (nextSeason != null) { options = episodeRepository.episodes(current.media.id, nextSeason.number); episode = options.firstOrNull() }
+                }
+                check(owns()) { "Playback changed" }
+                val target = episode ?: return@withContext result("episode_unavailable")
+                selectEpisode(target, recordPlay = true)
+                expected = selection?.key?.substringBefore(":via:").orEmpty()
+                if (!until(75_000) { ui.ready && activeSelectionKey() == selection?.key && controller?.playbackState == Player.STATE_READY }) return@withContext result("not_ready")
+            }
+            "playback_speed" -> { val speed = command.getDouble("numberValue").toFloat(); require(speed in listOf(.5f, .75f, 1f, 1.25f, 1.5f, 2f)); settingsStore.updatePlaybackSpeed(speed); player.setPlaybackSpeed(speed)
+                if (!until { player.playbackParameters.speed == speed }) return@withContext result("speed_unconfirmed") }
+            "quality" -> {
+                val value = command.getString("stringValue").uppercase(java.util.Locale.ROOT)
+                val builder = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+                if (value == "AUTO") builder.clearVideoSizeConstraints().setForceLowestBitrate(false)
+                else if (value == "LOW") builder.setForceLowestBitrate(true)
+                else {
+                    val height = value.removeSuffix("P").toInt()
+                    require(player.currentTracks.groups.any { it.type == C.TRACK_TYPE_VIDEO && (0 until it.length).any { n -> it.getTrackFormat(n).height == height && it.isTrackSupported(n) } }) { "Quality unavailable" }
+                    val group = player.currentTracks.groups.first { it.type == C.TRACK_TYPE_VIDEO && (0 until it.length).any { n -> it.getTrackFormat(n).height == height && it.isTrackSupported(n) } }
+                    val index = (0 until group.length).first { group.getTrackFormat(it).height == height && group.isTrackSupported(it) }
+                    builder.clearVideoSizeConstraints().setForceLowestBitrate(false).setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index))
+                }
+                player.trackSelectionParameters = builder.build()
+            }
+            "select_server" -> {
+                val server = command.getString("stringValue"); if (server !in ui.availableServers) return@withContext result("server_unavailable")
+                selectServer(server)
+                if (!until(75_000) { ui.ready && ui.server == server && activeSelectionKey() == selection?.key }) return@withContext result("server_unconfirmed")
+            }
+            "select_provider" -> {
+                val provider = com.aliflix.app.model.PlaybackProvider.fromStoredValue(command.getString("stringValue"))
+                if (provider == null || provider !in availableProvidersFor(selection ?: return@withContext result("no_active_playback"))) return@withContext result("provider_unavailable")
+                selectProviderServer(provider, "Auto")
+                if (!until(75_000) { ui.ready && selection?.source?.identity == provider && activeSelectionKey() == selection?.key }) return@withContext result("provider_unconfirmed")
+            }
+            "retry_playback" -> { prepareSelection(); if (!until(75_000) { ui.ready && controller?.playbackState == Player.STATE_READY }) return@withContext result("not_ready") }
+            else -> return@withContext result("unsupported_action")
+        }
+        if (!owns()) result("playback_changed") else result("completed")
+    }
     private val party by lazy { com.aliflix.app.party.WatchPartyClient.get(this) }
     private var germanEdition by mutableStateOf<String?>(null)
     private var germanWarmup: Job? = null
@@ -66,6 +310,7 @@ class NativePlayerActivity : FragmentActivity() {
     private var preparation: Job? = null
     private var subtitleJob: Job? = null
     private var subtitleGeneration = 0L
+    private var subtitleChoiceRevision = 0L
     private var automaticAttemptKey: String? = null
     private fun automaticSubtitlesEnabled(): Boolean =
         getSharedPreferences(com.aliflix.app.data.PlaybackProviderRepository.PREFS_NAME, MODE_PRIVATE)
@@ -83,6 +328,7 @@ class NativePlayerActivity : FragmentActivity() {
         subtitleJob = null
     }
     private fun rememberManualSubtitle(enabled: Boolean, language: String? = null) {
+        subtitleChoiceRevision++
         invalidateSubtitleWork()
         val editor = subtitleChoices.edit().putString("manual-owner", selection?.media?.key)
             .putString("manual-content", selection?.let(::subtitleContentKey)).putBoolean("enabled", enabled)
@@ -181,7 +427,7 @@ class NativePlayerActivity : FragmentActivity() {
         captionPreferences.registerOnSharedPreferenceChangeListener(syncedCaptionListener)
         subtitleChoices.registerOnSharedPreferenceChangeListener(syncedCaptionListener)
         if (savedInstanceState == null) PlaybackStartupTiming.begin(intent.getLongExtra("playTapElapsedMs", android.os.SystemClock.elapsedRealtime()))
-        onBackPressedDispatcher.addCallback(this) { pauseAndLeavePlayer() }
+        onBackPressedDispatcher.addCallback(this) { if(talkVisible)closeTalk()else pauseAndLeavePlayer() }
         requestAccepted = savedInstanceState?.getBoolean("requestAccepted") == true
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -227,6 +473,7 @@ class NativePlayerActivity : FragmentActivity() {
         lifecycleScope.launch {
             var previousDelay = settingsStore.settings.value.subtitleDelayTenths
             settingsStore.settings.collect {
+                videoFrame.resizeMode = if (it.resizeModeZoom) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
                 applySubtitleStyle()
                 updateSubtitlePadding(lastControlsVisible)
                 controller?.setPlaybackSpeed(it.playbackSpeed)
@@ -248,6 +495,7 @@ class NativePlayerActivity : FragmentActivity() {
                     }, { showProviderVerification = false })
                 }
                 NativePlayerScreen(
+                    onTalk = ::openTalk,
                     onWatchTogether = {
                         if (ui.external) ui = ui.copy(message = "Stop casting to start Watch Together")
                         else selection?.let { startActivity(Intent(this@NativePlayerActivity, com.aliflix.app.party.WatchPartyActivity::class.java).putExtra("selection", it.nativeJson())) }
@@ -258,7 +506,14 @@ class NativePlayerActivity : FragmentActivity() {
                     player = controller,
                     settings = playerSettings,
                     onBack = ::pauseAndLeavePlayer,
-                    onResumeClicked = { selection?.let { (application as AliflixApplication).libraryStore.markPlayed(it.media) } },
+                    onResumeClicked = { talkPreparationPaused=false;closeTalk();selection?.let { (application as AliflixApplication).libraryStore.markPlayed(it.media) } },
+                    onResumeRequested = {
+                        val target=controller;val content=selection?.key
+                        lifecycleScope.launch {
+                            com.aliflix.app.talk.TalkAudioLease.awaitOwnRelease(this@NativePlayerActivity)
+                            if(!isFinishing&&!isDestroyed&&controller===target&&selection?.key==content)target?.play()
+                        }
+                    },
                     onRetry = retry@{
                         if (NativePlaybackService.retryCineJoyPlayback(manual = true)) {
                             ui = ui.copy(error = null, stage = null)
@@ -338,6 +593,7 @@ class NativePlayerActivity : FragmentActivity() {
                     onControlsVisibilityChanged = ::updateSubtitlePadding,
                     onOverlayVisibilityChanged = { captionGestureBlocked = it },
                 )
+                if (talkVisible) com.aliflix.app.talk.TalkPlayerBubble(talkVoice, onStart = ::openTalk, onClose = ::closeTalk)
             } }
         }, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
@@ -449,6 +705,7 @@ class NativePlayerActivity : FragmentActivity() {
     override fun onNewIntent(intent: Intent) {
         recordCurrentProgress(urgent = true)
         super.onNewIntent(intent); setIntent(intent)
+        if(talkCreated)intent.getStringExtra("talkTaskId")?.let { id -> com.aliflix.app.talk.TalkTaskWork.get(this).conversation(id)?.let(talkVoice::restoreHandoff) }
         if (intent.hasExtra("selection") || intent.hasExtra("request") || intent.hasExtra("requestFile")) {
             requestAccepted = false; exhaustedSources.clear(); triedServers.clear(); recoveryCount = 0; acceptRequest(intent)
         }
@@ -539,6 +796,7 @@ class NativePlayerActivity : FragmentActivity() {
     private fun activeSelectionKey() = NativePlaybackService.activeRequest?.selectionJson?.let { runCatching { nativeSelection(it).key }.getOrNull() }
 
     private fun acceptRequest(intent: Intent) {
+        talkPreparationPaused = intent.getBooleanExtra("talkPreparePaused",false)
         val incoming = intent.getStringExtra("selection")?.let { runCatching { nativeSelection(it) }.getOrNull() }
             ?: runCatching { nativeRequestPayload(this, intent)?.let { nativeSelection(NativePlaybackRequest.fromJson(it).selectionJson) } }.getOrNull()
         if (incoming != null && !intent.getBooleanExtra("partyConsent", false) && party.state.value.active &&
@@ -712,6 +970,7 @@ class NativePlayerActivity : FragmentActivity() {
     }
 
     private fun resumePreparedPlayback() {
+        if(talkPreparationPaused){controller?.pause();return}
         if (party.state.value.active) controller?.playWhenReady = party.state.value.data?.optBoolean("playing") == true
         else controller?.play()
     }
@@ -1317,6 +1576,7 @@ class NativePlayerActivity : FragmentActivity() {
         val language = selectedSubtitleLanguage()
         val canAuto = allowAutomaticSubtitles()
         val validated = request.copy(
+            playing = request.playing && !talkPreparationPaused,
             preferEmbeddedSubtitles = canAuto,
             subtitleLanguage = language.lowercase(),
             offlineAutoSubtitles = canAuto,
@@ -1332,7 +1592,7 @@ class NativePlayerActivity : FragmentActivity() {
         val name = "native-request-${java.util.UUID.randomUUID()}.json"
         java.io.File(cacheDir, name).writeText(playbackRequest.toJson())
         val service = Intent(this, NativePlaybackService::class.java).putExtra("requestFile", name)
-        if (request.playing) ContextCompat.startForegroundService(this, service) else startService(service)
+        if (playbackRequest.playing) ContextCompat.startForegroundService(this, service) else startService(service)
         return name
     }
 
@@ -1957,6 +2217,8 @@ class NativePlayerActivity : FragmentActivity() {
 
     override fun onStart() {
         super.onStart()
+        if(talkCreated)talkVoice.restoreRoutedConversation()
+        com.aliflix.app.talk.TalkPlayerConnection.attach(this)
         startSubtitleRenderLoop()
         displays.registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
         val future = MediaController.Builder(this, SessionToken(this, ComponentName(this, NativePlaybackService::class.java))).buildAsync()
@@ -2024,6 +2286,8 @@ class NativePlayerActivity : FragmentActivity() {
         startService(Intent(this, NativePlaybackService::class.java).setAction(NativePlaybackService.ACTION_STOP)); finish()
     }
     override fun onStop() {
+        if (talkCreated) { talkVoice.handoff();talkVoice.pauseSession() }
+        com.aliflix.app.talk.TalkPlayerConnection.detach(this)
         audioSyncJob?.cancel(); audioSyncJob = null
         ui = ui.copy(audioSyncState = if (audioCorrection != null) "Synced" else null, audioSyncMessage = null)
         recordCurrentProgress(urgent = true)
@@ -2034,6 +2298,7 @@ class NativePlayerActivity : FragmentActivity() {
         super.onStop()
     }
     override fun onDestroy() {
+        if (talkCreated) talkVoice.close()
         originalAudioWarmup?.cancel()
         audioEditionJob?.cancel()
         germanWarmup?.cancel()

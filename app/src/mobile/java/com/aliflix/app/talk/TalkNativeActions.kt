@@ -27,6 +27,13 @@ internal class TalkNativeActions(private val context:Context,private val catalog
     fun clearUndo(){lastChange=null;lastBatch=emptyList()}
     suspend fun execute(args:JSONObject):TalkNativeResult {
         val action=args.optString("action")
+        if(action=="task_state")return TalkNativeResult(TalkTaskWork.get(context).state(args.optString("taskId")))
+        if(action=="cancel_task")return TalkNativeResult(TalkTaskWork.get(context).cancel(args.getString("taskId")))
+        if(action=="execute_task"||action=="play")return task(args)
+        if(action=="player_state" && TalkPlayerConnection.current()!=null)
+            return TalkNativeResult(TalkPlayerConnection.current()!!.talkCommand(args))
+        if(action in talkPlayerCommands && action!="player_state")
+            return task(JSONObject().put("commands",JSONArray().put(args)).put("_talkCallId",args.optString("_talkCallId")))
         if(action=="download_work")return TalkNativeResult(JSONObject().put("status","current").put("jobs",JSONArray(TalkDownloadWork.get(context).jobs.value.map{it.json()})))
         if(action=="cancel_download_work"){
             val id=args.getString("workId");val work=TalkDownloadWork.get(context)
@@ -39,17 +46,7 @@ internal class TalkNativeActions(private val context:Context,private val catalog
         if(action=="set_setting"){val result=setting(args);clearUndo();return result}
         if(action=="open_screen"||action=="search")return navigation(args,null)
         if(action in setOf("downloads_state","pause_download","resume_download","remove_download"))return downloads(args)
-        if(action=="resume"){
-            val current=talkPlayerAction(context,JSONObject().put("action","player_state"))
-            if(current.optString("status")!="current")return TalkNativeResult(current)
-            val command=JSONObject(args.toString()).put("expectedContentKey",current.getString("contentKey"))
-            return TalkNativeResult(JSONObject().put("status","ready").put("action","resume").put("instruction","The same current playback resumes after this brief reply.")){
-                val activity=context as? TalkVoiceActivity
-                activity?.voice?.suspendSession()
-                app.accountScope.launch{talkPlayerAction(context,command);if(activity?.intent?.hasExtra("playerContext")==true)activity.finish()}
-            }
-        }
-        if(action in setOf("player_state","pause","resume","seek","audio_language","subtitle_language"))
+        if(action=="player_state")
             return TalkNativeResult(talkPlayerAction(context,args))
         require(action in setOf("show_card","title_state","open_title","play","download","similar","save","unsave","favorite","unfavorite","dislike","undo_dislike")){"Unknown app action"}
         val cards=catalogue.find(args.optString("title"),args.optString("kind").takeIf{it in setOf("movie","tv")},args.optInt("year"),args.optInt("tmdbId"))
@@ -76,6 +73,48 @@ internal class TalkNativeActions(private val context:Context,private val catalog
             .put("saved",library.isInMyList(media)).put("favorite",library.isLiked(media)).apply{
                 if(action in setOf("dislike","undo_dislike"))put("disliked",media.key in AskTaste(context).rejected())
             })
+    }
+    private suspend fun task(args:JSONObject):TalkNativeResult {
+        val work=TalkTaskWork.get(context)
+        val requestKey=args.optString("_talkCallId")
+        work.existingRequest(requestKey)?.let{return TalkNativeResult(work.state(it))}
+        val plan=if(args.optString("action")=="play")JSONObject().put("commands",JSONArray().put(args))else args
+        val steps=talkTaskPlan(plan).toMutableList()
+        if(steps.size>1&&steps.first().optString("action")=="play"&&steps.last().optString("action") !in setOf("stop_playback","open_cast","watch_together","verify_provider")&&
+            steps.lastOrNull{it.optString("action") in setOf("play","pause","resume") }?.optString("action")=="play")
+            steps.add(JSONObject().put("action","resume"))
+        if(steps.none{it.optString("action")=="play"}&&steps.any{it.optString("action") in talkPlayerCommands}&&
+            com.aliflix.app.player.NativePlaybackService.activeRequestId==null)
+            return TalkNativeResult(JSONObject().put("status","no_active_playback").put("instruction","No active playback exists. Ask which title to play; do not invent a player or report task completion."))
+        val identities=mutableListOf<TalkTitleCard>()
+        val playbackMedia=mutableMapOf<String,com.aliflix.app.model.Media>()
+        // Resolve all editions before the first mutation, including library steps.
+        for(step in steps.filter{it.optString("action") in setOf("play","save","unsave","favorite","unfavorite")}) {
+            val cards=catalogue.find(step.optString("title"),step.optString("kind").takeIf{it in setOf("movie","tv")},step.optInt("year"),step.optInt("tmdbId"))
+            if(cards.size!=1)return TalkNativeResult(JSONObject().put("status",if(cards.isEmpty())"not_found" else "choose_edition").put("cards",JSONArray(cards.map{it.json()})))
+            val card=cards.single();identities.add(card)
+            step.put("tmdbId",card.id).put("kind",card.type.routeName).put("title",card.title)
+            if(step.optString("action")=="play") {
+                playbackMedia[card.key]=catalogue.playbackMedia(card)
+                var episode=TalkEpisodeArguments.from(step);episode.requireKind(card.type)
+                if(card.type==com.aliflix.app.model.MediaType.TV&&episode.episode!=null&&episode.season==null) {
+                    val current=TalkPlayerConnection.current()?.talkSnapshot()
+                    val season=current?.takeIf{it.optInt("id")==card.id&&it.optString("type")=="tv"}?.talkOptionalInteger("season")
+                    if(season==null)return TalkNativeResult(JSONObject().put("status","choose_season").put("instruction","The episode number is known, but its season is not established. Ask only for the season; no playback or other plan steps have started."))
+                    step.put("season",season);episode=TalkEpisodeArguments.from(step)
+                }
+                if(card.type==com.aliflix.app.model.MediaType.TV&&episode.season!=null&&episode.episode!=null) {
+                    val repository=com.aliflix.app.data.MobileEpisodeRepository(context,com.aliflix.app.recommendation.RecommendationAiClient(com.aliflix.app.BuildConfig.RECOMMENDATION_AI_BASE_URL))
+                    val available=repository.episodes(card.id,episode.season)
+                    if(available.none{it.number==episode.episode})return TalkNativeResult(JSONObject().put("status","episode_unavailable").put("season",episode.season).put("episode",episode.episode))
+                }
+            }
+        }
+        val id=work.start(context,steps,identities.distinctBy{it.key},requestKey,playbackMedia)
+        // A launch may stop this Activity. Its task continues independently and
+        // the player bubble reads the same task id and actual completion state.
+        val result=if(steps.first().optString("action")=="play")work.state(id).put("instruction","Playback is preparing in the native player. Do not claim it is playing yet; the task tracks actual playback and every requested step.")else work.await(id)
+        return TalkNativeResult(result)
     }
     private fun undo():TalkNativeResult {
         if(lastBatch.isNotEmpty()){
