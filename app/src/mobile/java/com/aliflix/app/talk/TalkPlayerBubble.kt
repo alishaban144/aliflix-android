@@ -45,7 +45,8 @@ import kotlin.math.roundToInt
         session.debugCardBounds[key]=coordinates.findRootCoordinates().localBoundingBoxOf(coordinates,clipBounds=false)
     }
     val state by session.state.collectAsState()
-    val work=TalkTaskWork.get(LocalContext.current)
+    val context=LocalContext.current
+    val work=TalkTaskWork.get(context)
     val tasks by work.tasks.collectAsState()
     val running = tasks.lastOrNull { it.optString("conversationId")==state.conversationId && it.optBoolean("cancellable") &&
         it.optString("status") in setOf("queued", "running", "awaiting_user_input") }
@@ -94,7 +95,10 @@ import kotlin.math.roundToInt
                         if(running!=null)IconButton(onClick={work.cancel(running.getString("taskId"))},modifier=Modifier.size(48.dp).measured("player-cancel")) {
                             Icon(Icons.Rounded.Cancel,"Cancel current task",tint=AliflixAccentSecondary)
                         }
-                        IconButton(onClick={typing=!typing;if(!typing){focus.clearFocus();keyboard?.hide()}},modifier=Modifier.size(48.dp).measured("player-type").semantics{selected=typing}) {
+                        IconButton(onClick={
+                            if(!typing&&androidx.core.content.ContextCompat.checkSelfPermission(context,android.Manifest.permission.RECORD_AUDIO)!=android.content.pm.PackageManager.PERMISSION_GRANTED)session.setTextMode(true)
+                            typing=!typing;if(!typing){focus.clearFocus();keyboard?.hide()}
+                        },modifier=Modifier.size(48.dp).measured("player-type").semantics{selected=typing}) {
                             Icon(Icons.Rounded.Keyboard,"Type",tint=if(typing)AliflixAccentSecondary else Color.White)
                         }
                         val idle=state.phase in setOf("Ready","Resume","Reconnect","Paused","Microphone permission","Audio unavailable","Try again later","Opened elsewhere")

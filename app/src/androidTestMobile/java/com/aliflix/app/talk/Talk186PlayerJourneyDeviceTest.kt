@@ -238,6 +238,20 @@ class Talk186PlayerJourneyDeviceTest {
             assertFalse(withContext(Dispatchers.Main){activity.playbackController!!.playWhenReady})
         } finally {activity.talkCommand(step("rotate",text="portrait"))}
     }
+    @Test fun typingStillExecutesNativeCommandsWhenMicrophonePermissionIsDenied()=fixture { activity ->
+        org.junit.Assume.assumeTrue("Opt-in permission-denied run",InstrumentationRegistry.getArguments().getString("deniedMicrophone")=="true")
+        assertEquals(android.content.pm.PackageManager.PERMISSION_DENIED,androidx.core.content.ContextCompat.checkSelfPermission(context,android.Manifest.permission.RECORD_AUDIO))
+        withContext(Dispatchers.Main){activity.talkVoice.debugCardBounds.clear();activity.openTalk()}
+        withTimeout(5000){while(activity.talkVoice.state.value.phase!="Microphone permission")delay(40)}
+        tap(bound(activity,"player-orb"));delay(500);tap(bound(activity,"player-type"));bound(activity,"player-input");delay(600)
+        assertTrue(withContext(Dispatchers.Main){activity.talkVoice.state.value.textMode})
+        instrumentation.sendStringSync("Pause this video and seek to exactly 8 seconds.")
+        tap(bound(activity,"player-expand"));bound(activity,"player-full-input");delay(600)
+        assertFalse(activity.talkVoice.debugAudioSnapshot().optBoolean("leaseActive"))
+        tap(bound(activity,"player-full-send"))
+        withTimeout(65_000){while(withContext(Dispatchers.Main){kotlin.math.abs(activity.playbackController!!.currentPosition-8000)>650||activity.playbackController!!.playWhenReady})delay(60)}
+        assertFalse(activity.talkVoice.debugAudioSnapshot().optBoolean("leaseActive"))
+    }
     @Test fun theLiveModelExecutesEnglishAndGermanCompoundRequestsThroughOneNativeTaskEach()=fixture { activity ->
         val voice=activity.talkVoice
         val work=TalkTaskWork.get(context)

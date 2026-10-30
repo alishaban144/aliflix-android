@@ -64,7 +64,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         controller?.pause()
         talkCreated = true
         talkVisible = true
-        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED)
+        if (talkVoice.state.value.textMode || ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED)
             lifecycleScope.launch { talkVoice.connect() }
         else talkPermission.launch(android.Manifest.permission.RECORD_AUDIO)
     }
