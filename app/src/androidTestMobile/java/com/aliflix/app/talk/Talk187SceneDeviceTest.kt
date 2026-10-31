@@ -80,10 +80,12 @@ class Talk187SceneDeviceTest {
             assertEquals(orb.center.y.toDouble(),anchored.center.y.toDouble(),2.0)
             val palette=bound(player,"player-palette")
             assertFalse("Palette overlaps orb: $palette $anchored",palette.overlaps(anchored))
-            val targets=listOf("player-explain","player-replay","player-dialogue","player-type","player-microphone","player-expand","player-close").map { bound(player,it) }
+            val targets=listOf("player-microphone","player-type","player-expand","player-close").map { bound(player,it) }
             val size=withContext(Dispatchers.Main) { 48*player.resources.displayMetrics.density }
             for(target in targets) { assertTrue(target.toString(),target.width>=size-2 && target.height>=size-2);assertTrue(palette.contains(target.center)) }
             for(a in targets.indices)for(b in a+1 until targets.size)assertFalse(targets[a].overlaps(targets[b]))
+            for(removed in listOf("player-explain","player-replay","player-dialogue"))
+                assertNull("Removed upper-row control is still present: $removed",withContext(Dispatchers.Main) { player.talkVoice.debugCardBounds[removed] })
             screenshot("talk187-palette-$name.png")
             tap(bound(player,"player-type"));delay(900)
             val input=withTimeout(6000) {
@@ -100,17 +102,6 @@ class Talk187SceneDeviceTest {
             i.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);delay(250)
             if(withContext(Dispatchers.Main) { player.talkVoice.debugCardBounds["player-type"]!=null }) { tap(bound(player,"player-orb"));delay(250) }
         }
-    }
-    @Test fun oneTapReplayRewindsTheActualExchangeAndResumesRealPlayback()=fixture { player ->
-        player.talkCommand(command("seek",32.0));delay(700)
-        withContext(Dispatchers.Main) { player.talkVoice.setTextMode(true);player.openTalk() };delay(500)
-        val anchor=withContext(Dispatchers.Main) { player.prepareTalkScene()!!.anchorSeconds }
-        tap(bound(player,"player-orb"));delay(450);tap(bound(player,"player-replay"))
-        withTimeout(15000) { while(withContext(Dispatchers.Main) { player.talkVisible || player.playbackController?.isPlaying!=true })delay(50) }
-        val position=withContext(Dispatchers.Main) { player.playbackController!!.currentPosition/1000.0 }
-        assertTrue("anchor=$anchor replay=$position",position in (anchor-16)..(anchor-5))
-        delay(500)
-        assertTrue(withContext(Dispatchers.Main) { player.playbackController!!.currentPosition/1000.0>position+.1 })
     }
     @Test fun typedDraftSurvivesExpansionAndSendingMakesTheConversationVisible()=fixture { player ->
         withContext(Dispatchers.Main) { player.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;player.talkVoice.setTextMode(true);player.openTalk() }

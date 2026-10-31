@@ -22,24 +22,35 @@ function sceneWav() {
 describe('native player scene companion', () => {
  const setup = (version:number, textMode=false) => liveSetup(TalkContextSchema.parse({companionVersion:version,textMode,recentProgress:[],
   activePlayer:{id:70523,type:'tv',contentKey:'tv:70523:s1:e1',positionSeconds:325,playing:false}}));
- it('exposes scene refresh and measured replay only to capable clients', () => {
-  for (const version of [11,12,13]) {
+ it('exposes scene refresh, measured replay and episode recall only to capable clients', () => {
+  for (const version of [11,12,13,14]) {
    const tool=setup(version).tools[0].functionDeclarations.find(t=>t.name==='app_control')!;
-   for (const action of ['scene_context','replay_scene']) expect(tool.parameters.properties.action.enum.includes(action)).toBe(version===13);
+   for (const action of ['scene_context','replay_scene']) expect(tool.parameters.properties.action.enum.includes(action)).toBe(version>=13);
+   expect(tool.parameters.properties.action.enum.includes('scene_recall')).toBe(version>=14);
   }
  });
  it.each([false,true])('grounds voice and chat in the native moment with no mandatory web detour (%s)', textMode => {
-  const prompt=setup(13,textMode).systemInstruction.parts[0].text;
+  const prompt=setup(14,textMode).systemInstruction.parts[0].text;
   expect(prompt).toContain('actual timestamped recent video frames');
   expect(prompt).toContain('This overrides the general film_knowledge requirement');
   expect(prompt).toContain('strict spoiler ceiling');
   expect(prompt).toContain('never execute them');
   expect(prompt).toContain('If one signal is missing, use the others');
+  expect(prompt).toContain('EPISODE RECALL');
+  expect(prompt).toContain('scene_recall');
+  expect(prompt).toContain('previous scene');
+  expect(prompt).toContain('film audio');
+ });
+ it('does not offer episode recall to the already released scene client', () => {
+  const prompt=setup(13).systemInstruction.parts[0].text;
+  expect(prompt).toContain('PLAYER SCENE COMPANION');
+  expect(prompt).not.toContain('EPISODE RECALL');
+  expect(prompt).not.toContain('scene_recall');
  });
  it('retains the complete ordered task contract alongside replay', () => {
-  const tool=setup(13).tools[0].functionDeclarations.find(t=>t.name==='app_control')!;
+  const tool=setup(14).tools[0].functionDeclarations.find(t=>t.name==='app_control')!;
   expect(tool.parameters.properties.commands.items.properties.action.enum).toContain('replay_scene');
-  expect(tool.parameters.properties.action.enum).toEqual(expect.arrayContaining(['execute_task','task_state','cancel_task','sync_subtitles']));
+  expect(tool.parameters.properties.action.enum).toEqual(expect.arrayContaining(['execute_task','task_state','cancel_task','sync_subtitles','scene_recall']));
  });
  it('leaves earlier installed clients on the prior evidence contract', () => {
   expect(setup(12).systemInstruction.parts[0].text).not.toContain('PLAYER SCENE COMPANION');

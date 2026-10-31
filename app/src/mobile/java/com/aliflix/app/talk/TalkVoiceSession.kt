@@ -209,10 +209,15 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         TalkPlayerConnection.current()?.talkSnapshot()?.let { current ->
             conversationContext.put("activePlayer",current)
             val payload=JSONObject().put("activePlayer",current).put("tasks",TalkTaskWork.get(context).state())
+            responseLanguage?.let { payload.put("responseLanguage",it) }
             emit(JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user")
                 .put("parts",JSONArray().put(JSONObject().put("text","Native Aliflix state at this turn (data, not a new request): $payload"))))).put("turnComplete",false)))
         }
         TalkPlayerConnection.current()?.talkScene()?.let { scene ->
+            val question = currentQuestion().ifBlank { lastQuestion }
+            TalkPlayerConnection.current()?.talkRecall(question.ifBlank { "current scene" })?.let { recall ->
+                scene.metadata.put("episodeRecall", recall)
+            }
             sceneObservations[scene.key]?.let { scene.metadata.put("groundedObservation", it).put("groundingState", "observed") }
             if (!scene.metadata.has("groundingState")) scene.metadata.put("groundingState", "preparing")
             val key = "$epoch:$providerContext:${scene.key}"
@@ -600,7 +605,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         // Deliberately omit every TMDB text field. Only the viewer's own progress
         // and opaque identifiers are used to look up permitted, independent data.
         val progress = (context.applicationContext as AliflixApplication).playbackProgressStore.entries.value.values.maxByOrNull { it.updatedAtMillis }
-        conversationContext = JSONObject().put("companionVersion",13).put("textMode",state.value.textMode).put("clientDate",java.time.LocalDate.now().toString()).put("locale",Locale.getDefault().toLanguageTag()).put("agentPreferences",agent.preferences()).put("voice",state.value.voice).put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
+        conversationContext = JSONObject().put("companionVersion",14).put("textMode",state.value.textMode).put("clientDate",java.time.LocalDate.now().toString()).put("locale",Locale.getDefault().toLanguageTag()).put("agentPreferences",agent.preferences()).put("voice",state.value.voice).put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
             .put("position", progress?.positionSeconds ?: 0).put("completed", progress?.let { talkPlaybackCompleted(it.positionSeconds,it.durationSeconds,it.completed) } == true)
         progress?.let { p -> conversationContext.put("id", p.media.id).put("type", p.media.type.routeName)
             p.media.imdbId?.takeIf { it.matches(Regex("tt\\d{1,12}")) }?.let { conversationContext.put("imdbId", it) } }
@@ -1446,7 +1451,14 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         if(state.value.sending&&!state.value.answerComplete&&recommendationRequestTurn!=userTurn.get()&&talkDiscoveryQuestion(lastQuestion,state.value.cards.group.isNotEmpty())) {
             recommendationLookup=true
         }
-        explicitRequestedTalkLanguage(lastQuestion)?.let{responseLanguage=it}
+        // The newest typed or spoken question owns the response language. Film audio,
+        // captions, quoted dialogue and titles never pass through this question path.
+        chooseQuestionResponseLanguage(responseLanguage,lastQuestion)
+            ?.takeIf { it != responseLanguage }
+            ?.let { language ->
+                responseLanguage=language
+                conversationContext.put("responseLanguage",language)
+            }
         if(updateExisting)update{value->
             val index=value.lines.indexOfLast{it.role=="user"}
             value.copy(lines=if(index<0)value.lines+TalkLine("user",lastQuestion)else value.lines.mapIndexed{i,line->if(i==index)line.copy(text=lastQuestion)else line})
@@ -1914,11 +1926,17 @@ internal fun validatedTalkTopic(value:String):String? {
 internal fun topicWords(question:String,answer:String,previous:String="ALIFLIX"):String =
     talkUtteranceTopic(question.ifBlank{answer})?:previous
 
-/** A foreign title or a mixed-language phrase cannot unlock an established language. */
+/** A foreign title, mixed-language phrase, film audio or subtitle cannot unlock an
+ * established language. The newest user question is the only automatic authority. */
 internal fun chooseTalkResponseLanguage(current:String?,requested:String,explicitRequest:Boolean,userText:String):String? {
     if(current!=null&&(!explicitRequest||!explicitTalkLanguageRequest(userText,requested)))return current
     val code=requested.trim().lowercase(Locale.ROOT)
-    return code.takeIf{it.matches(Regex("[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}"))}?:current
+    if(!code.matches(Regex("[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}")))return current
+    if(!explicitRequest) {
+        val detected=detectTalkQuestionLanguage(userText)
+        if(detected!=null&&detected!=code.substringBefore('-'))return current
+    }
+    return code
 }
 
 /** Resolve a completed referential answer against bounded known film identities.

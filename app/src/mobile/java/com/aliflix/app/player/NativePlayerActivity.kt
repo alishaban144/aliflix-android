@@ -59,6 +59,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     private val sceneMemory by lazy { PlayerSceneMemory({ if (::video.isInitialized) video else null }, ::talkSnapshot) }
     private var sceneCaptureJob: Job? = null
     override fun talkScene() = sceneMemory.current()
+    override fun talkRecall(query: String) = sceneMemory.recall(query)
     override suspend fun prepareTalkScene() = sceneMemory.current()?.takeIf { controller?.isPlaying != true && it.frames.isNotEmpty() && it.metadata.optBoolean("audioChecked") } ?: sceneMemory.capture(includeAudio = true)
     private var talkPreparationPaused = false
     private val talkPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
@@ -128,6 +129,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         }
         if (!owns()) return@withContext result("playback_changed")
         if (action == "player_state") return@withContext result("current")
+        if (action == "scene_recall") return@withContext (sceneMemory.recall(command.optString("query")) ?: result("scene_unavailable"))
         if (action == "scene_context") return@withContext (sceneMemory.capture()?.metadata ?: result("scene_preparing"))
         when (action) {
             "verify_provider" -> { if (providerVerification == null) return@withContext result("verification_unavailable"); showProviderVerification = true; return@withContext result("user_input_required") }

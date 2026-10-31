@@ -81,14 +81,10 @@ import kotlin.math.roundToInt
             controls = false; readReply = true; expanded = true
         }
     }
-    fun askScene(dialogue: Boolean = false) {
-        session.askScene(dialogue); controls = false; dismissComposer()
-        if (state.textMode) { readReply = true; expanded = true }
-    }
     BackHandler(enabled = !expanded && (controls || typing)) { if (typing) dismissComposer() else controls = false }
     LaunchedEffect(typing, expanded) { if (typing && !expanded) { withFrameNanos {}; composerFocus.requestFocus(); keyboard?.show() } }
     LaunchedEffect(controls, typing, running?.optString("taskId")) {
-        if (!controls) listOf("player-microphone", "player-type", "player-expand", "player-close", "player-cancel", "player-explain", "player-replay", "player-dialogue").forEach(session.debugCardBounds::remove)
+        if (!controls) listOf("player-microphone", "player-type", "player-expand", "player-close", "player-cancel").forEach(session.debugCardBounds::remove)
         if (!typing) session.debugCardBounds.remove("player-input")
         if (running == null) session.debugCardBounds.remove("player-cancel")
     }
@@ -112,7 +108,7 @@ import kotlin.math.roundToInt
         val roomRight = maxX + orbPixels - (orbX + orbPixels) >= palettePixels + gap
         val paletteX = when { roomLeft -> orbX - palettePixels - gap; roomRight -> orbX + orbPixels + gap
             else -> (orbX + orbPixels / 2 - palettePixels / 2).coerceIn(0f, (maxX + orbPixels - palettePixels).coerceAtLeast(0f)) }
-        val estimatedHeight = panelHeight.takeIf { it > 0 } ?: with(density) { (if (typing) 230.dp else 140.dp).roundToPx() }
+        val estimatedHeight = panelHeight.takeIf { it > 0 } ?: with(density) { (if (typing) 166.dp else 76.dp).roundToPx() }
         val heightPixels = with(density) { maxHeight.toPx() }
         val paletteY = (if (roomLeft || roomRight) orbY else if (orbY + orbPixels + gap + estimatedHeight <= heightPixels) orbY + orbPixels + gap else orbY - estimatedHeight - gap)
             .coerceIn(0f, (heightPixels - estimatedHeight).coerceAtLeast(0f))
@@ -124,22 +120,14 @@ import kotlin.math.roundToInt
                 Surface(Modifier.width(paletteWidth).onSizeChanged { panelHeight = it.height }.measured("player-palette"),
                     shape = RoundedCornerShape(28.dp), color = Color(0xF2151422), shadowElevation = 14.dp) {
                     Column(Modifier.background(Brush.linearGradient(listOf(Color(0xFF252237).copy(alpha = .65f), Color(0xFF12121D).copy(alpha = .5f)))).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                            val answering = state.sending || state.phase == "Speaking"
-                            ScenePaletteButton(if (answering) Icons.Rounded.StopCircle else Icons.Rounded.AutoAwesome,
-                                if (answering) "Stop reply" else "Explain this scene", Modifier.measured("player-explain"), accent = true, active = answering) {
-                                if (answering) session.stopAnswer() else askScene()
-                            }
-                            ScenePaletteButton(Icons.Rounded.Replay, "Replay this exchange", Modifier.measured("player-replay"), accent = true) { controls = false; dismissComposer(); session.replayScene() }
-                            ScenePaletteButton(Icons.Rounded.FormatQuote, "Explain this dialogue", Modifier.measured("player-dialogue"), accent = true) { askScene(dialogue = true) }
-                        }
-                        HorizontalDivider(color = Color.White.copy(alpha = .07f))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            val answering = state.sending || state.phase == "Speaking"
                             val idle = state.phase in setOf("Ready", "Resume", "Reconnect", "Paused", "Microphone permission", "Audio unavailable", "Try again later", "Opened elsewhere")
-                            ScenePaletteButton(if (idle) Icons.Rounded.Refresh else if (state.muted) Icons.Rounded.MicOff else Icons.Rounded.Mic,
-                                if (idle) "Retry connection" else if (state.textMode || state.muted) "Unmute microphone" else "Mute microphone",
-                                Modifier.measured("player-microphone").semantics { stateDescription = if (state.muted) "Muted" else state.phase }, active = !state.textMode && !state.muted) {
-                                if (state.textMode) { session.setTextMode(false); onStart() } else if (idle) onStart() else session.toggleMute()
+                            ScenePaletteButton(if (answering) Icons.Rounded.StopCircle else if (idle) Icons.Rounded.Refresh else if (state.muted) Icons.Rounded.MicOff else Icons.Rounded.Mic,
+                                if (answering) "Stop reply" else if (idle) "Retry connection" else if (state.textMode || state.muted) "Unmute microphone" else "Mute microphone",
+                                Modifier.measured("player-microphone").semantics { stateDescription = if (answering) "Replying" else if (state.muted) "Muted" else state.phase }, active = !answering && !state.textMode && !state.muted) {
+                                if (answering) session.stopAnswer()
+                                else if (state.textMode) { session.setTextMode(false); onStart() } else if (idle) onStart() else session.toggleMute()
                             }
                             ScenePaletteButton(Icons.Rounded.Keyboard, "Type", Modifier.measured("player-type").semantics { selected = typing }, active = typing) {
                                 if (!typing && ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) session.setTextMode(true)

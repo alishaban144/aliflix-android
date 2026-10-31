@@ -792,6 +792,13 @@ class NativePlaybackService : MediaSessionService() {
                 .map { androidx.media3.common.text.Cue.Builder().setText(mobileCaptionText(it.text)).build() }.toList()
         }
 
+        /** The complete selected timed edition already held by the decoder. Seeking never truncates it. */
+        internal fun episodeCaptionCues(): List<SubtitleCue> {
+            val service = activeService ?: return emptyList()
+            if (embeddedSubtitlesActive) return emptyList()
+            return service.externalCaptionCues
+        }
+
         /** Already selected/corrected captions, bounded to what has reached the playhead. */
         internal fun sceneCaptionEvidence(position: Double): List<SubtitleCue> {
             val service = activeService ?: return emptyList()

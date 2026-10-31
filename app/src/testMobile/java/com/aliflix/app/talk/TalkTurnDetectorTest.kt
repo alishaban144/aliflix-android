@@ -14,6 +14,9 @@ class TalkTurnDetectorTest {
         assertEquals("de",chooseTalkResponseLanguage("en","de",true,"Antworte auf Deutsch"))
         assertEquals("de",chooseTalkResponseLanguage("de","ar",false,"Arabic cinema"))
         assertEquals("en",chooseTalkResponseLanguage("en","not a code",true,"Answer in not a code"))
+        assertNull(chooseTalkResponseLanguage(null,"de",false,"What happened?"))
+        assertEquals("en",chooseTalkResponseLanguage(null,"en",false,"What happened?"))
+        assertEquals("de",chooseTalkResponseLanguage("de","en",false,"What happened?"))
     }
     @Test fun explicitLanguageInstructionsDoNotDependOnAnOptionalModelCall(){
         assertEquals("en",explicitRequestedTalkLanguage("Answer in English again. Which film did we discuss?"))

@@ -13,6 +13,8 @@ internal interface TalkPlayerHost {
     suspend fun talkCommand(command: JSONObject): JSONObject
     fun talkScene(): TalkSceneContext? = null
     suspend fun prepareTalkScene(): TalkSceneContext? = talkScene()
+    /** Anchor-bounded evidence from the whole episode transcript plus observed visual beats. */
+    fun talkRecall(query: String): JSONObject? = null
 }
 
 internal object TalkPlayerConnection {
