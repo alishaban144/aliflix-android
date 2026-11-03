@@ -236,7 +236,7 @@ internal fun buildTalkRecallPacket(
         Regex("(?i)previous scene|scene before|immediately before|just before|preceding scene").containsMatchIn(query)
     val focusedQuestion = !includeWholeStory && anchorSeconds > 600 &&
         request.mode in setOf(TalkRecallMode.SEARCH, TalkRecallMode.CONTEXT) &&
-        scenes.sumOf { it.text.length } > 24_000 &&
+        scenes.sumOf { it.text.length } > 12_000 &&
         !Regex("(?i)\\b(opening|beginning|start of|first scene)\\b").containsMatchIn(query)
     val storyScenes = if (focusedQuestion) buildTalkCueScenes(cues.filter { cue ->
         cue.endSeconds >= anchorSeconds - 600 || selected.any { choice ->
@@ -286,11 +286,11 @@ internal fun buildTalkRecallPacket(
         .put("watchedRanges", JSONArray(watchedRanges.map { range ->
             JSONArray().put(range.start.coerceAtLeast(0.0)).put(range.endInclusive.coerceAtLeast(range.start))
         }))
-        .put("currentScene", currentScene?.let { sceneJson(it, "current", request, watchedRanges, visualBeatSeconds) })
-        .put("latestDialogue", latestDialogue?.let { sceneJson(it, "latest_exchange", request, watchedRanges, visualBeatSeconds) })
+        .put("currentScene", currentScene?.let { sceneJson(it, "current", request, watchedRanges, visualBeatSeconds, summaryOnly = focusedQuestion) })
+        .put("latestDialogue", latestDialogue?.let { sceneJson(it, "latest_exchange", request, watchedRanges, visualBeatSeconds, summaryOnly = focusedQuestion) })
         .put("dialogueWindowsAreSceneBoundaries", false)
         .put("participantIdentities", "Unverified: these captions do not attribute speakers or bind character names to faces. Use roles/descriptions unless exact dialogue or separately grounded evidence identifies the participant. Never assign a name or spouse relationship from remembered cast/plot familiarity.")
-        .put("scenes", JSONArray(selected.map { sceneJson(it.scene, it.role, request, watchedRanges, visualBeatSeconds) }))
+        .put("scenes", JSONArray(selected.map { sceneJson(it.scene, it.role, request, watchedRanges, visualBeatSeconds, summaryOnly = focusedQuestion) }))
         .put("evidenceGaps", JSONArray(gaps))
         .put("responseLanguage", responseLanguage ?: JSONObject.NULL)
         .put("scope", scopeInstruction)
@@ -323,6 +323,7 @@ private fun sceneJson(
     request: TalkRecallRequest,
     watchedRanges: List<ClosedFloatingPointRange<Double>>,
     visualBeatSeconds: List<Double>,
+    summaryOnly: Boolean = false,
 ): JSONObject {
     val beats = visualBeatSeconds.filter { it >= scene.startSeconds - .5 && it <= scene.endSeconds + .5 }
     val cues = JSONArray().apply {
@@ -339,7 +340,7 @@ private fun sceneJson(
         .put("watchedFraction", sceneWatchedFraction(scene, watchedRanges))
         .put("visualFrameSeconds", JSONArray(beats.take(4)))
         .apply {
-            if (request.mode == TalkRecallMode.RECAP) put("excerpt", excerpt(scene.text))
+            if (summaryOnly || request.mode == TalkRecallMode.RECAP) put("excerpt", excerpt(scene.text))
             else put("dialogue", cues)
         }
 }

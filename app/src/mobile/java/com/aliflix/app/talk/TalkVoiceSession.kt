@@ -233,7 +233,11 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             if (!scene.metadata.has("groundingState")) scene.metadata.put("groundingState", if (talkNeedsCurrentSceneObservation(question)) "preparing" else "direct_evidence")
             val recalledFrames = TalkPlayerConnection.current()?.talkRecallFrames(question).orEmpty()
             scene.metadata.put("attachedRecallFrameSeconds", JSONArray(recalledFrames.map { it.seconds }))
-            val delivery = if (talkNeedsCurrentSceneObservation(question)) scene else scene.copy(frames =
+            val delivery = if (talkNeedsCurrentSceneObservation(question))
+                if (scene.metadata.optJSONObject("groundedObservation")?.optBoolean("titleBlind") == true)
+                    scene.copy(frames = sceneFrameSelection(scene.frames, scene.anchorSeconds).let { listOfNotNull(it.firstOrNull(), it.lastOrNull()).distinctBy { frame -> frame.seconds } })
+                else scene
+            else scene.copy(frames =
                 if (parseTalkRecallRequest(question, scene.anchorSeconds).mode == TalkRecallMode.TIMESTAMP) emptyList() else scene.frames.takeLast(1))
             val key = "$epoch:$providerContext:${scene.key}"
             val includeFrames = key != sentSceneKey || SystemClock.elapsedRealtime() - sentSceneAt > 45_000
@@ -805,7 +809,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     // a remote graceful close can leave the UI waiting indefinitely.
                     webSocket.close(if(code==1005)1000 else code,null)
                     scope.launch {
-                        if(BuildConfig.DEBUG)debugConnectionIssue="close:$code:"+reason.replace(Regex("(?:AIza|auth_tokens/)[A-Za-z0-9_./-]+"),"[redacted]").take(160)
+                        if(BuildConfig.DEBUG)debugConnectionIssue="close:$code:"+reason.replace(Regex("(?:AIza|auth_tokens/)[A-Za-z0-9_./-]+"),"[redacted]").take(700)
                         if(ticket==epoch&&(code==1008||reason.contains("resum",true)||reason.contains("handle",true))){ephemeral=null;resumeHandle=null}
                         disconnected(ticket,false)
                     }

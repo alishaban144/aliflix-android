@@ -145,6 +145,8 @@ class TalkEpisodeMemoryTest {
         assertEquals("question_context",focused.getString("coverage"))
         assertTrue(focused.getBoolean("fullPrefixAvailable"))
         assertTrue(focused.getJSONArray("dialogue").toString().contains("note explains"))
+        val compact=buildTalkRecallPacket(query,request,2000.0,longCues,"timed_captions","edition",emptyList(),emptyList())
+        assertFalse(compact.getJSONArray("scenes").getJSONObject(0).has("dialogue"))
         assertTrue(focused.getDouble("throughSeconds")<=2000.0)
         assertTrue(focused.getInt("includedCues") < recall(true).getInt("includedCues"))
     }

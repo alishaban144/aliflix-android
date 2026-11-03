@@ -20,6 +20,30 @@ import java.util.UUID
 class Talk188StoryDeviceTest {
     private val i get() = InstrumentationRegistry.getInstrumentation()
     private val context get() = i.targetContext
+    @Test fun liveSmallSessionCapacityProbe() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("liveTalk188Probe")=="true")
+        val activity=launchFreshTalkActivity()
+        val receipt=JSONObject()
+        try { runBlocking {
+            val voice=activity.voice
+            withContext(Dispatchers.Main) { voice.setTextMode(true);voice.connect() }
+            withTimeout(25000) { while(withContext(Dispatchers.Main) { voice.state.value.phase }!="Listening")delay(50) }
+            withContext(Dispatchers.Main) { voice.sendText("Hello. Tell me in one short sentence what a movie is.") }
+            val answer=withTimeout(25000) {
+                while(true) {
+                    val state=withContext(Dispatchers.Main) { voice.state.value }
+                    if(state.answerComplete&&state.lines.any { it.role=="assistant" })return@withTimeout state.lines.filter { it.role=="assistant" }.joinToString(" ") { it.text }
+                    delay(50)
+                }
+                @Suppress("UNREACHABLE_CODE") error("No answer")
+            }
+            receipt.put("answer",answer)
+        } } finally {
+            receipt.put("connectionIssue",activity.voice.debugConnectionIssue)
+            File(context.getExternalFilesDir(null),"talk188-capacity-probe.json").writeText(receipt.toString(2))
+            i.runOnMainSync { activity.voice.pauseSession();activity.finish() }
+        }
+    }
     private fun command(action:String, seconds:Double?=null) = JSONObject().put("action",action).apply { seconds?.let { put("numberValue",it) } }
     private fun fixture(body:suspend (NativePlayerActivity)->Unit) {
         grantNativeFixtureNetworkPermission()

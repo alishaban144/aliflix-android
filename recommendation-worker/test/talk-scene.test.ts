@@ -114,11 +114,12 @@ describe('independent scene observation',()=>{
    if(message.setup)pair[1].send(JSON.stringify({setupComplete:{}}));
    if(message.clientContent)pair[1].send(JSON.stringify({toolCall:{functionCalls:[{name:'observe_scene',args:observation()}]}}));
   });
-  const fetch=vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response(null,{status:101,webSocket:pair[0]}));
-  const result=await observePlayerScene(scene(),config);
+  const fetch=vi.spyOn(globalThis,'fetch').mockImplementation(async(input)=>String(input).includes('/ws/')
+   ?new Response(null,{status:101,webSocket:pair[0]}):new Response(null,{status:503}));
+  const result=await observePlayerScene(scene(),config,0);
   expect(result).toMatchObject({status:'observed',titleBlind:true,anchorSeconds:80});
   expect(JSON.stringify(result)).not.toContain('/9j/AA==');
-  expect(fetch).toHaveBeenCalledOnce();
+  expect(fetch).toHaveBeenCalledTimes(2);
  });
  it('keeps decoded film audio out of the conversation channel and uses quality-filtered played speech',async()=>{
   const packet=ScenePacketSchema.parse({...scene(),audio:{startSeconds:70,endSeconds:80,mimeType:'audio/wav',data:base64(sceneWav())}});
@@ -133,7 +134,15 @@ describe('independent scene observation',()=>{
   const body=JSON.stringify(sceneObservationBody({...packet,heardDialogue:text}));
   expect(body).toContain('Bleib hier.');expect(body).not.toContain(packet.audio!.data);
  });
- it('uses a validated independent result when a live observation stalls and closes its losing socket',async()=>{
+ it('uses structured observation without opening an unnecessary Live session',async()=>{
+  const fetch=vi.spyOn(globalThis,'fetch').mockImplementation(async(input)=>{
+   expect(String(input)).toContain('gemini-3.5-flash-lite:generateContent');
+   return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(observation())}]}}]});
+  });
+  expect(await observePlayerScene(scene(),config)).toMatchObject({status:'observed',titleBlind:true});
+  expect(fetch).toHaveBeenCalledTimes(1);
+ });
+ it('closes a losing Live hedge when structured observation completes',async()=>{
   const pair=new WebSocketPair();pair[1].accept();let closed=false;
   pair[1].addEventListener('close',()=>{closed=true;});
   pair[1].addEventListener('message',event=>{if(JSON.parse(String(event.data)).setup)pair[1].send(JSON.stringify({setupComplete:{}}));});
@@ -142,6 +151,7 @@ describe('independent scene observation',()=>{
    expect(String(input)).toContain('gemini-3.5-flash-lite:generateContent');
    const body=JSON.parse(String(init!.body));expect(body.generationConfig.responseMimeType).toBe('application/json');
    expect(JSON.stringify(body)).not.toContain('Dark');
+   await new Promise(resolve=>setTimeout(resolve,10));
    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(observation())}]}}]});
   });
   const result=await observePlayerScene(scene(),config,0);

@@ -4,9 +4,9 @@ Branch: `codex/talk-188-scene-recall`.
 
 ## Release and device audit
 
-Authenticated GitHub Releases inspection across every page found no drafts. The latest public mobile release remains `v3.1.187`, published 31 October 2026, version code 277. PR #12 was open at inspection.
+At the initial audit, authenticated GitHub Releases inspection across every page found no drafts. The latest public mobile release was `v3.1.187`, published 31 October 2026, version code 277. PR #12 was open at inspection.
 
-The Pixel 7a was connected and authorized. Its production APK is version 3.1.187. The installed and downloaded release APKs have identical uncompressed ZIP entries, including code and resources; their outer signing-container fingerprints differ. The downloaded release matches the published arm64 update manifest. An older code/resource build was therefore not established by the outer fingerprint difference.
+The Pixel 7a was connected and authorized. Its production APK at that audit was version 3.1.187. The installed and downloaded release APKs have identical uncompressed ZIP entries, including code and resources; their outer signing-container fingerprints differ. The downloaded release matches the published arm64 update manifest. An older code/resource build was therefore not established by the outer fingerprint difference.
 
 The upper scene/dialogue/replay shortcuts are already removed in this release's source. A physical-device palette test passed in portrait and landscape: only microphone/connection, typing, conversation expansion and close remain; the removed controls are absent and the remaining targets satisfy 48dp bounds. Saved screenshots were inspected locally.
 
@@ -20,19 +20,19 @@ The upper scene/dialogue/replay shortcuts are already removed in this release's 
 - A typed-turn delivery correction: native retrieval precedes the answer timer, and the current live connection is rechecked before sending the question.
 - Gemini Embedding 2 in the shared embedding provider, production/test configuration and generated bindings. The model-2 task-prefix and batching contract replaces the old `taskType` request. Vectors must have 768 finite dimensions. Existing recommendation comparisons compute both sides afresh; no stored old-model vector is mixed with a new one.
 
-The user explicitly approved the shared backend deployment. The final deployed Worker version is `a435b366-275d-4969-93fd-fc9d682522c9`; its configuration uses `gemini-embedding-2`. The native client also negotiates the published v14 contract for older backends.
+The user explicitly approved the shared backend deployment. The initially deployed Worker version was `a435b366-275d-4969-93fd-fc9d682522c9`; its configuration uses `gemini-embedding-2`. The native client also negotiates the published v14 contract for older backends.
 
-Native changes were installed in the separate `com.aliflix.app.validation` package for testing. The production phone package and GitHub APK release were not replaced. No new public APK release was created. Local release-signing environment variables are not configured.
+During initial validation, native changes were installed in the separate `com.aliflix.app.validation` package for testing. At that stage, the production phone package and GitHub APK release had not been replaced; the user subsequently authorized release publication. Local release-signing environment variables are not configured.
 
 ## Automated checks
 
 | Check | Result |
 |---|---|
-| Complete Worker suite | 309 tests across 34 files passed |
-| Final Worker prompt/provider checks | 27 tests across three files passed |
+| Complete Worker suite | 310 tests across 34 files passed after the final observer-routing change |
+| Final Worker prompt/provider checks | Included in the final full suite |
 | Worker TypeScript check | Passed |
 | Worker deployment dry run | Passed before approved publication |
-| Android Talk host suite | 150 tests passed |
+| Android Talk host suite | 152 tests passed |
 | Mobile validation APK and instrumentation APK | Built successfully |
 | Mobile debug lint | Passed; final refresh recorded in the local validation log |
 | Phone decoder-isolation fixture | Passed: three earlier frames, future request filtered, viewer remained paused at the same clock position |
@@ -64,6 +64,21 @@ These checks used genuine English questions without an instruction to answer in 
 - A localhost backend attempt could not mint a Live session with the locally available Gemini credential. It was rejected as validation evidence. Successful live checks used the authenticated production backend; no credential value is included in this report.
 
 Raw frames, audio, transcripts and device traces remain local under ignored validation storage and are excluded from repository/release assets. A private validation APK is retained locally.
+
+## Additional random film and episode checks
+
+The additional selection used a recorded random seed (`18058847393301836713`) and a random interior pause point. The title/episode and timestamp were retained across failed and accepted attempts; they were not replaced with easier cases. Before asking Talk, the actual frames and timed transcript were inspected to establish the expected causes and destination independently.
+
+| Title and pause | Genuine English question | Independently reviewed result | First useful text | Complete |
+|---|---|---|---:|---:|
+| The Truman Show, 64:42 | Why did they make the father drown, and why are they bringing him back now? | Correctly connected the staged drowning to Truman's fear of water and containment on the island; identified the father's return as the creator's way to end the crisis. Both parts match the earlier/current dialogue. | 9.510 s | 10.572 s |
+| Severance S1E3, 29:29 | Why did Mark warn Helly that swallowing a note would not work, and where are they taking her now? | Correctly explained detection of a message hidden inside the body and identified the Perpetuity Wing as the destination, rather than confusing the current O&D encounter with the trip's destination. | 8.582 s | 9.575 s |
+
+Both accepted runs supplied actual temporal video evidence, independent title-blind observations and timestamped earlier story context. Both answered in English without an English-language instruction, kept playback paused, used no external plot lookup and revealed no future events. The transcript prefix was available despite seeking directly to the later scene. Movie recall took 88 ms and remaining observation wait 7.404 s; episode recall took 59 ms and observation wait 5.641 s. These are measured cases, not a universal latency guarantee.
+
+The initial movie answer was rejected: it invented a dramatic motive for bringing the father back. Later initial attempts hit a Google Live quota error without answering. A minimal text-only capacity probe then succeeded in 4.181 s. The final corrections restore native evidence on reconnect, avoid decoding an already sufficient captured sequence, remove duplicate transcript passages, prefer structured independent observation with a delayed Live hedge, and send two corroborating current frames after a successful sequence observation. The final full Worker suite has 310 passing tests. The final pre-release backend used in these two accepted runs is `576d1f33-919c-4d4e-ae4d-ba38d88a7467`, configured with `gemini-embedding-2`.
+
+The mobile release candidate is 3.1.188, version code 278. The CI workflow runs the complete Worker suite, all Talk host tests, mobile lint and the offline scene/palette/decoder device fixtures before signing. Original signing identity, native binary/model parity and empty app updater descriptions remain release requirements. The live scene tests are opt-in and were run on the connected physical Pixel; CI fixtures do not substitute for these plot checks.
 
 ## Limits and next implementation
 
