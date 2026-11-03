@@ -77,3 +77,14 @@ The final Martian receipt used the independent extended VTT, included actual cur
 ## Remaining limits
 
 No implementation can infer unavailable footage or prove universal scene accuracy from a small benchmark. Sparse frames can miss brief actions; captions can lack speaker attribution or differ by edition. A persistent semantic event index, verified alignment intervals, dense question-adaptive clips, character epistemic state and a larger held-out human-scored benchmark remain the next layer. Suggested evaluation expansion: 24 questions across four further films and four episodes, including physical causes, distant setup, false premises, multilingual dialogue and rewind consistency. This is an engineering proposal, not a claimed research-derived sufficiency threshold.
+
+## Signed release verification
+
+- Version **3.1.189 / 279**, tested source `7319013ab00af26f802449aa3ae9add3218f1ae2`.
+- [Release workflow 41680120430](https://github.com/alishaban144/aliflix-android/actions/runs/41680120430) passes every gate, including 10 CI device tests, affected host tests, lint, Worker checks, signing, APK integrity and native/model parity. Attempt one stopped on a corrupt Android SDK system-image download before app tests; the retry passed.
+- ARM64 APK: **27,467,036 bytes**, SHA-256 `62b3d1d7d17f0b63741f3ed6e087a47dfa3548d7a1ba81c260796f32b15ed13c`, minimum Android SDK 29.
+- Original production signer SHA-256: `a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47`. Compared with the APK actually installed on the Pixel before upgrading.
+- Universal compatibility package: **69,153,122 bytes**, SHA-256 `aac945600e34904339813e412de88e31a9b67fee51429706c84484e24daf6fc1`. It intentionally retains version 3.1.175 / 265 for older updaters; the ARM64 manifest advertises 3.1.189 / 279. Both manifests have empty app updater descriptions.
+- `native-parity.json` confirms the original ARM64 libraries and Silero model; compatibility native/model parity also passes.
+- Production-signed in-place Pixel upgrade from 3.1.187 succeeds. Version 279 launches normally, retains the original installation date and shows existing recently played titles. The separate validation package supplied the detailed live question and UI evidence above.
+- This is an Android mobile release. TV remains version 3.1.69 / 159; its compile compatibility check passed.
