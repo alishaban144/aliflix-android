@@ -71,7 +71,8 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
             talkTranscript.prepare(requestId, current, language,
                 ui.subtitleTracks + NativePlaybackService.activeRequest?.sourceCaptionTracks().orEmpty(),
                 controller?.duration ?: 0L,
-                { !isDestroyed && selection?.key == current.key && NativePlaybackService.activeRequestId == requestId })
+                { !isDestroyed && selection?.key == current.key && NativePlaybackService.activeRequestId == requestId },
+                latestDurationMs={controller?.duration ?: 0L})
                 ?.let(sceneMemory::transcript)
         }
         val packet = sceneMemory.recall(query, fullStory) ?: return null

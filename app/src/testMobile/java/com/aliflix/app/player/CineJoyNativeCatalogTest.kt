@@ -6,6 +6,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CineJoyNativeCatalogTest {
+    @Test fun sourceCaptionsStayWithTheirActualPlaylistAndKeepTheirLanguage() {
+        val body=JSONObject("""{"result":{"data":{"stream":[{"type":"hls","url":"https://media.example/extended/master.m3u8","captions":[{"lang":"eng","url":"../captions/en.vtt"},{"label":"Arabic","file":"https://subs.example/ar.srt"},{"lang":"en","url":"javascript:bad"}]},{"url":"https://media.example/other/master.m3u8","captions":[{"lang":"fr","url":"https://subs.example/other.srt"}]}]}}}""")
+        val captions=org.json.JSONArray(CineJoyNativeCatalog.parseCaptionOptions(body,"https://media.example/extended/master.m3u8"))
+        assertEquals(2,captions.length())
+        assertEquals("EN",captions.getJSONObject(0).getString("language"))
+        assertEquals("https://media.example/captions/en.vtt",captions.getJSONObject(0).getString("file"))
+        assertEquals("AR",captions.getJSONObject(1).getString("language"))
+        assertFalse(captions.toString().contains("other.srt"))
+    }
     private fun darkS1E1() = PlaybackSelection(
         Media(70523, MediaType.TV, "Dark", year = "2017", imdbId = "tt5753856"),
         seasonNumber = 1,

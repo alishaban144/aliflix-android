@@ -136,7 +136,7 @@ describe('independent scene observation',()=>{
  });
  it('uses structured observation without opening an unnecessary Live session',async()=>{
   const fetch=vi.spyOn(globalThis,'fetch').mockImplementation(async(input)=>{
-   expect(String(input)).toContain('gemini-3.5-flash-lite:generateContent');
+   expect(String(input)).toContain('gemini-3.8-flash:generateContent');
    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(observation())}]}}]});
   });
   expect(await observePlayerScene(scene(),config)).toMatchObject({status:'observed',titleBlind:true});
@@ -148,7 +148,7 @@ describe('independent scene observation',()=>{
   pair[1].addEventListener('message',event=>{if(JSON.parse(String(event.data)).setup)pair[1].send(JSON.stringify({setupComplete:{}}));});
   const fetch=vi.spyOn(globalThis,'fetch').mockImplementation(async(input,init)=>{
    if(String(input).includes('/ws/'))return new Response(null,{status:101,webSocket:pair[0]});
-   expect(String(input)).toContain('gemini-3.5-flash-lite:generateContent');
+   expect(String(input)).toContain('gemini-3.8-flash:generateContent');
    const body=JSON.parse(String(init!.body));expect(body.generationConfig.responseMimeType).toBe('application/json');
    expect(JSON.stringify(body)).not.toContain('Dark');
    await new Promise(resolve=>setTimeout(resolve,10));

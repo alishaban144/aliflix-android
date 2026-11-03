@@ -42,7 +42,7 @@ internal suspend fun readMobileSubtitleBytes(url: String,
                             continue
                         }
                     }
-                    if (status !in 200..299) throw SubtitleException("Subtitles unavailable ($status)")
+                    if (status !in 200..299) throw SubtitleException("Subtitles unavailable ($status)",status)
                     val bytes = connection.inputStream.use { input ->
                         val output = ByteArrayOutputStream()
                         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)

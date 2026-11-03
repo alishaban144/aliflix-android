@@ -87,10 +87,11 @@ async function structuredSceneObservation(scene:ScenePacket,env:RecommendationEn
  const body=sceneObservationBody(scene);
  body.contents[0].parts[body.contents[0].parts.length-1]={text:'Observe this sequence now. Return only concise, evidence-supported observations in the required JSON schema. No film identification or remembered plot.'};
  const schema=z.toJSONSchema(SceneObservationSchema);delete schema.$schema;
- const response=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent',{
+ const model=env.GEMINI_GENERATION_MODEL || 'gemini-3.8-flash';
+ const response=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
   method:'POST',headers:{'x-goog-api-key':env.GEMINI_API_KEY,'content-type':'application/json'},
   body:JSON.stringify({...body,generationConfig:{maxOutputTokens:3072,thinkingConfig:{thinkingLevel:'minimal'},responseMimeType:'application/json',responseJsonSchema:schema}}),signal});
- if(!response.ok){await response.body?.cancel();throw Error('SCENE_UNAVAILABLE');}
+ if(!response.ok){console.warn('talk_structured_scene_failed',response.status);await response.body?.cancel();throw Error('SCENE_UNAVAILABLE');}
  const data=await boundedJson(response,32768) as {candidates?:Array<{content?:{parts?:Array<{text?:string;thought?:boolean}>}}>};
  const text=data.candidates?.[0]?.content?.parts?.filter(part=>!part.thought).map(part=>part.text||'').join('');
  if(!text)throw Error('SCENE_UNAVAILABLE');
@@ -107,7 +108,7 @@ function observationDelay(milliseconds:number,signal:AbortSignal) {
 
 /** Structured observation does not need a second Live session. Hedge slow requests
  * with Live while keeping the same title-blind evidence validation. */
-export async function observePlayerScene(scene:ScenePacket,env:RecommendationEnv,hedgeAfterMs=3000) {
+export async function observePlayerScene(scene:ScenePacket,env:RecommendationEnv,hedgeAfterMs?:number) {
  if(!env.GEMINI_API_KEY)throw Error('SCENE_UNAVAILABLE');
  const began=Date.now();
  console.info('talk_scene_observation_start',scene.frames.length,Boolean(scene.audio));
@@ -116,9 +117,9 @@ export async function observePlayerScene(scene:ScenePacket,env:RecommendationEnv
   const heardDialogue=await scenePlayedSpeech(scene,env,deadline);
   const observedScene={...scene,heardDialogue};
   const structured=structuredSceneObservation(observedScene,env,deadline).then(observation=>({engine:'structured',observation}));
-  const realtime=observationDelay(hedgeAfterMs,deadline).then(()=>liveSceneObservation(observedScene,env,deadline))
-   .then(observation=>({engine:'realtime',observation}));
-  const result=await Promise.any([structured,realtime]);
+  const result=hedgeAfterMs===undefined ? await structured : await Promise.any([structured,
+   observationDelay(hedgeAfterMs,deadline).then(()=>liveSceneObservation(observedScene,env,deadline))
+    .then(observation=>({engine:'realtime',observation}))]);
   console.info('talk_scene_observation_complete',Date.now()-began,result.engine);
   return {status:'observed',titleBlind:true,anchorSeconds:scene.anchorSeconds,elapsedMs:Date.now()-began,...result.observation,spokenDialogue:heardDialogue};
  }catch{throw Error('SCENE_UNAVAILABLE');}
