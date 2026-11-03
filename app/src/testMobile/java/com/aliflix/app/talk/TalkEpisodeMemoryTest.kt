@@ -35,13 +35,15 @@ class TalkEpisodeMemoryTest {
         assertEquals(TalkRecallMode.PREVIOUS, request.mode)
         val result = packet("What happened in the previous scene?")
         val scenes = result.getJSONArray("scenes")
-        assertEquals(2, scenes.length())
+        assertEquals(3, scenes.length())
         assertEquals("earlier", scenes.getJSONObject(0).getString("role"))
         assertEquals(0.0, scenes.getJSONObject(0).getDouble("startSeconds"), .001)
-        assertEquals("previous", scenes.getJSONObject(1).getString("role"))
+        assertEquals("previous_candidate", scenes.getJSONObject(1).getString("role"))
         assertEquals(40.0, scenes.getJSONObject(1).getDouble("startSeconds"), .001)
-        assertEquals("current", result.getJSONObject("currentScene").getString("role"))
-        assertEquals(80.0, result.getJSONObject("currentScene").getDouble("startSeconds"), .001)
+        assertFalse(result.has("currentScene"))
+        assertEquals("latest_exchange", scenes.getJSONObject(2).getString("role"))
+        assertEquals(80.0, scenes.getJSONObject(2).getDouble("startSeconds"), .001)
+        assertFalse(result.getBoolean("dialogueWindowsAreSceneBoundaries"))
         assertFalse(result.toString().contains("ending reveals"))
     }
 
@@ -99,5 +101,64 @@ class TalkEpisodeMemoryTest {
         assertTrue(talkEpisodeRecallQuestion("What happened at 6:20?"))
         assertTrue(talkEpisodeRecallQuestion("Recap the episode from the beginning"))
         assertFalse(talkEpisodeRecallQuestion("Lower the volume"))
+    }
+
+    @Test fun paraphrasedCausalQuestionStillReceivesTheStoryFromTheBeginning() {
+        val result = packet("Why did she fall down?")
+        val story = result.getJSONObject("storyThroughAnchor")
+        assertTrue(story.getBoolean("complete"))
+        val dialogue = story.getJSONArray("dialogue").toString()
+        assertTrue(dialogue.contains("mother arrives"))
+        assertTrue(dialogue.contains("hides the letter"))
+        assertTrue(dialogue.contains("stranger breaks in"))
+        assertFalse(dialogue.contains("ending reveals"))
+        assertTrue(talkEpisodeRecallQuestion("Why did she fall down?"))
+    }
+
+    @Test fun anotherLanguageDoesNotRemoveEarlierDialogueFromEvidence() {
+        val result = packet("Warum ist sie gefallen?")
+        assertTrue(result.getJSONObject("storyThroughAnchor").getJSONArray("dialogue").toString().contains("hides the letter"))
+    }
+
+    @Test fun aRewindRemovesLaterEventsEvenWhenTheyWerePreviouslyWatched() {
+        val result = packet("What caused this?", anchor = 45.0, watched = listOf(0.0..150.0))
+        val story = result.getJSONObject("storyThroughAnchor").getJSONArray("dialogue")
+        for (index in 0 until story.length()) assertTrue(story.getJSONArray(index).getDouble(1) <= 45.0)
+        assertFalse(story.toString().contains("stranger breaks in"))
+        assertFalse(story.toString().contains("ending reveals"))
+    }
+
+    @Test fun anOversizeTranscriptExplicitlyReportsCoverageRatherThanPretendingToKnowEverything() {
+        val scenes = buildTalkCueScenes(cues, 100.0)
+        val story = talkStoryTranscript(scenes, characterBudget = 65)
+        assertFalse(story.getBoolean("complete"))
+        assertTrue(story.getInt("includedCues") < story.getInt("eligibleCues"))
+        assertTrue(story.getDouble("throughSeconds") < 100.0)
+    }
+    @Test fun largeQuestionContextKeepsEarlierMatchesAndRecentStoryWithFullRecallAvailable() {
+        val longCues=(0..2000 step 2).map { second -> cue(second.toDouble(),second+1.0,
+            if(second==200) "The note explains her collapse" else "Unrelated conversation at $second with enough words to fill a long transcript") }
+        val query="Why did she collapse?"
+        val request=parseTalkRecallRequest(query,2000.0)
+        fun recall(full:Boolean)=buildTalkRecallPacket(query,request,2000.0,longCues,"timed_captions","edition",emptyList(),emptyList(),includeWholeStory=full).getJSONObject("storyThroughAnchor")
+        val focused=recall(false)
+        assertEquals("question_context",focused.getString("coverage"))
+        assertTrue(focused.getBoolean("fullPrefixAvailable"))
+        assertTrue(focused.getJSONArray("dialogue").toString().contains("note explains"))
+        val compact=buildTalkRecallPacket(query,request,2000.0,longCues,"timed_captions","edition",emptyList(),emptyList())
+        assertFalse(compact.getJSONArray("scenes").getJSONObject(0).has("dialogue"))
+        assertTrue(focused.getDouble("throughSeconds")<=2000.0)
+        assertTrue(focused.getInt("includedCues") < recall(true).getInt("includedCues"))
+    }
+    @Test fun immediatePreviousSceneUsesFocusedContextWhileDeepRecallCanReadTheWholeStory() {
+        val longCues=cues+listOf(cue(1300.0,1302.0,"Later setup"),cue(1900.0,1902.0,"Immediate exchange"))
+        val query="What happened immediately before this scene?"
+        val request=parseTalkRecallRequest(query,2000.0)
+        fun recall(full:Boolean)=buildTalkRecallPacket(query,request,2000.0,longCues,"timed_captions","edition",emptyList(),emptyList(),includeWholeStory=full)
+        val focused=recall(false).getJSONObject("storyThroughAnchor")
+        assertEquals("recent_context",focused.getString("coverage"))
+        assertTrue(focused.getBoolean("fullPrefixAvailable"))
+        assertFalse(focused.getJSONArray("dialogue").toString().contains("mother arrives"))
+        assertTrue(recall(true).getJSONObject("storyThroughAnchor").getJSONArray("dialogue").toString().contains("mother arrives"))
     }
 }

@@ -5,7 +5,7 @@ import { validateSubtitleWav, speechTimingWords } from './subtitleAudio';
 
 export const ScenePacketSchema = z.object({
  anchorSeconds:z.number().finite().min(0).max(604800),
- frames:z.array(z.object({seconds:z.number().finite().min(0),data:z.string().min(4).max(214000).regex(/^\/9j\/[A-Za-z0-9+/=\r\n]*$/)}).strict()).max(4),
+ frames:z.array(z.object({seconds:z.number().finite().min(0),data:z.string().min(4).max(214000).regex(/^\/9j\/[A-Za-z0-9+/=\r\n]*$/)}).strict()).max(8),
  dialogue:z.array(z.object({start:z.number().finite().min(0),end:z.number().finite().min(0),text:z.string().min(1).max(300)}).strict()).max(12),
  heardDialogue:z.string().max(1000).default('')
  ,audio:z.object({startSeconds:z.number().finite().min(0),endSeconds:z.number().finite().min(0),mimeType:z.literal('audio/wav'),data:z.string().min(60).max(512100).regex(/^UklGR[A-Za-z0-9+/=\r\n]*$/)}).strict().optional()
@@ -105,7 +105,8 @@ function observationDelay(milliseconds:number,signal:AbortSignal) {
  });
 }
 
-/** A slow real-time inference must not hold an otherwise usable observation hostage. */
+/** Structured observation does not need a second Live session. Hedge slow requests
+ * with Live while keeping the same title-blind evidence validation. */
 export async function observePlayerScene(scene:ScenePacket,env:RecommendationEnv,hedgeAfterMs=3000) {
  if(!env.GEMINI_API_KEY)throw Error('SCENE_UNAVAILABLE');
  const began=Date.now();
@@ -114,10 +115,10 @@ export async function observePlayerScene(scene:ScenePacket,env:RecommendationEnv
  try {
   const heardDialogue=await scenePlayedSpeech(scene,env,deadline);
   const observedScene={...scene,heardDialogue};
-  const realtime=liveSceneObservation(observedScene,env,deadline).then(observation=>({engine:'realtime',observation}));
-  const fallback=observationDelay(hedgeAfterMs,deadline).then(()=>structuredSceneObservation(observedScene,env,deadline))
-   .then(observation=>({engine:'structured',observation}));
-  const result=await Promise.any([realtime,fallback]);
+  const structured=structuredSceneObservation(observedScene,env,deadline).then(observation=>({engine:'structured',observation}));
+  const realtime=observationDelay(hedgeAfterMs,deadline).then(()=>liveSceneObservation(observedScene,env,deadline))
+   .then(observation=>({engine:'realtime',observation}));
+  const result=await Promise.any([structured,realtime]);
   console.info('talk_scene_observation_complete',Date.now()-began,result.engine);
   return {status:'observed',titleBlind:true,anchorSeconds:scene.anchorSeconds,elapsedMs:Date.now()-began,...result.observation,spokenDialogue:heardDialogue};
  }catch{throw Error('SCENE_UNAVAILABLE');}

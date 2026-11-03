@@ -34,6 +34,9 @@ class TalkQuestionLanguageTest {
     }
 
     @Test fun questionLanguageIsDetectedFromTheQuestionItself() {
+        assertEquals("en", chooseQuestionResponseLanguage("de", "Why did she fell down?"))
+        assertEquals("en", chooseQuestionResponseLanguage("ar", "Why did she fall down?"))
+        assertEquals("en", chooseQuestionResponseLanguage("de", "How did he know about the letter?"))
         assertEquals("en", detectTalkQuestionLanguage("What happened in Dark?"))
         assertEquals("en", detectTalkQuestionLanguage("Who is the hooded woman?"))
         assertEquals("de", detectTalkQuestionLanguage("Wer ist die Frau mit der Kapuze?"))

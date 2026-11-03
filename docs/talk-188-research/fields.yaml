@@ -1,0 +1,36 @@
+categories:
+  evidence:
+    - name: coverage
+      definition: Complete timed dialogue, audio description, silent action, participant identity and actual visual coverage.
+      detail_level: detailed
+    - name: provenance
+      definition: Primary media or licensed source, exact edition, timestamps and independently supported claims.
+      detail_level: detailed
+  retrieval:
+    - name: temporal_alignment
+      definition: Exact requested timestamp, actual decoded timestamp, scene adjacency, cut offset and rate differences.
+      detail_level: detailed
+    - name: semantic_and_causal_retrieval
+      definition: Paraphrase, cross-language search, earlier causes, references, opening-scene links and miss recovery.
+      detail_level: detailed
+    - name: disclosure_boundary
+      definition: Presentation position at which each fact became knowable; filter before ranking and answer generation.
+      detail_level: detailed
+  operations:
+    - name: prerequisites_and_access
+      definition: Required media ingestion, accounts, configured providers, source access and reuse rights.
+      detail_level: detailed
+    - name: latency
+      definition: First useful answer and completion, split into transcript fetch, embedding, search, decoding, observation and generation; cold versus warm.
+      detail_level: detailed
+    - name: persistence_and_versioning
+      definition: Exact edition, model, vector dimension and schema namespaces; incompatible vectors must be rebuilt.
+      detail_level: detailed
+    - name: validation
+      definition: Human-reviewed actual footage, genuine questions, language, unsupported identities, spoiler compliance and playback isolation.
+      detail_level: detailed
+uncertain:
+  - Commercial catalog-wide media and audio-description availability.
+  - Provider prices and quotas for any newly proposed account.
+  - Cold exact-timestamp latency across all stream providers.
+  - Live Embedding 2 availability under the production secret before deployment approval and a smoke test.

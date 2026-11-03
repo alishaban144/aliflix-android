@@ -132,7 +132,7 @@ internal fun parseTalkRecallRequest(question: String, anchorSeconds: Double): Ta
         .filter { it.length >= 3 && it !in recallStopWords }
         .distinct()
         .take(8)
-    return if (searchWords.containsMatchIn(clean) && terms.isNotEmpty()) {
+    return if ((searchWords.containsMatchIn(clean) || Regex("(?i)\\b(why|how|reason|cause|earlier|beginning)\\b").containsMatchIn(clean)) && terms.isNotEmpty()) {
         TalkRecallRequest(TalkRecallMode.SEARCH, terms = terms)
     } else TalkRecallRequest(TalkRecallMode.CONTEXT)
 }
@@ -141,7 +141,8 @@ internal fun talkEpisodeRecallQuestion(question: String): Boolean {
     val clean = question.trim()
     if (clean.isBlank()) return false
     return timestampSeconds(clean) != null || recapWords.containsMatchIn(clean) ||
-        previousWords.containsMatchIn(clean) || searchWords.containsMatchIn(clean)
+        previousWords.containsMatchIn(clean) || searchWords.containsMatchIn(clean) ||
+        Regex("(?i)\\b(why|how|reason|cause|earlier|beginning)\\b").containsMatchIn(clean)
 }
 
 private fun sceneWatchedFraction(scene: TalkCueScene, ranges: List<ClosedFloatingPointRange<Double>>): Double {
@@ -177,9 +178,12 @@ private fun selectScenes(
         }
         TalkRecallMode.PREVIOUS -> {
             val at = currentIndex
-            if (at <= 0) emptyList() else buildList {
+            if (at < 0) emptyList() else buildList {
                 scenes.getOrNull(at - 2)?.let { add(TalkRecallSelection("earlier", it)) }
-                add(TalkRecallSelection("previous", scenes[at - 1]))
+                scenes.getOrNull(at - 1)?.let { add(TalkRecallSelection("previous_candidate", it)) }
+                // A pause may already show the next, silent shot. The latest dialogue
+                // must remain a candidate rather than being mislabeled as the current scene.
+                add(TalkRecallSelection("latest_exchange", scenes[at]))
             }
         }
         TalkRecallMode.RECAP -> recapTimeline(scenes).map { TalkRecallSelection("timeline", it) }
@@ -222,10 +226,32 @@ internal fun buildTalkRecallPacket(
     watchedRanges: List<ClosedFloatingPointRange<Double>>,
     visualBeatSeconds: List<Double>,
     responseLanguage: String? = null,
+    includeWholeStory: Boolean = false,
 ): JSONObject {
     val scenes = buildTalkCueScenes(cues, anchorSeconds)
     val selected = selectScenes(scenes, request, anchorSeconds)
-    val currentScene = scenes.indexOfLast { it.startSeconds <= anchorSeconds }.takeIf { it >= 0 }?.let { scenes[it] }
+    val storyCeiling = if (request.mode == TalkRecallMode.TIMESTAMP && !Regex("(?i)\\b(why|how|cause|reason)\\b").containsMatchIn(query))
+        minOf(anchorSeconds, (request.targetSeconds ?: anchorSeconds) + 8.0) else anchorSeconds
+    val focusedPrevious = !includeWholeStory && request.mode == TalkRecallMode.PREVIOUS && anchorSeconds > 600 &&
+        Regex("(?i)previous scene|scene before|immediately before|just before|preceding scene").containsMatchIn(query)
+    val focusedQuestion = !includeWholeStory && anchorSeconds > 600 &&
+        request.mode in setOf(TalkRecallMode.SEARCH, TalkRecallMode.CONTEXT) &&
+        scenes.sumOf { it.text.length } > 12_000 &&
+        !Regex("(?i)\\b(opening|beginning|start of|first scene)\\b").containsMatchIn(query)
+    val storyScenes = if (focusedQuestion) buildTalkCueScenes(cues.filter { cue ->
+        cue.endSeconds >= anchorSeconds - 600 || selected.any { choice ->
+            cue.startSeconds <= choice.scene.endSeconds + 30 && cue.endSeconds >= choice.scene.startSeconds - 30
+        }
+    }, anchorSeconds)
+        else if (focusedPrevious) buildTalkCueScenes(cues.filter { it.endSeconds >= anchorSeconds - 600 }, anchorSeconds)
+        else if (storyCeiling == anchorSeconds) scenes else buildTalkCueScenes(cues, storyCeiling)
+    val story = talkStoryTranscript(storyScenes)
+        .put("requestedThroughSeconds", storyCeiling).put("availableThroughSeconds", anchorSeconds)
+        .put("coverage", if (focusedQuestion) "question_context" else if (focusedPrevious) "recent_context" else "chronological_prefix")
+        .put("fullPrefixAvailable", captionSource !in setOf("none", "observed_captions"))
+        .put("fromSeconds", storyScenes.firstOrNull()?.startSeconds ?: 0.0)
+    val latestDialogue = scenes.lastOrNull()
+    val currentScene = latestDialogue?.takeIf { anchorSeconds <= it.endSeconds + 1.5 }
     val gaps = mutableListOf<String>()
     if (request.targetBeyondAnchor) gaps += "The requested timestamp is beyond the current playhead. Do not reveal it or answer as if it happened."
     if (scenes.isEmpty()) gaps += "No timed dialogue was found before the current playhead."
@@ -233,12 +259,13 @@ internal fun buildTalkRecallPacket(
         gaps += "No earlier or matching scene was found before the playhead; the current scene may be the first."
     if (captionSource == "observed_captions") gaps += "Only captions already shown during playback are available, not a complete episode transcript."
     if (captionSource == "none") gaps += "No timed transcript is available. Use only the current scene evidence."
+    if (!story.getBoolean("complete")) gaps += "The story transcript exceeds this context page. Retrieve omitted earlier dialogue with scene_recall and its timestamp; do not treat it as absent from the film."
     val selectedWithNoVisual = selected.filter { choice ->
         visualBeatSeconds.none { it >= choice.scene.startSeconds - .5 && it <= choice.scene.endSeconds + .5 }
     }
     if (selectedWithNoVisual.isNotEmpty()) gaps += "No video frame was observed for earlier scenes; describe transcript-supported events without claiming visual detail."
     val selectedUnwatched = selected.filter { sceneWatchedFraction(it.scene, watchedRanges) < .35 }
-    if (selectedUnwatched.isNotEmpty()) gaps += "Some requested scenes were not fully watched in this session. Do not claim the viewer saw them; say the answer is from the episode transcript."
+    if (selectedUnwatched.isNotEmpty()) gaps += "Some requested scenes were skipped in this session. Evidence retrieved now can describe them; never claim the viewer watched them. Attached earlier video frames support visual facts and the transcript supports dialogue."
 
     val packet = JSONObject()
         .put("status", "recalled")
@@ -250,6 +277,7 @@ internal fun buildTalkRecallPacket(
         .put("targetBeyondAnchor", request.targetBeyondAnchor)
         .put("captionEdition", captionEdition)
         .put("captionSource", captionSource)
+        .put("storyThroughAnchor", story)
         .put("transcript", JSONObject()
             .put("cueCount", cues.size)
             .put("firstSeconds", cues.minOfOrNull { it.startSeconds } ?: JSONObject.NULL)
@@ -258,12 +286,35 @@ internal fun buildTalkRecallPacket(
         .put("watchedRanges", JSONArray(watchedRanges.map { range ->
             JSONArray().put(range.start.coerceAtLeast(0.0)).put(range.endInclusive.coerceAtLeast(range.start))
         }))
-        .put("currentScene", currentScene?.let { sceneJson(it, "current", request, watchedRanges, visualBeatSeconds) })
-        .put("scenes", JSONArray(selected.map { sceneJson(it.scene, it.role, request, watchedRanges, visualBeatSeconds) }))
+        .put("currentScene", currentScene?.let { sceneJson(it, "current", request, watchedRanges, visualBeatSeconds, summaryOnly = focusedQuestion) })
+        .put("latestDialogue", latestDialogue?.let { sceneJson(it, "latest_exchange", request, watchedRanges, visualBeatSeconds, summaryOnly = focusedQuestion) })
+        .put("dialogueWindowsAreSceneBoundaries", false)
+        .put("participantIdentities", "Unverified: these captions do not attribute speakers or bind character names to faces. Use roles/descriptions unless exact dialogue or separately grounded evidence identifies the participant. Never assign a name or spouse relationship from remembered cast/plot familiarity.")
+        .put("scenes", JSONArray(selected.map { sceneJson(it.scene, it.role, request, watchedRanges, visualBeatSeconds, summaryOnly = focusedQuestion) }))
         .put("evidenceGaps", JSONArray(gaps))
         .put("responseLanguage", responseLanguage ?: JSONObject.NULL)
         .put("scope", scopeInstruction)
     return packet
+}
+
+/** Keep the chronological story, not only literal word matches. The conversational model
+ * can resolve paraphrases, motives and cross-language questions against all earlier lines.
+ * Long transcripts expose an explicit coverage limit; no fabricated summary fills a gap. */
+internal fun talkStoryTranscript(scenes: List<TalkCueScene>, characterBudget: Int = 120_000): JSONObject {
+    val cues = scenes.flatMap { it.cues }
+    val rows = JSONArray()
+    var characters = 0
+    // Keep the opening when unusually long content needs another page. Detailed timestamp
+    // recall remains independent of this budget and can retrieve any earlier window.
+    for (cue in cues) {
+        if (characters + cue.text.length > characterBudget) break
+        rows.put(JSONArray().put(cue.startSeconds).put(cue.endSeconds).put(cue.text))
+        characters += cue.text.length
+    }
+    return JSONObject().put("format", "[startSeconds,endSeconds,dialogue]")
+        .put("dialogue", rows).put("includedCues", rows.length()).put("eligibleCues", cues.size)
+        .put("complete", rows.length() == cues.size)
+        .put("throughSeconds", if (rows.length() == 0) 0.0 else rows.getJSONArray(rows.length() - 1).getDouble(1))
 }
 
 private fun sceneJson(
@@ -272,6 +323,7 @@ private fun sceneJson(
     request: TalkRecallRequest,
     watchedRanges: List<ClosedFloatingPointRange<Double>>,
     visualBeatSeconds: List<Double>,
+    summaryOnly: Boolean = false,
 ): JSONObject {
     val beats = visualBeatSeconds.filter { it >= scene.startSeconds - .5 && it <= scene.endSeconds + .5 }
     val cues = JSONArray().apply {
@@ -288,14 +340,15 @@ private fun sceneJson(
         .put("watchedFraction", sceneWatchedFraction(scene, watchedRanges))
         .put("visualFrameSeconds", JSONArray(beats.take(4)))
         .apply {
-            if (request.mode == TalkRecallMode.RECAP) put("excerpt", excerpt(scene.text))
+            if (summaryOnly || request.mode == TalkRecallMode.RECAP) put("excerpt", excerpt(scene.text))
             else put("dialogue", cues)
         }
 }
 
 private const val scopeInstruction =
     "Evidence is limited to this episode/movie through anchorSeconds. Use only these exact captions and observed frames. " +
-        "Never use later scenes, endings, hidden identities, future episodes or remembered plot. " +
+        "Never use later scenes, endings, hidden identities, future episodes or remembered plot. Earlier scenes from the beginning through this playhead are allowed, including scenes skipped by seeking. " +
+        "storyThroughAnchor supplies chronological earlier dialogue even when the question uses different words or another language. Selected scenes are retrieval hints, not the limit of the available story. Connect supported earlier causes to current actions, and distinguish evidence from interpretation. " +
         "For a previous-scene or timestamp question, explain the supported action, who was involved, and its immediate significance. " +
         "Do not list objects or give a generic synopsis. If a visual detail was not observed, say the answer is based on the transcript. " +
         "Answer in the viewer's latest question language and do not switch because the film audio or captions use another language."

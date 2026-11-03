@@ -4,6 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkSceneContextTest {
+    @Test fun backfillIsNeededForFreshSeekStaleAndShortSequencesButNotObservedAction() {
+        fun frames(vararg seconds: Double) = seconds.map { TalkSceneFrame(it, byteArrayOf(1)) }
+        assertFalse(sceneNeedsVideoBackfill(frames(68.0,84.0,94.0,100.0),100.0))
+        assertTrue(sceneNeedsVideoBackfill(frames(100.0),100.0))
+        assertTrue(sceneNeedsVideoBackfill(frames(94.0,95.0,96.0,97.0),100.0))
+        assertTrue(sceneNeedsVideoBackfill(frames(97.0,98.0,99.0,100.0),100.0))
+        assertTrue(sceneNeedsVideoBackfill(frames(68.0,84.0,94.0,101.0),100.0))
+    }
     @Test fun frameSelectionExcludesFutureStaleAndEmptyEvidenceButRetainsTemporalOrder() {
         val frames = listOf(-1.0, 2.0, 50.0, 70.0, 84.0, 94.0, 100.0, 101.0).map { TalkSceneFrame(it, byteArrayOf(1)) } + TalkSceneFrame(99.0, byteArrayOf())
         val selected = sceneFrameSelection(frames, 100.0)
@@ -13,6 +21,10 @@ class TalkSceneContextTest {
     @Test fun aSingleFrameIsUsefulAndNeverDuplicatedIntoAnInventedSequence() {
         assertEquals(1, sceneFrameSelection(listOf(TalkSceneFrame(5.0, byteArrayOf(1))), 5.0).size)
         assertTrue(sceneFrameSelection(emptyList(), 5.0).isEmpty())
+    }
+    @Test fun recentActionsRetainTemporalDetailAndExcludeFutureFrames() {
+        val frames = (0..104).map { TalkSceneFrame(it.toDouble(), byteArrayOf(1)) }
+        assertEquals(listOf(68.0, 84.0, 92.0, 94.0, 96.0, 98.0, 99.0, 100.0), sceneFrameSelection(frames, 100.0).map { it.seconds })
     }
     @Test fun replayUsesTheRecentExchangeInsteadOfAnUnrelatedEarlierCaption() {
         assertEquals(91.4, sceneReplayStart(100.0, listOf(3.0 to 5.0, 80.0 to 83.0, 92.0 to 97.0)), .001)
@@ -35,6 +47,10 @@ class TalkSceneContextTest {
         assertTrue(talkActionRequested("replay_scene", "I don't understand what just happened. Then replay that exchange."))
     }
     @Test fun immediatePlayerCommandsDoNotWaitForScenePerceptionWhileSceneQuestionsDo() {
+        assertFalse(talkNeedsCurrentSceneObservation("What happened immediately before this scene?"))
+        assertFalse(talkNeedsCurrentSceneObservation("How did he know about the letter?"))
+        assertFalse(talkNeedsCurrentSceneObservation("Recap the story from the beginning."))
+        assertTrue(talkNeedsCurrentSceneObservation("Why did she fall down?"))
         assertTrue(talkSceneQuestion("I don't understand what just happened"))
         assertTrue(talkSceneQuestion("Was ist gerade passiert?"))
         assertTrue(talkSceneQuestion("ماذا حدث للتو؟"))
