@@ -39,7 +39,7 @@ class TalkInputTurnGateTest {
  }
  @Test fun outputRequiresSustainedSpeechAndLongThinkingPausesStayOneTurn(){
   val gate=TalkInputTurnGate()
-  repeat(5){assertFalse(gate.accept(frame(7),.9f,false,true).start)}
+  repeat(3){assertFalse(gate.accept(frame(7),.9f,false,true).start)}
   assertTrue(gate.accept(frame(7),.9f,false,true).start)
   repeat(30){assertFalse(gate.accept(frame(),0f,false,true).end)}
   assertTrue(gate.active)

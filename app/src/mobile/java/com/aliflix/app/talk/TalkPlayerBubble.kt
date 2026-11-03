@@ -88,7 +88,6 @@ import kotlin.math.roundToInt
         if (!typing) session.debugCardBounds.remove("player-input")
     }
     BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(12.dp).testTag("talk-player-bubble")) {
-        val availableHeight=maxHeight
         val orbSize = 76.dp
         val maxX = with(density) { (maxWidth - orbSize).toPx().coerceAtLeast(0f) }
         val maxY = with(density) { (maxHeight - orbSize).toPx().coerceAtLeast(0f) }
@@ -101,10 +100,13 @@ import kotlin.math.roundToInt
         val orbPixels = with(density) { orbSize.toPx() }
         val roomLeft = orbX >= palettePixels + gap
         val paletteX = if(roomLeft) orbX-palettePixels-gap else (orbX+orbPixels-palettePixels).coerceIn(0f,(maxX+orbPixels-palettePixels).coerceAtLeast(0f))
-        val panelLimit=if(roomLeft)maxHeight else (maxHeight-orbSize-8.dp).coerceAtLeast(100.dp)
         val heightPixels = with(density) { maxHeight.toPx() }
+        val downStart=if(roomLeft)orbY else orbY+orbPixels+gap
+        val upEnd=if(roomLeft)orbY+orbPixels else orbY-gap
+        val growDown=heightPixels-downStart>=upEnd
+        val panelLimit=with(density) { (if(growDown)heightPixels-downStart else upEnd).coerceAtLeast(100.dp.toPx()).toDp() }
         val estimatedHeight = (panelHeight.takeIf { it > 0 } ?: with(density) { 180.dp.roundToPx() }).coerceAtMost(with(density){panelLimit.roundToPx()})
-        val paletteY = (if(roomLeft) orbY else if(orbY+orbPixels+gap+estimatedHeight<=heightPixels) orbY+orbPixels+gap else orbY-estimatedHeight-gap)
+        val paletteY = (if(growDown)downStart else upEnd-estimatedHeight)
             .coerceIn(0f,(heightPixels-estimatedHeight).coerceAtLeast(0f))
         Box(Modifier.absoluteOffset { IntOffset(paletteX.roundToInt(), paletteY.roundToInt()) }) {
             AnimatedVisibility(controls,
@@ -123,13 +125,13 @@ import kotlin.math.roundToInt
                             }
                             ScenePaletteButton(Icons.Rounded.Close,"Close Talk",Modifier.measured("player-close")) { dismissComposer();onClose() }
                         }
-                        if(exchange.isNotEmpty())Column(Modifier.weight(1f,fill=false).heightIn(max=if(availableHeight>480.dp)360.dp else availableHeight*.42f)
+                        if(exchange.isNotEmpty())Column(Modifier.weight(1f,fill=false)
                             .verticalScroll(androidx.compose.foundation.rememberScrollState()).measured("player-exchange").testTag("talk-inline-exchange"),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                             exchange.forEach { line ->
                                 if(line.text.isNotBlank())androidx.compose.foundation.text.selection.SelectionContainer {
                                     Text(line.text,Modifier.fillMaxWidth().padding(horizontal=10.dp,vertical=4.dp),
                                         color=if(line.role=="user")Color(0xFFBCB2D6) else Color(0xFFF4F0FF),
-                                        fontSize=if(line.role=="user")13.sp else 15.sp,lineHeight=if(line.role=="user")19.sp else 23.sp)
+                                        style=MaterialTheme.typography.bodyLarge, fontSize=16.sp,lineHeight=25.sp)
                                 }
                             }
                         }

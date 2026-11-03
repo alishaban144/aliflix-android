@@ -20,7 +20,7 @@ internal class TalkInputTurnGate {
             prefix.addLast(pcm);prefixBytes+=pcm.size
             while(prefixBytes>25_600&&prefix.isNotEmpty())prefixBytes-=prefix.removeFirst().size
             voicedMs=if(near&&!echo)voicedMs+ms else 0
-            if(voicedMs<(if(outputActive)192 else 96))return Decision()
+            if(voicedMs<(if(outputActive)128 else 96))return Decision()
             active=true;quietMs=0;voicedMs=0
             return Decision(start=true,frames=prefix.toList()).also{prefix.clear();prefixBytes=0}
         }

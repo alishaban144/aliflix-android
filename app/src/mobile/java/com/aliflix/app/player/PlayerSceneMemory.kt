@@ -116,7 +116,7 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
         val cues = when { exact.isNotEmpty() -> exact; retrievedTranscript != null -> retrievedTranscript!!.cues; else -> observedCaptions.toList() }
         val request = parseTalkRecallRequest(query, position)
         return buildTalkRecallPacket(query, request, position, cues, source,
-            if (exact.isNotEmpty()) state.optString("subtitleEdition") else retrievedTranscript?.edition.orEmpty(), watchedRanges.toList(), visualBeats.map { it.seconds }, includeWholeStory = fullStory || com.aliflix.app.talk.talkEpisodeRecallQuestion(query))
+            if (exact.isNotEmpty()) state.optString("subtitleEdition") else retrievedTranscript?.edition.orEmpty(), watchedRanges.toList(), visualBeats.map { it.seconds }, includeWholeStory = fullStory)
             .put("playbackEvidence", JSONObject().put("contentKey",state.optString("contentKey"))
                 .put("requestId",state.optString("requestId")).put("durationSeconds",state.optDouble("durationSeconds",0.0))
                 .put("visualSource","active_playback_source").put("captionAlignment",if(source=="observed_captions")"observed_at_playback" else "edition_selected_alignment_unverified")

@@ -284,6 +284,7 @@ internal fun buildTalkRecallPacket(
         .put("captionEdition", captionEdition)
         .put("captionSource", captionSource)
         .put("storyThroughAnchor", story)
+        .put("timelineIndex",JSONArray(recapTimeline(scenes).map { scene -> JSONObject().put("startSeconds",scene.startSeconds).put("endSeconds",scene.endSeconds).put("dialogueHint",excerpt(scene.text,180)) }))
         .put("transcript", JSONObject()
             .put("cueCount", cues.size)
             .put("firstSeconds", cues.minOfOrNull { it.startSeconds } ?: JSONObject.NULL)
@@ -306,7 +307,7 @@ internal fun buildTalkRecallPacket(
 /** Keep the chronological story, not only literal word matches. The conversational model
  * can resolve paraphrases, motives and cross-language questions against all earlier lines.
  * Long transcripts expose an explicit coverage limit; no fabricated summary fills a gap. */
-internal fun talkStoryTranscript(scenes: List<TalkCueScene>, characterBudget: Int = 120_000): JSONObject {
+internal fun talkStoryTranscript(scenes: List<TalkCueScene>, characterBudget: Int = 12_000): JSONObject {
     val cues = scenes.flatMap { it.cues }
     val rows = JSONArray()
     var characters = 0

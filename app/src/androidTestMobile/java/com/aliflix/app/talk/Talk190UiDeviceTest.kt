@@ -52,4 +52,26 @@ class Talk190UiDeviceTest {
    i.uiAutomation.takeScreenshot()?.let{bitmap->File(i.targetContext.getExternalFilesDir(null),"talk190-answer-anchor.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()}
   }finally{session.close();scope.cancel()}
  }
+
+ @Test fun floatingBubbleGrowsVerticallyWithStreamingTextWithoutOpeningTheTalkWindow(){
+  val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
+  val session=TalkVoiceSession(InstrumentationRegistry.getInstrumentation().targetContext,scope,restoreHistory=false)
+  try{
+   session.setTextMode(true)
+   compose.setContent{AliflixMobileTheme{TalkPlayerBubble(session,{}, {})}}
+   val question="Why did she return the key instead of keeping it?"
+   compose.runOnIdle{session.debugPreviewUserQuestion(question)}
+   compose.onNodeWithTag("talk-inline-conversation").assertIsDisplayed()
+   val first=compose.onNodeWithTag("talk-inline-conversation").fetchSemanticsNode().boundsInRoot
+   val opening="She returned it because the earlier agreement required her to leave it with its owner."
+   compose.runOnIdle{session.debugReplayServerMessage(JSONObject().put("serverContent",JSONObject().put("outputTranscription",JSONObject().put("text",opening))))}
+   val second=compose.onNodeWithTag("talk-inline-conversation").fetchSemanticsNode().boundsInRoot
+   assertTrue("The reply should grow its whole bubble vertically",second.height>first.height)
+   compose.onNode(hasText(question) and hasAnyAncestor(hasTestTag("talk-inline-conversation"))).assertIsDisplayed()
+   compose.onNode(hasText(opening) and hasAnyAncestor(hasTestTag("talk-inline-conversation"))).assertIsDisplayed()
+   compose.onNodeWithTag("talk-screen").assertDoesNotExist()
+   val i=InstrumentationRegistry.getInstrumentation()
+   i.uiAutomation.takeScreenshot()?.let{bitmap->File(i.targetContext.getExternalFilesDir(null),"talk190-streaming-bubble.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()}
+  }finally{session.close();scope.cancel()}
+ }
 }

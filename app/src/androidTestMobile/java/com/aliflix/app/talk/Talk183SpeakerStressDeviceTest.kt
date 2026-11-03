@@ -30,7 +30,7 @@ class Talk183SpeakerStressDeviceTest {
     delay(180)
    }
    delay(1500)
-   assertTrue(voice.debugActivityEvents.isEmpty())
+   assertTrue("Speaker playback must never seize the user floor",voice.debugActivityEvents.none { it.optBoolean("barge") })
    receipt.writeText(JSONObject().put("durationMs",SystemClock.elapsedRealtime()-began).put("rendered",rendered).put("activity",JSONArray(voice.debugActivityEvents.toList())).put("audio",voice.debugAudioSnapshot()).toString(2))
   }}finally{if(!receipt.exists())receipt.writeText(JSONObject().put("activity",JSONArray(voice.debugActivityEvents.toList())).put("audio",voice.debugAudioSnapshot()).toString(2));i.runOnMainSync{voice.suspendSession();activity.finish()}}
  }

@@ -509,6 +509,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         requestAccepted = savedInstanceState?.getBoolean("requestAccepted") == true
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         hideSystemBars()
         val root = FrameLayout(this).apply { setBackgroundColor(android.graphics.Color.BLACK) }
         playerRoot = root

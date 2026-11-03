@@ -333,7 +333,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 sendTurnContext()
                 val parts = JSONArray()
                 if (TalkPlayerConnection.current() != null && (talkSceneQuestion(question) || talkEpisodeRecallQuestion(question))) {
-                    parts.put(JSONObject().put("text", "Native answer contract: answer every part of the viewer's actual question clearly and completely from the attached timed story and video. Explain the supported cause, relevant earlier setup or inference they ask about. A narration of the pause frame is never a substitute for that answer. Retrieve a specifically missing causal link with scene_recall before answering; observed footage alone does not mean the question is fully supported. Earlier scenes through the pause are allowed. Caption windows are not cinematic scene boundaries. Participant names/faces have not been bound by the app: use roles/descriptions unless exact dialogue or grounded prior evidence establishes identity; never guess a name or spouse relationship from title familiarity. Respond in ${responseLanguage ?: "the viewer's question language"}."))
+                    parts.put(JSONObject().put("text", "Native answer contract: answer every part of the viewer's actual question clearly and completely from the attached timed story and video. Explain the supported cause, relevant earlier setup or inference they ask about. A narration of the pause frame is never a substitute for that answer. Retrieve a specifically missing causal link with scene_recall before answering; observed footage alone does not mean the question is fully supported. When explaining a character reasoning, explicitly attribute the conclusion to that character and connect each clue to the inference. A confident character deduction is not objective proof. Cover each requested premise and exception separately. Earlier scenes through the pause are allowed. Caption windows are not cinematic scene boundaries. Participant names/faces have not been bound by the app: use roles/descriptions unless exact dialogue or grounded prior evidence establishes identity; never guess a name or spouse relationship from title familiarity. Respond in ${responseLanguage ?: "the viewer's question language"}."))
                 }
                 parts.put(JSONObject().put("text",question))
                 if (BuildConfig.DEBUG) debugQuestionSentAt = SystemClock.elapsedRealtime()
@@ -1567,7 +1567,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private fun microphoneDecision(frame:ByteArray,probability:Float,ticket:Long,captureTicket:Long,ownedFixture:Boolean) {
         val decision=synchronized(microphoneOwnership){
             if(ticket!=epoch||captureTicket!=captureGeneration||muted&&!ownedFixture)return
-            val echo=!ownedFixture&&duplexGate.isEcho(frame)
+            val echo=!ownedFixture&&duplexGate.isEcho(frame,probability)
             inputTurns.accept(frame,probability,echo,outputActive=speaking&&!ownedFixture)
         }
         if(!decision.start&&!decision.end&&decision.frames.isEmpty())return
