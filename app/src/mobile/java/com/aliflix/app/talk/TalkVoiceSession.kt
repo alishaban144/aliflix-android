@@ -174,14 +174,18 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         if (sceneObservationKey == scene.key && sceneObservation?.isActive == true) return sceneObservation!!
         sceneObservation?.cancel()
         val session = backendSession ?: return CompletableDeferred<JSONObject?>(null).also { if (BuildConfig.DEBUG) debugSceneObservationIssue = "No live session for observation" }
-        val owner = epoch
         sceneObservationKey = scene.key
         return scope.async {
             val observation = try {
                 post("scene", JSONObject().put("session", session).put("scene", scene.observationRequest(if (conversationContext.optInt("companionVersion") >= 15) 8 else 4)), timeout = 23_000)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { if (BuildConfig.DEBUG) debugSceneObservationIssue = error.message.orEmpty().take(160); null }
-            if (owner != epoch || closed) { if (BuildConfig.DEBUG) debugSceneObservationIssue = "Connection changed during observation"; return@async null }
+            // An independent observation belongs to the captured footage. A live
+            // socket reconnect does not invalidate that same paused sequence.
+            if (closed || TalkPlayerConnection.current()?.talkScene()?.key != scene.key) {
+                if (BuildConfig.DEBUG) debugSceneObservationIssue = "Scene changed during observation"
+                return@async null
+            }
             if (observation?.optString("status") == "observed") {
                 sceneObservations[scene.key] = observation
                 while (sceneObservations.size > 4) sceneObservations.remove(sceneObservations.keys.first())
@@ -868,6 +872,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 else scope.launch {
                     delay(750)
                     if(ticket==epoch&&permitted&&turn==userTurn.get()&&!speaking&&!generationOpen&&!remoteSpeechActive){
+                        sendTurnContext()
                         emitContinuation(talkPendingContinuation(lastQuestion,pendingToolReply,state.value.cards.snapshot()))
                         answerDeadline.awaiting(if(pendingToolReply!=null)15000 else 45000)
                     }

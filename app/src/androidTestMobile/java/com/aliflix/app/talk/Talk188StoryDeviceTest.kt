@@ -55,14 +55,18 @@ class Talk188StoryDeviceTest {
     @Test fun liveSceneExplanationsUseActualFramesAndDialogueAcrossFreshSceneChanges() {
         val args=InstrumentationRegistry.getArguments();assumeTrue(args.getString("liveTalk188")=="true")
         val titleCase=args.getString("sceneTitle")?:"dark"
-        val title=when(titleCase) { "big-bang"->Triple(1418,"tv","The Big Bang Theory");"inception"->Triple(27205,"movie","Inception");"arrival"->Triple(329865,"movie","Arrival");else->Triple(70523,"tv","Dark") }
+        val title=args.getString("sceneTmdbId")?.toIntOrNull()?.let { id ->
+            val kind=args.getString("sceneMediaType") ?: "movie"
+            require(id>0 && kind in setOf("movie","tv"))
+            Triple(id,kind,requireNotNull(args.getString("sceneTitleName")))
+        } ?: when(titleCase) { "big-bang"->Triple(1418,"tv","The Big Bang Theory");"inception"->Triple(27205,"movie","Inception");"arrival"->Triple(329865,"movie","Arrival");else->Triple(70523,"tv","Dark") }
         val positions=(args.getString("sceneSeconds")?:"180,900").split(',').map { it.toDouble() }
         val activity=launchFreshTalkActivity()
         val receipts=JSONArray();var nativePlayer:NativePlayerActivity?=null
         try { runBlocking {
             val native=TalkNativeActions(activity,TalkCatalogue { TalkCardContext() }) {}
             val request=command("play").put("title",title.third).put("tmdbId",title.first).put("kind",title.second)
-            if(title.second=="tv")request.put("season",1).put("episode",1)
+            if(title.second=="tv")request.put("season",(args.getString("sceneSeason")?:"1").toInt()).put("episode",(args.getString("sceneEpisode")?:"1").toInt())
             val started=withContext(Dispatchers.Main) { native.execute(request).value }
             val done=withTimeout(180000) { TalkTaskWork.get(context).await(started.getString("taskId")) }
             assertTrue(done.toString(),done.optString("status") in setOf("completed","partial"))
@@ -75,12 +79,19 @@ class Talk188StoryDeviceTest {
                 player.talkCommand(command("resume"))
                 withTimeout(90000) { while(withContext(Dispatchers.Main) { player.playbackController!!.currentPosition/1000.0 < position })delay(80) }
                 player.talkCommand(command("pause"))
-                withContext(Dispatchers.Main) { player.talkVoice.debugTraceInput=true;player.talkVoice.setTextMode(true);player.openTalk() }
+                val inspectOnly=args.getString("sceneInspectOnly")=="true"
+                if(!inspectOnly)withContext(Dispatchers.Main) { player.talkVoice.debugTraceInput=true;player.talkVoice.setTextMode(true);player.openTalk() }
                 val scene=withContext(Dispatchers.Main) { player.prepareTalkScene()!! }
-                val receipt=JSONObject().put("title",title.third).put("scene",scene.metadata);receipts.put(receipt)
+                val receipt=JSONObject().put("title",title.third).put("scene",scene.metadata)
+                    .put("player",withContext(Dispatchers.Main) { player.talkSnapshot() });receipts.put(receipt)
                 assertTrue(scene.metadata.toString(),scene.frames.isNotEmpty())
                 scene.frames.forEachIndexed { n,frame -> File(context.getExternalFilesDir(null),"talk188-$titleCase-$index-$n.jpg").writeBytes(frame.jpeg) }
                 scene.audio?.let { File(context.getExternalFilesDir(null),"talk188-$titleCase-$index.wav").writeBytes(it.wav) }
+                if(inspectOnly) {
+                    receipt.put("inspectionStory",withContext(Dispatchers.Main) { player.prepareTalkRecall("Recap the story from the beginning",fullStory=true) })
+                    screenshot("talk188-inspect-$titleCase-$index.png")
+                    continue
+                }
                 try {
                     withTimeout(25000) { while(withContext(Dispatchers.Main) { player.talkVoice.state.value.phase !in setOf("Listening","Muted") })delay(50) }
                 } finally {

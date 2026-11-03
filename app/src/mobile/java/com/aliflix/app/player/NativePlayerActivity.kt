@@ -75,7 +75,9 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                 ?.let(sceneMemory::transcript)
         }
         val packet = sceneMemory.recall(query, fullStory) ?: return null
-        if (query != "current scene" && (packet.optString("mode") in setOf("previous", "timestamp") || com.aliflix.app.talk.talkNeedsCurrentSceneObservation(query))) {
+        val needsCurrentVideo = com.aliflix.app.talk.talkNeedsCurrentSceneObservation(query) &&
+            com.aliflix.app.talk.sceneNeedsVideoBackfill(sceneMemory.current()?.frames.orEmpty(), packet.optDouble("anchorSeconds"))
+        if (query != "current scene" && (packet.optString("mode") in setOf("previous", "timestamp") || needsCurrentVideo)) {
             val anchor = packet.optDouble("anchorSeconds")
             val windows = packet.optJSONArray("scenes") ?: JSONArray()
             val target = packet.optDouble("targetSeconds", Double.NaN)

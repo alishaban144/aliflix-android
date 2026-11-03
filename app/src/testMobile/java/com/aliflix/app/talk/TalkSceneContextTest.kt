@@ -4,6 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkSceneContextTest {
+    @Test fun backfillIsNeededForFreshSeekStaleAndShortSequencesButNotObservedAction() {
+        fun frames(vararg seconds: Double) = seconds.map { TalkSceneFrame(it, byteArrayOf(1)) }
+        assertFalse(sceneNeedsVideoBackfill(frames(68.0,84.0,94.0,100.0),100.0))
+        assertTrue(sceneNeedsVideoBackfill(frames(100.0),100.0))
+        assertTrue(sceneNeedsVideoBackfill(frames(94.0,95.0,96.0,97.0),100.0))
+        assertTrue(sceneNeedsVideoBackfill(frames(97.0,98.0,99.0,100.0),100.0))
+        assertTrue(sceneNeedsVideoBackfill(frames(68.0,84.0,94.0,101.0),100.0))
+    }
     @Test fun frameSelectionExcludesFutureStaleAndEmptyEvidenceButRetainsTemporalOrder() {
         val frames = listOf(-1.0, 2.0, 50.0, 70.0, 84.0, 94.0, 100.0, 101.0).map { TalkSceneFrame(it, byteArrayOf(1)) } + TalkSceneFrame(99.0, byteArrayOf())
         val selected = sceneFrameSelection(frames, 100.0)

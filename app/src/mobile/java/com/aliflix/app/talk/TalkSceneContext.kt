@@ -48,6 +48,13 @@ internal fun sceneFrameSelection(frames: List<TalkSceneFrame>, anchor: Double): 
     }.distinctBy { it.seconds }.sortedBy { it.seconds }
 }
 
+/** A captured sequence can be reused; a fresh seek or stale still needs decoding. */
+internal fun sceneNeedsVideoBackfill(frames: List<TalkSceneFrame>, anchor: Double): Boolean {
+    val eligible = sceneFrameSelection(frames, anchor)
+    return eligible.size < 4 || eligible.last().seconds < anchor - 2 ||
+        eligible.last().seconds - eligible.first().seconds < 8
+}
+
 internal fun sceneReplayStart(anchor: Double, dialogue: List<Pair<Double, Double>>): Double {
     val recent = dialogue.filter { (start, end) -> start.isFinite() && end.isFinite() && start >= 0 && end >= start &&
         start < anchor - 1 && end >= anchor - 24 && end <= anchor }.sortedBy { it.first }

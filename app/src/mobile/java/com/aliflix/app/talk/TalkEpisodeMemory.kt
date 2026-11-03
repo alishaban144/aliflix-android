@@ -234,11 +234,20 @@ internal fun buildTalkRecallPacket(
         minOf(anchorSeconds, (request.targetSeconds ?: anchorSeconds) + 8.0) else anchorSeconds
     val focusedPrevious = !includeWholeStory && request.mode == TalkRecallMode.PREVIOUS && anchorSeconds > 600 &&
         Regex("(?i)previous scene|scene before|immediately before|just before|preceding scene").containsMatchIn(query)
-    val storyScenes = if (focusedPrevious) buildTalkCueScenes(cues.filter { it.endSeconds >= anchorSeconds - 600 }, anchorSeconds)
+    val focusedQuestion = !includeWholeStory && anchorSeconds > 600 &&
+        request.mode in setOf(TalkRecallMode.SEARCH, TalkRecallMode.CONTEXT) &&
+        scenes.sumOf { it.text.length } > 24_000 &&
+        !Regex("(?i)\\b(opening|beginning|start of|first scene)\\b").containsMatchIn(query)
+    val storyScenes = if (focusedQuestion) buildTalkCueScenes(cues.filter { cue ->
+        cue.endSeconds >= anchorSeconds - 600 || selected.any { choice ->
+            cue.startSeconds <= choice.scene.endSeconds + 30 && cue.endSeconds >= choice.scene.startSeconds - 30
+        }
+    }, anchorSeconds)
+        else if (focusedPrevious) buildTalkCueScenes(cues.filter { it.endSeconds >= anchorSeconds - 600 }, anchorSeconds)
         else if (storyCeiling == anchorSeconds) scenes else buildTalkCueScenes(cues, storyCeiling)
     val story = talkStoryTranscript(storyScenes)
         .put("requestedThroughSeconds", storyCeiling).put("availableThroughSeconds", anchorSeconds)
-        .put("coverage", if (focusedPrevious) "recent_context" else "chronological_prefix")
+        .put("coverage", if (focusedQuestion) "question_context" else if (focusedPrevious) "recent_context" else "chronological_prefix")
         .put("fullPrefixAvailable", captionSource !in setOf("none", "observed_captions"))
         .put("fromSeconds", storyScenes.firstOrNull()?.startSeconds ?: 0.0)
     val latestDialogue = scenes.lastOrNull()

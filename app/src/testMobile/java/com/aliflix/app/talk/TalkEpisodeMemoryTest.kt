@@ -135,6 +135,19 @@ class TalkEpisodeMemoryTest {
         assertTrue(story.getInt("includedCues") < story.getInt("eligibleCues"))
         assertTrue(story.getDouble("throughSeconds") < 100.0)
     }
+    @Test fun largeQuestionContextKeepsEarlierMatchesAndRecentStoryWithFullRecallAvailable() {
+        val longCues=(0..2000 step 2).map { second -> cue(second.toDouble(),second+1.0,
+            if(second==200) "The note explains her collapse" else "Unrelated conversation at $second with enough words to fill a long transcript") }
+        val query="Why did she collapse?"
+        val request=parseTalkRecallRequest(query,2000.0)
+        fun recall(full:Boolean)=buildTalkRecallPacket(query,request,2000.0,longCues,"timed_captions","edition",emptyList(),emptyList(),includeWholeStory=full).getJSONObject("storyThroughAnchor")
+        val focused=recall(false)
+        assertEquals("question_context",focused.getString("coverage"))
+        assertTrue(focused.getBoolean("fullPrefixAvailable"))
+        assertTrue(focused.getJSONArray("dialogue").toString().contains("note explains"))
+        assertTrue(focused.getDouble("throughSeconds")<=2000.0)
+        assertTrue(focused.getInt("includedCues") < recall(true).getInt("includedCues"))
+    }
     @Test fun immediatePreviousSceneUsesFocusedContextWhileDeepRecallCanReadTheWholeStory() {
         val longCues=cues+listOf(cue(1300.0,1302.0,"Later setup"),cue(1900.0,1902.0,"Immediate exchange"))
         val query="What happened immediately before this scene?"
