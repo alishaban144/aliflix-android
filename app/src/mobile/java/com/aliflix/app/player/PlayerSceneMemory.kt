@@ -39,7 +39,10 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
     private val captureMutex = Mutex()
     private var retrievedTranscript: TalkTranscript? = null
 
-    fun transcript(value: TalkTranscript) { observe(snapshot()); retrievedTranscript = value; cached = null }
+    fun transcript(value: TalkTranscript) {
+        observe(snapshot())
+        if (retrievedTranscript != value) { retrievedTranscript = value; cached = null }
+    }
 
     fun retrievedFrames(values: List<TalkSceneFrame>) {
         val position = observe(snapshot())
@@ -140,7 +143,7 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
     fun current(): TalkSceneContext? {
         val state = snapshot(); val position = observe(state)
         return cached?.takeIf { it.identity == identity && it.revision == revision && abs(it.anchorSeconds - position) < .8 &&
-            it.metadata.optString("subtitleEdition") == state.optString("subtitleEdition") }
+            it.metadata.optString("displayedSubtitleEdition", it.metadata.optString("subtitleEdition")) == state.optString("subtitleEdition") }
     }
 
     suspend fun capture(includeAudio: Boolean = false): TalkSceneContext? = captureMutex.withLock { captureOnce(includeAudio) }
@@ -186,6 +189,7 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
             .put("anchorSeconds", position).put("viewedThroughSeconds", position).put("replayStartSeconds", replay)
             .put("audioLanguage", state.opt("audioLanguage")).put("subtitleLanguage", state.opt("subtitles"))
             .put("subtitleEdition", retrieved?.edition ?: state.optString("subtitleEdition"))
+            .put("displayedSubtitleEdition", state.optString("subtitleEdition"))
             .put("episodeTranscript", JSONObject().put("source", retrieved?.source ?: if (exactCues.isNotEmpty()) "timed_captions" else if (observedCaptions.isNotEmpty()) "observed_captions" else "none")
                 .put("cueCount", exactCues.size).put("observedCueCount", observedCaptions.size)
                 .put("availableThroughSeconds", position).put("visualBeatCount", visualBeats.count { it.seconds <= position }))

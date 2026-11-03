@@ -29,6 +29,8 @@ Runtime/cadence and edition labels rank candidates; they do not certify alignmen
 
 The phone test also exposed two cache paths: a transcript selected before runtime was known, and a shorter cut already restored as selected captions. The first is re-evaluated when duration becomes available. The second triggers independent Talk comparison; a materially closer retrieved edition supplies both current dialogue and earlier-story evidence without changing visible subtitles. This comparison is a ranking heuristic, not verified piecewise alignment.
 
+The final trace confirmed successful independent retrieval but revealed a delivery defect: the scene cache compared the retrieved evidence edition to the displayed caption edition, then rejected the prepared scene. Re-reading the same transcript also cleared that cache. Cache ownership now checks the displayed edition separately, and identical transcript reads preserve prepared evidence. A regression checks that retrieved dialogue and the scene remain deliverable across repeated recall.
+
 ## Motion and interaction
 
 Applied the installed Motion skill's universal guidance and UI/UX Pro Max's native Compose guidance. The implementation uses native Compose APIs. Motion represents actual state, retains continuity across interruption, uses short physical transitions, and respects Android's animation preference. Rendering work is deferred to draw/layer phases rather than recomposing the full conversation for every audio-level update. [Compose animation guidance](https://developer.android.com/develop/ui/compose/animation/quick-guide), [Android performance reference](https://github.com/android/skills/blob/main/jetpack-compose/jetpack-compose-performance/references/animation.md)
@@ -56,6 +58,16 @@ Additional unchanged scene cases:
 | Andor S1E3 / 23:00 | How is their escape plan changing, and why do they need another way out? | Closing perimeter/reinforcements, original exit plan lost and vehicle far away, replacement speeder/old-furnace route. |
 
 Earlier failed attempts included provider quota/socket failures and an Andor answer that blurred a vehicle being forty klicks away into the distance a ride would take, while omitting the concrete obstacle. These were rejected rather than counted as plot-quality success. Final measured outcomes are appended after review.
+
+Reviewed English responses on the physical Pixel:
+
+| Case | Reviewed outcome | First useful / completed |
+|---|---|---|
+| Knives Out | Correctly reports Marta's stated Toradol/morphine doses and her childhood vomiting response to dishonesty. An earlier answer incorrectly compressed the drugs' purposes and was rejected. | 1.526 / 3.561 s |
+| The Good Place | Correctly says Chidi has not agreed, explains his ethics conflict and wish to tell Michael about Eleanor's mistaken placement. | 2.473 / 3.635 s |
+| Andor | Correctly connects the lost plan, vehicle forty klicks away, surrounding Corpos and the west/old-furnace route; preserves the distance relationship. | 1.657 / 3.691 s |
+
+These are typed live questions with actual playback, retrieved timed story and current frames. They do not establish microphone, echo cancellation or universal plot accuracy. The earlier Dark, Inception, Truman Show and Severance checks are documented separately in [3.1.188 validation](talk-188-validation.md). The fuller source comparison and staged ingestion/indexing plan are in [the scene research plan](talk-188-scene-research-and-plan.md).
 
 ## Remaining limits
 
