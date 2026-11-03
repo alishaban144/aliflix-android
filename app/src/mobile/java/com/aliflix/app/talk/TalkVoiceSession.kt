@@ -1047,6 +1047,15 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 }
                 val controlScheduling=talkControlScheduling(names,i,speaking||outputText.isNotBlank(),tools.isNotEmpty())
                 if(BuildConfig.DEBUG)debugToolCalls.merge(call.optString("name"),1){a,b->a+b}
+                val playerQuestion=currentQuestion()
+                if(call.optString("name") in setOf("conversation_topic","show_title_cards") && TalkPlayerConnection.current()!=null &&
+                    (talkSceneQuestion(playerQuestion)||talkEpisodeRecallQuestion(playerQuestion)) &&
+                    !Regex("(?i)\\b(?:show|open|display)\\b.{0,35}\\b(?:card|poster)\\b").containsMatchIn(playerQuestion)) {
+                    val result=JSONObject().put("status","player_title_already_visible").put("question",playerQuestion)
+                        .put("instruction","The player already identifies this title. This visual control creates no new question. Answer the exact question above from the attached timed dialogue and actual video, covering every requested part. A general film overview, production facts or static-frame description cannot answer it. Retrieve a missing earlier cause with app_control(scene_recall). Keep the established response language.")
+                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,wireName,result,controlScheduling)))))
+                    continue
+                }
                 if(call.optString("name")=="conversation_language") {
                     val args=call.optJSONObject("args")?:JSONObject()
                     responseLanguage=chooseTalkResponseLanguage(responseLanguage,args.optString("language"),args.optBoolean("explicitRequest"),currentQuestion())

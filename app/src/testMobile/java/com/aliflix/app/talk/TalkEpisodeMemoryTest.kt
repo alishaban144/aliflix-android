@@ -146,9 +146,10 @@ class TalkEpisodeMemoryTest {
         assertTrue(focused.getBoolean("fullPrefixAvailable"))
         assertTrue(focused.getJSONArray("dialogue").toString().contains("note explains"))
         val compact=buildTalkRecallPacket(query,request,2000.0,longCues,"timed_captions","edition",emptyList(),emptyList())
-        assertFalse(compact.getJSONArray("scenes").getJSONObject(0).has("dialogue"))
+        assertTrue("An earlier causal passage must survive bounded delivery",(focused.getJSONArray("dialogue").toString()+compact.getJSONArray("scenes").toString()).contains("note explains"))
         assertTrue(focused.getDouble("throughSeconds")<=2000.0)
-        assertTrue(focused.getInt("includedCues") < recall(true).getInt("includedCues"))
+        assertTrue(focused.getInt("includedCues") < longCues.size)
+        assertFalse("Full recall must expose the finite page budget",recall(true).getBoolean("complete"))
     }
     @Test fun immediatePreviousSceneUsesFocusedContextWhileDeepRecallCanReadTheWholeStory() {
         val longCues=cues+listOf(cue(1300.0,1302.0,"Later setup"),cue(1900.0,1902.0,"Immediate exchange"))
@@ -160,5 +161,15 @@ class TalkEpisodeMemoryTest {
         assertTrue(focused.getBoolean("fullPrefixAvailable"))
         assertFalse(focused.getJSONArray("dialogue").toString().contains("mother arrives"))
         assertTrue(recall(true).getJSONObject("storyThroughAnchor").getJSONArray("dialogue").toString().contains("mother arrives"))
+    }
+
+    @Test fun timestampRecallCanReadAnUnplayedWindowBeyondTheInitialContextPage() {
+        val longCues=(0..2000 step 2).map { second -> cue(second.toDouble(),second+1.0,"Earlier dialogue at $second with enough words to exceed the context page") }
+        val query="What was said at 25:00?"
+        val packet=buildTalkRecallPacket(query,parseTalkRecallRequest(query,2000.0),2000.0,longCues,"timed_captions","same-source-edition",emptyList(),emptyList(),includeWholeStory=true)
+        assertFalse(packet.getJSONObject("storyThroughAnchor").getBoolean("complete"))
+        assertTrue(packet.getJSONArray("scenes").toString().contains("Earlier dialogue at 1500"))
+        assertFalse(packet.getJSONArray("scenes").toString().contains("Earlier dialogue at 2000"))
+        assertEquals("same-source-edition",packet.getString("captionEdition"))
     }
 }

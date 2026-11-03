@@ -255,7 +255,7 @@ internal fun buildTalkRecallPacket(
         .put("fullPrefixAvailable", captionSource !in setOf("none", "observed_captions"))
         .put("fromSeconds", storyScenes.firstOrNull()?.startSeconds ?: 0.0)
     val suppliedCues=storyScenes.flatMap { it.cues }.take(story.getInt("includedCues")).toHashSet()
-    fun supplied(scene:TalkCueScene)=request.mode!=TalkRecallMode.TIMESTAMP && (focusedQuestion || scene.cues.all(suppliedCues::contains))
+    fun supplied(scene:TalkCueScene)=request.mode!=TalkRecallMode.TIMESTAMP && scene.cues.all(suppliedCues::contains)
     val latestDialogue = scenes.lastOrNull()
     val currentScene = latestDialogue?.takeIf { anchorSeconds <= it.endSeconds + 1.5 }
     val gaps = mutableListOf<String>()

@@ -39,10 +39,31 @@ The first scene pass did not establish four successes. Back to the Future, The M
 
 Chernobyl's first answer correctly identified the meter ceiling and the earlier locked-safe/no-key exchange, in 1.736 seconds to useful text and 3.445 seconds to completion. It did not mention workers' core reports, which were part of the prewritten checklist but not explicit in the broad question. The retained follow-up makes that requirement explicit rather than silently counting the first answer as complete.
 
-Physical audio testing also rejected the first correlation threshold: a weak waveform match could suppress a different real voice. Echo veto now requires strong correlation; it is supplementary to platform/software AEC, not an identity detector. Sustained output and a legitimate different-voice interruption are retested together. The speaker test checks whether output seizes the floor; idle microphone activity is not automatically classified as speaker echo. [WebRTC render/capture echo control](https://webrtc.googlesource.com/src/+/refs/heads/main/api/audio/echo_control.h).
+Physical audio testing also rejected the first correlation threshold: a weak waveform match could suppress a different real voice. Echo evidence now combines same-frame neural speech probability with waveform correlation, so a moderate match cannot veto high-confidence near speech. Strong matches still count as echo. This supplements platform/software AEC; it is not an identity detector. Sustained output and a legitimate different-voice interruption are retested together. The speaker test checks whether output seizes the floor; idle microphone activity is not automatically classified as speaker echo. [WebRTC render/capture echo control](https://webrtc.googlesource.com/src/+/refs/heads/main/api/audio/echo_control.h).
 
 All 866 broad host tests passed in the initial Android gate, with mobile lint, mobile APK/test APK assembly and TV compatibility assembly. Focused regressions run again after the subsequent fixes. A separate debug validation package preserves the production app and its data; its SHA-256 certificate matches the previous validation installation.
 
 The later Sherlock answer passed the mechanical keyword checks but manual review rejected its wording "proving" suicide was impossible and its omitted car inference. The answer contract now explicitly attributes a character's deduction to that character; the retained question was sharpened to ask for the car inference directly. Required answer points remain tied to the pre-inspected footage.
 
 The final bubble uses Ask's body typography (16 sp, 25 sp line height), animates its whole height as streamed text wraps, and uses the actual available height before internal scrolling. It chooses its growth direction before text arrives, avoiding a mid-answer side flip. Player IME handling requests resize so Android does not pan the bubble controls off the top in landscape.
+
+The Matrix then exposed a distinct answer-ownership defect: `show_title_cards` and `conversation_topic` could redirect a scene question into a generic film overview, despite correct training dialogue being attached. Player scene questions now satisfy these unrequested visual controls locally without a catalogue lookup, and their function response repeats the exact pending scene question and evidence requirement. Explicit user requests for a card keep their ordinary path.
+
+A bounded story page must not mark an entire selected passage as already delivered when only part fits in the page. Selected passages now retain their exact dialogue unless every cue is actually represented. Regression coverage includes a requested unplayed timestamp beyond the first context page.
+
+A Back to the Future answer containing all requested causal facts initially failed a literal "Libyan" keyword check. Manual review accepted the response's reference to "their plutonium" as identifying the gunmen's ownership; nationality was not asked for. The benchmark now checks that semantic ownership alternative and retains the false-negative receipt.
+
+Final physical UI/audio pass: **7 tests**, including measured vertical growth, shared question/reply surface, no full Talk window, header/text non-overlap, language/chat identity, 12 sustained loudspeaker rounds, real interruption, typed draft retention and both player orientations. Speaker pass: **41.693 s**, **898,200 rendered samples**, **zero microphone activity events**. Two different-voice interruptions through the real capture path stopped output in **231 and 247 ms**. Whole-screen review confirms the landscape keyboard controls are no longer panned off-screen. These are measured Pixel conditions, not universal acoustic guarantees.
+
+## Accepted scene answers
+
+The final reviewed English answers cover the actual earlier causal facts and each expressly requested question part. All four retained cases pass their final checks. Full questions, answers, required points and timings are in [the published response record](talk-190-scene-results.json).
+
+| Title / pause | Reviewed answer substance | First useful / complete |
+|---|---|---|
+| Back to the Future / 30:00 | The gunmen's plutonium, Doc's bomb promise, and the casing filled with used pinball parts. | 1.459 / 2.700 s |
+| The Matrix / 50:00 | Tank's uploaded combat training and the simulation's bendable/breakable computer rules. | 2.790 / 4.721 s |
+| Chernobyl S1E1 / 30:00 | 3.6 is the meter's ceiling, alongside earlier workers' reports that the core exploded/was absent. | 1.947 / 3.365 s |
+| Sherlock S1E1 / 30:00 | Right-sided splashes, wheeled suitcase, hotel/hair reasoning and Sherlock's inference that the killer retained the case in a car. | 1.363 / 3.925 s |
+
+These typed live questions were asked after seeking into real playback. The earlier transcript includes unplayed material before the pause; the player stays paused and the reply stays in its bubble. This validates these cases, not universal plot accuracy. Independent scene observation hit provider quota during this session, so a small narrative benchmark does not certify arbitrary physical-action explanations or all cuts. Missing captions, sparse frames, ambiguous speaker identities, edition alignment and provider capacity remain material limits. No complete free catalogue-wide scene service or persistent semantic catalogue ingestion is claimed.
