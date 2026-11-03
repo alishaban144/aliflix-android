@@ -18,7 +18,7 @@ internal class TalkDuplexGate(private val now:()->Long={android.os.SystemClock.e
   while(reference.size>4000)reference.removeFirst()
   expiresAt=now()+1200
  }
- @Synchronized fun isEcho(pcm:ByteArray):Boolean {
+ @Synchronized fun isEcho(pcm:ByteArray,nearProbability:Float=0f):Boolean {
   if(now()>expiresAt)return false
   val input=DoubleArray(pcm.size/16){n->
    var sum=0.0
@@ -34,7 +34,7 @@ internal class TalkDuplexGate(private val now:()->Long={android.os.SystemClock.e
    for(i in input.indices){val value=ref[start+i];dot+=input[i]*value;power+=value*value}
    if(power>1e-8)best=maxOf(best,abs(dot)/sqrt(energy*power))
   }
-  return best>.48
+  return best>.92||best>.48&&nearProbability<.9f
  }
  @Synchronized fun reset(){reference.clear();expiresAt=0}
 }

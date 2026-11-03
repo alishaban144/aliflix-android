@@ -1,0 +1,90 @@
+# Talk 3.1.190: inline conversation, continuity and earlier-scene evidence
+
+## Interaction changes
+
+Player Talk keeps the question and growing response in one floating surface. Sending never opens a full-screen conversation. The surface has a bounded reading area, an inline composer and 48 dp controls. Visible speaking/listening/connecting/reconnecting/ready labels and microphone icons are removed; accessibility state descriptions remain. Text conversation anchors once to the newest question rather than following each answer fragment and poster to the bottom. Cards wait until their accompanying answer text exists.
+
+Talk's response orbit is 2,200 ms with a half-cycle separation and constant angular speed. Ask's morph loader is slowed from 2 to 4 seconds; its small progress dots use a 2.2 second pulse. These are product timing choices, not a claimed universal optimum. Android's existing indicator source provides 1,332 and 1,800 ms baseline cycles; complex morphs need a longer period than a small orbit. Completion never waits for the animation. Reduced motion preserves static feedback. [Android source](https://android.googlesource.com/platform/frameworks/support/+/5dde8ea06b4bb537c538cc5ce4ac3dc282614318/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/ProgressIndicator.kt), [Compose lists](https://developer.android.com/develop/ui/compose/lists).
+
+## Speech and chat ownership
+
+The existing far-end correlation detector was disconnected from the microphone gate: the gate always received echo=false. It now receives actual echo evidence from PCM written to the output track, alongside platform/software AEC and the neural speech detector. A new activity needs 128 ms of sustained near speech during output, 96 ms at rest. A 1,056 ms quiet endpoint tolerates longer intra-sentence pauses; this trades 352 ms of silence latency for less premature turn splitting.
+
+Short spoken fragments preserve the established language; explicit language requests and substantial new questions can change it. Typed questions retain direct language detection. Starting a new chat requires an actual reset/new-conversation request; a greeting, unrelated question or model-proposed action cannot reset the session. Context refresh is blocked while output owns the floor unless confirmed human speech has explicitly taken it. [Live API message and activity semantics](https://ai.google.dev/api/live), [Live session management](https://ai.google.dev/gemini-api/docs/live-api/session-management).
+
+## Free scene index research and implemented retrieval
+
+No verified free service covers arbitrary catalogue titles and their exact playback cuts. MovieNet covers 1,100 films, MovieGraphs covers 51 films, and TVQA covers six shows. Their editions, research access conditions and scope prevent treating them as a production-wide exact-cut index. Condensed Movies offers selected scenes, not full timelines. [MovieNet](https://movienet.github.io/), [MovieGraphs](https://github.com/katha-ai/MovieGraphs-Dataset-CVPR2018), [TVQA](https://aclanthology.org/D18-1167/), [Condensed Movies](https://www.robots.ox.ac.uk/~vgg/data/condensed-movies/challenge.html).
+
+The full timed transcript stays locally searchable across seeks. Requests deliver bounded relevant passages and a timestamped timeline map, and scene_recall can retrieve an omitted earlier window. The chronological text budget is 12,000 characters; sending an entire long film transcript into each Live turn caused avoidable context/quota pressure. The map gives the model earlier dialogue hints without pretending those caption windows are cinematic scene boundaries. Search questions requiring physical evidence can decode the matching earlier intervals from the active playback source, in addition to the current moment, without moving the viewer's clock. Evidence packets record playback/request identity, runtime and caption alignment status. External caption edition selection remains unverified alignment: runtime and release name alone cannot prove the same cut. Frames are decoded from the active source. Film and caption content never authorizes a language switch or native action.
+
+The existing Gemini embedding model remains `gemini-embedding-2`. This change does not pretend to have ingested a persistent catalogue-wide semantic index. File-hash matching could strengthen direct-file subtitle matching, but the standard first/last 64 KiB hash is not directly applicable to HLS playlists. [Gemini Embedding 2](https://ai.google.dev/gemini-api/docs/models/gemini-embedding-2), [OpenSubtitles hash](https://opensubtitles.github.io/oshash/).
+
+## Validation
+
+Fresh scene questions are selected after inspecting the actual allowed footage and timed story. The new Talk190 suite checks each required answer point, language, evidence delivery, paused playback, inline rendering and latency. Old regression coverage is retained; old generic questions are not counted as new quality evidence. Device results and remaining failures are recorded below as they occur.
+
+The following answer points were recorded from inspected footage/captions before generating new answers:
+
+- **Back to the Future / 1800 s:** Why are these gunmen after Doc, and what did he give them instead of what he promised? Required: Libyan nationalists supplied plutonium for a bomb; Doc stole/kept it for the time machine; He supplied a sham bomb casing filled with used pinball machine parts.
+- **Chernobyl / 1800 s:** Does the earlier 3.6 roentgen reading actually establish that the radiation is low? What earlier evidence makes the officials reassurance unreliable? Required: 3.6 is the available meter ceiling, not a reliable upper bound on radiation; Earlier workers report the core exploded and one looked into it; Officials dismiss these reports and assume a hydrogen-tank fire; do not invent an exact later reading.
+- **The Matrix / 3000 s:** How did Neo suddenly learn kung fu, and why is this sparring match different from an ordinary physical fight? Required: Tank loads combat knowledge directly through the training system; The dojo is a sparring simulation analogous to the Matrix; Its computer rules, including gravity, can be bent or broken; no later combat outcome.
+- **Sherlock / 1800 s:** What evidence told Sherlock she had a suitcase, and why does its absence make him call this murder even though she swallowed the pills herself? Required: Tiny splash marks on right heel and calf, absent on the left; Dragging a wheeled suitcase in her right hand explains that pattern; Missing case implies another person removed it; Sherlock infers killer brought her by car and retained the bag; This is his deduction, not proof of an unrevealed killer identity or mechanism.
+
+## Failures retained and corrections
+
+The first physical screenshot revealed the floating orb could cross answer text during its handoff into the chat header. Chat with messages now renders the orb directly in its reserved header slot. A regression checks the orb is above the question as the answer grows.
+
+The first scene pass did not establish four successes. Back to the Future, The Matrix and Sherlock produced no answer while Gemini closed/reopened sessions; the retained Matrix and Sherlock receipts explicitly report exhausted provider quota. Independent scene observation returned HTTP 503. Explicit quota closes now stop the reconnect loop instead of repeatedly replaying the request. Temporal imagery is bounded to four current and four earlier frames, and questions about reported knowledge, learning, promises and deductions use the supplied earlier dialogue without requiring an unrelated observation of the paused frame. Physical action questions such as "Why did she fall down?" still require scene observation. [Gemini quotas](https://ai.google.dev/gemini-api/docs/rate-limits).
+
+Chernobyl's first answer correctly identified the meter ceiling and the earlier locked-safe/no-key exchange, in 1.736 seconds to useful text and 3.445 seconds to completion. It did not mention workers' core reports, which were part of the prewritten checklist but not explicit in the broad question. The retained follow-up makes that requirement explicit rather than silently counting the first answer as complete.
+
+Physical audio testing also rejected the first correlation threshold: a weak waveform match could suppress a different real voice. Echo evidence now combines same-frame neural speech probability with waveform correlation, so a moderate match cannot veto high-confidence near speech. Strong matches still count as echo. This supplements platform/software AEC; it is not an identity detector. Sustained output and a legitimate different-voice interruption are retested together. The speaker test checks whether output seizes the floor; idle microphone activity is not automatically classified as speaker echo. [WebRTC render/capture echo control](https://webrtc.googlesource.com/src/+/refs/heads/main/api/audio/echo_control.h).
+
+All 866 broad host tests passed in the initial Android gate, with mobile lint, mobile APK/test APK assembly and TV compatibility assembly. Focused regressions run again after the subsequent fixes. A separate debug validation package preserves the production app and its data; its SHA-256 certificate matches the previous validation installation.
+
+The later Sherlock answer passed the mechanical keyword checks but manual review rejected its wording "proving" suicide was impossible and its omitted car inference. The answer contract now explicitly attributes a character's deduction to that character; the retained question was sharpened to ask for the car inference directly. Required answer points remain tied to the pre-inspected footage.
+
+The final bubble uses Ask's body typography (16 sp, 25 sp line height), animates its whole height as streamed text wraps, and uses the actual available height before internal scrolling. It chooses its growth direction before text arrives, avoiding a mid-answer side flip. Player IME handling requests resize so Android does not pan the bubble controls off the top in landscape.
+
+The Matrix then exposed a distinct answer-ownership defect: `show_title_cards` and `conversation_topic` could redirect a scene question into a generic film overview, despite correct training dialogue being attached. Player scene questions now satisfy these unrequested visual controls locally without a catalogue lookup, and their function response repeats the exact pending scene question and evidence requirement. Explicit user requests for a card keep their ordinary path.
+
+A bounded story page must not mark an entire selected passage as already delivered when only part fits in the page. Selected passages now retain their exact dialogue unless every cue is actually represented. Regression coverage includes a requested unplayed timestamp beyond the first context page.
+
+A Back to the Future answer containing all requested causal facts initially failed a literal "Libyan" keyword check. Manual review accepted the response's reference to "their plutonium" as identifying the gunmen's ownership; nationality was not asked for. The benchmark now checks that semantic ownership alternative and retains the false-negative receipt.
+
+Final physical UI/audio pass: **7 tests**, including measured vertical growth, shared question/reply surface, no full Talk window, header/text non-overlap, language/chat identity, 12 sustained loudspeaker rounds, real interruption, typed draft retention and both player orientations. Speaker pass: **41.693 s**, **898,200 rendered samples**, **zero microphone activity events**. Two different-voice interruptions through the real capture path stopped output in **231 and 247 ms**. Whole-screen review confirms the landscape keyboard controls are no longer panned off-screen. These are measured Pixel conditions, not universal acoustic guarantees.
+
+## Accepted scene answers
+
+The final reviewed English answers cover the actual earlier causal facts and each expressly requested question part. All four retained cases pass their final checks. Full questions, answers, required points and timings are in [the published response record](talk-190-scene-results.json).
+
+| Title / pause | Reviewed answer substance | First useful / complete |
+|---|---|---|
+| Back to the Future / 30:00 | The gunmen's plutonium, Doc's bomb promise, and the casing filled with used pinball parts. | 1.459 / 2.700 s |
+| The Matrix / 50:00 | Tank's uploaded combat training and the simulation's bendable/breakable computer rules. | 2.790 / 4.721 s |
+| Chernobyl S1E1 / 30:00 | 3.6 is the meter's ceiling, alongside earlier workers' reports that the core exploded/was absent. | 1.947 / 3.365 s |
+| Sherlock S1E1 / 30:00 | Right-sided splashes, wheeled suitcase, hotel/hair reasoning and Sherlock's inference that the killer retained the case in a car. | 1.363 / 3.925 s |
+
+These typed live questions were asked after seeking into real playback. The earlier transcript includes unplayed material before the pause; the player stays paused and the reply stays in its bubble. This validates these cases, not universal plot accuracy. Independent scene observation hit provider quota during this session, so a small narrative benchmark does not certify arbitrary physical-action explanations or all cuts. Missing captions, sparse frames, ambiguous speaker identities, edition alignment and provider capacity remain material limits. No complete free catalogue-wide scene service or persistent semantic catalogue ingestion is claimed.
+
+## Final continuity and accessibility checks
+
+An additional real English speech test exposed a canceled-response ownership defect: Stop canceled playback but left pending-answer flags set, so resume could remain in Thinking with no task to finish. Stop now clears only the canceled answer/tool ownership and deadline while retaining the conversation identity, language, cards and history. A new wire regression asserts this state transition; all nine wire replay cases pass on the Pixel. The real Live API retest recognized an English question, rendered 174,240 AudioTrack samples, stopped actual playback, then resumed the same conversation successfully. Its deliberately interrupted response is continuity evidence, not a recommendation-quality benchmark.
+
+Four additional physical UI checks passed with font scale 1.3 and animator duration scale 0. They cover the streaming bubble, answer anchor and both player orientations. Device settings were restored afterward.
+
+## Published mobile release
+
+[Aliflix 3.1.190](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.190) was published on 2026-11-03 at 23:14:21 UTC. [Workflow 41734995715](https://github.com/alishaban144/aliflix-android/actions/runs/41734995715) passed the 13-case automated device gate, affected host tests, mobile lint, signed builds, native/model parity and updater-manifest checks. Its tested/tagged source is `92b58ae5b95561e72564d30c061d5702672ebf29`; subsequent release-record changes are documentation only. Superseded candidate runs were canceled before publication.
+
+| Artifact | Version | Bytes | SHA-256 |
+|---|---|---:|---|
+| ARM64 mobile APK | 3.1.190 / 280 | 27,449,608 | `7a8f1344be64731c38ef38d380f35d7d1ab7f8e4d46000c0a60733a60a164700` |
+| Universal compatibility bridge | 3.1.175 / 265 | 69,133,014 | `e095e66cee6af94f56b82faf83ceb207fc898b828d23919dbf8878fa91e958f8` |
+
+Both APKs have production certificate SHA-256 `a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47`, matching the installed app before upgrade. ZIP integrity and ABI contents pass; the bridge retains all four ABIs for older updaters, while the normal mobile APK is ARM64. Native/model parity is recorded in the release's `native-parity.json`.
+
+After publication, anonymous downloads through the canonical `/releases/latest/download/` URLs matched both independently verified APKs byte-for-byte. Both public updater manifests match the verified draft manifests; the ARM64 manifest advertises versionCode 280 and the correct download URL, hash, size and minimum SDK.
+
+The official ARM64 APK installed successfully with `adb install -r` on the physical Pixel 7a. The app reports 3.1.190 / 280, launches successfully, retains its original 2026-10-27 first-install time and visibly retains the pre-upgrade Recently played entries. No uninstall or data reset was used. TV remains 3.1.69 / 159; no TV release or backend deployment is part of this change.

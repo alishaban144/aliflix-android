@@ -80,7 +80,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         val packet = sceneMemory.recall(query, fullStory) ?: return null
         val needsCurrentVideo = com.aliflix.app.talk.talkNeedsCurrentSceneObservation(query) &&
             com.aliflix.app.talk.sceneNeedsVideoBackfill(sceneMemory.current()?.frames.orEmpty(), packet.optDouble("anchorSeconds"))
-        if (query != "current scene" && (packet.optString("mode") in setOf("previous", "timestamp") || needsCurrentVideo)) {
+        if (query != "current scene" && (packet.optString("mode") in setOf("previous", "timestamp") || needsCurrentVideo || packet.optString("mode")=="search" && com.aliflix.app.talk.talkNeedsCurrentSceneObservation(query))) {
             val anchor = packet.optDouble("anchorSeconds")
             val windows = packet.optJSONArray("scenes") ?: JSONArray()
             val target = packet.optDouble("targetSeconds", Double.NaN)
@@ -92,6 +92,13 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                     val start = window.getDouble("startSeconds"); val end = window.getDouble("endSeconds")
                     add((start + end) / 2)
                 }
+            } else if(packet.optString("mode")=="search") buildList {
+                for(index in 0 until minOf(windows.length(),2)) {
+                    val window=windows.getJSONObject(index)
+                    val start=window.getDouble("startSeconds");val end=window.getDouble("endSeconds")
+                    add(start);add((start+end)/2);add(end)
+                }
+                add((anchor-8).coerceAtLeast(0.0));add(anchor)
             } else listOf(32.0, 16.0, 8.0, 6.0, 4.0, 2.0, 1.0).map { (anchor - it).coerceAtLeast(0.0) }
             NativePlaybackService.activeRequest?.let { request ->
                 val decoded = try { talkVideo.frames(requestId, request, positions, anchor,
@@ -502,6 +509,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         requestAccepted = savedInstanceState?.getBoolean("requestAccepted") == true
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         hideSystemBars()
         val root = FrameLayout(this).apply { setBackgroundColor(android.graphics.Color.BLACK) }
         playerRoot = root

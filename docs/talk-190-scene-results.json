@@ -1,0 +1,75 @@
+[
+  {
+    "title": "Back to the Future",
+    "mediaType": "movie",
+    "season": null,
+    "episode": null,
+    "pauseSeconds": 1800,
+    "question": "Why are these gunmen after Doc, and what did he give them instead of what he promised?",
+    "answer": "The gunmen are after Doc to get their plutonium back after he stole it from them. He had promised to build them a bomb, but instead gave them a faulty casing filled with used pinball machine parts.",
+    "firstUsefulMs": 1459,
+    "completeMs": 2700,
+    "requiredPoints": [
+      "Libyan nationalists supplied plutonium for a bomb",
+      "Doc stole/kept it for the time machine",
+      "He supplied a sham bomb casing filled with used pinball machine parts"
+    ],
+    "review": "Accepted after manual comparison with the inspected footage and timed earlier dialogue.",
+    "captionAlignment": "edition selected; universal cut alignment not certified"
+  },
+  {
+    "title": "Chernobyl",
+    "mediaType": "tv",
+    "season": 1,
+    "episode": 1,
+    "pauseSeconds": 1800,
+    "question": "Does the earlier 3.6 roentgen reading actually establish that the radiation is low? What does the meter limit imply, and what had workers already reported about the core itself?",
+    "answer": "The 3.6 roentgen reading doesn't mean the radiation is low; it only indicates that the meter has reached its maximum limit. Workers had already reported the core had exploded and that they were looking directly into an empty space.",
+    "firstUsefulMs": 1947,
+    "completeMs": 3365,
+    "requiredPoints": [
+      "3.6 is the available meter ceiling, not a reliable upper bound on radiation",
+      "Earlier workers report the core exploded and one looked into it",
+      "Officials dismiss these reports and assume a hydrogen-tank fire; do not invent an exact later reading"
+    ],
+    "review": "Accepted after manual comparison with the inspected footage and timed earlier dialogue.",
+    "captionAlignment": "edition selected; universal cut alignment not certified"
+  },
+  {
+    "title": "The Matrix",
+    "mediaType": "movie",
+    "season": null,
+    "episode": null,
+    "pauseSeconds": 3000,
+    "question": "How did Neo suddenly learn kung fu, and why is this sparring match different from an ordinary physical fight?",
+    "answer": "To prepare Neo for combat, Tank uploaded training simulations directly into his mind over ten hours. This fight is different because it takes place in a computer simulation where the rules, like gravity, function as code that can be bent or broken.",
+    "firstUsefulMs": 2790,
+    "completeMs": 4721,
+    "requiredPoints": [
+      "Tank loads combat knowledge directly through the training system",
+      "The dojo is a sparring simulation analogous to the Matrix",
+      "Its computer rules, including gravity, can be bent or broken; no later combat outcome"
+    ],
+    "review": "Accepted after manual comparison with the inspected footage and timed earlier dialogue.",
+    "captionAlignment": "edition selected; universal cut alignment not certified"
+  },
+  {
+    "title": "Sherlock",
+    "mediaType": "tv",
+    "season": 1,
+    "episode": 1,
+    "pauseSeconds": 1800,
+    "question": "What evidence told Sherlock she had a suitcase, and how does its absence lead him to infer that a killer brought her by car despite her swallowing the pills herself?",
+    "answer": "Sherlock deduced she had a suitcase because of tiny splash marks only on her right heel and calf, which showed she was dragging a wheeled case. Since she colour-coordinated her lipstick and shoes and arrived with messy hair, he realised she couldn't have left a hotel. This led him to infer the killer must have driven her there and forgotten the case in the car.",
+    "firstUsefulMs": 1363,
+    "completeMs": 3925,
+    "requiredPoints": [
+      "Tiny splash marks on right heel and calf, absent on the left",
+      "Dragging a wheeled suitcase in her right hand explains that pattern",
+      "Missing case implies another person removed it; Sherlock infers killer brought her by car and retained the bag",
+      "This is his deduction, not proof of an unrevealed killer identity or mechanism"
+    ],
+    "review": "Accepted after manual comparison with the inspected footage and timed earlier dialogue.",
+    "captionAlignment": "edition selected; universal cut alignment not certified"
+  }
+]

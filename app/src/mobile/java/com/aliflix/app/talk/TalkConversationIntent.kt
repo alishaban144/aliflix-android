@@ -58,9 +58,12 @@ internal fun talkExplicitComparisonTitles(question:String):List<String> {
 internal fun talkActionRequested(action:String,question:String):Boolean {
     if(action in setOf("show_card","title_state","player_state","scene_context","scene_recall","downloads_state","library_state","download_work"))return true
     val q=question.lowercase(Locale.ROOT).replace('’','\'').trim()
+
     if(Regex("^(?:what if|what would|how (?:do|can|would)|if i (?:ask|asked|say|said|were|wanted|told)|suppose|hypothetically|imagine that)\\b").containsMatchIn(q))return false
     if(Regex("\\b(?:just a quote|only quoting|just an example|as an example|quoted phrase)\\b").containsMatchIn(q))return false
     if(Regex("^(?:what (?:can|could|does)|do you (?:like|love|prefer|need|know|have)|can you explain)\\b").containsMatchIn(q))return false
+    if(action=="new_chat")return !Regex("\\b(?:don't|do not|never|not)\\b").containsMatchIn(q)&&
+        Regex("\\b(?:start|open|create|begin) (?:a )?(?:new|fresh) (?:chat|conversation)\\b|\\b(?:reset|clear) (?:this|the|our) (?:chat|conversation)\\b|(?:ابدأ|افتح) (?:محادثة|دردشة) جديدة|(?:starte|beginne) (?:einen )?neuen chat").containsMatchIn(q)
     val clauses=q.split(Regex("[.;!?]|,\\s*(?:then|and|but)\\b|\\b(?:and then|then please)\\b")).map{it.trim()}.filter{it.isNotEmpty()}
     val verb=when(action) {
         "save"->"save|add|put";"unsave"->"unsave|remove|delete"

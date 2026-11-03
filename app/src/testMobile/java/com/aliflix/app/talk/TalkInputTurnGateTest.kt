@@ -11,20 +11,21 @@ class TalkInputTurnGateTest {
   repeat(600){assertFalse(gate.accept(frame(7),.999f,true).start)}
   assertFalse(gate.active)
  }
- @Test fun confirmedSpeechOpensIn64msAndRetainsTheQuietLeadingWord(){
+ @Test fun confirmedSpeechOpensIn96msAndRetainsTheQuietLeadingWord(){
   val gate=TalkInputTurnGate();val firstWord=frame(4)
   gate.accept(firstWord,.25f,false)
   repeat(10){gate.accept(frame(2),.40f,false)}
+  assertFalse(gate.accept(frame(9),.8f,false).start)
   assertFalse(gate.accept(frame(9),.8f,false).start)
   val start=gate.accept(frame(9),.8f,false)
   assertTrue(start.start);assertTrue(start.frames.any{it.contentEquals(firstWord)})
   assertFalse(gate.accept(frame(9),.99f,false).start)
  }
  @Test fun clausePausesDoNotSplitTurnsAndSilenceEndsExactlyOnce(){
-  val gate=TalkInputTurnGate();repeat(2){gate.accept(frame(5),.9f,false)}
+  val gate=TalkInputTurnGate();repeat(3){gate.accept(frame(5),.9f,false)}
   repeat(18){assertFalse(gate.accept(frame(),0f,false).end)}
   gate.accept(frame(5),.50f,false)
-  repeat(21){assertFalse(gate.accept(frame(),0f,false).end)}
+  repeat(32){assertFalse(gate.accept(frame(),0f,false).end)}
   assertTrue(gate.accept(frame(),0f,false).end)
   assertFalse(gate.accept(frame(),0f,false).end);assertFalse(gate.active)
  }
@@ -32,8 +33,18 @@ class TalkInputTurnGateTest {
   val gate=TalkInputTurnGate()
   gate.accept(frame(7),.99f,false);gate.accept(frame(),.1f,false)
   assertFalse(gate.active);assertFalse(gate.finish())
-  repeat(2){gate.accept(frame(7),.9f,false)}
+  repeat(3){gate.accept(frame(7),.9f,false)}
   assertTrue(gate.finish());assertFalse(gate.finish())
   assertFalse(gate.accept(frame(),0f,false).start)
+ }
+ @Test fun outputRequiresSustainedSpeechAndLongThinkingPausesStayOneTurn(){
+  val gate=TalkInputTurnGate()
+  repeat(3){assertFalse(gate.accept(frame(7),.9f,false,true).start)}
+  assertTrue(gate.accept(frame(7),.9f,false,true).start)
+  repeat(30){assertFalse(gate.accept(frame(),0f,false,true).end)}
+  assertTrue(gate.active)
+  gate.accept(frame(7),.8f,false,true)
+  repeat(32){assertFalse(gate.accept(frame(),0f,false,true).end)}
+  assertTrue(gate.accept(frame(),0f,false,true).end)
  }
 }

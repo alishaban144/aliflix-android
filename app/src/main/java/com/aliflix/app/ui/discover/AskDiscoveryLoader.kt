@@ -31,7 +31,7 @@ import kotlin.math.min
  Canvas(modifier.semantics{contentDescription="Loading matches"}) {
   val unit=min(size.width,size.height)/128f
   for(i in 0..3){
-   val time=if(motion)(clock.value-i*.2f).coerceAtLeast(0f)%2f else .62f-i*.12f
+   val time=if(motion)(clock.value/2f-i*.2f).coerceAtLeast(0f)%2f else .62f-i*.12f
    val position=(time*2f).coerceIn(0f,3.9999f);val index=position.toInt();val t=ease.transform(position-index)
    fun value(values:List<Float>)=values[index]+(values[index+1]-values[index])*t
    val at=center+(paths[i][index]+(paths[i][index+1]-paths[i][index])*t)*unit

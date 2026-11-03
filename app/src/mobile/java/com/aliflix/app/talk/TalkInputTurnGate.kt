@@ -10,7 +10,7 @@ internal class TalkInputTurnGate {
     private var voicedMs=0
     private var quietMs=0
     var active=false; private set
-    @Synchronized fun accept(pcm:ByteArray,probability:Float,echo:Boolean):Decision {
+    @Synchronized fun accept(pcm:ByteArray,probability:Float,echo:Boolean,outputActive:Boolean=false):Decision {
         val ms=pcm.size/32
         var sum=0.0
         for(at in pcm.indices step 2){val value=((pcm[at].toInt() and 255) or (pcm[at+1].toInt() shl 8)).toShort().toDouble();sum+=value*value}
@@ -20,12 +20,12 @@ internal class TalkInputTurnGate {
             prefix.addLast(pcm);prefixBytes+=pcm.size
             while(prefixBytes>25_600&&prefix.isNotEmpty())prefixBytes-=prefix.removeFirst().size
             voicedMs=if(near&&!echo)voicedMs+ms else 0
-            if(voicedMs<64)return Decision()
+            if(voicedMs<(if(outputActive)128 else 96))return Decision()
             active=true;quietMs=0;voicedMs=0
             return Decision(start=true,frames=prefix.toList()).also{prefix.clear();prefixBytes=0}
         }
         quietMs=if(near&&!echo)0 else quietMs+ms
-        if(quietMs>=704){active=false;quietMs=0;return Decision(end=true,frames=listOf(pcm))}
+        if(quietMs>=1056){active=false;quietMs=0;return Decision(end=true,frames=listOf(pcm))}
         return Decision(frames=listOf(pcm))
     }
     @Synchronized fun finish():Boolean {val was=active;reset();return was}

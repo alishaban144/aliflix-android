@@ -215,8 +215,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     internal var debugQuestionSentAt = 0L
         private set
     internal suspend fun debugInspectScene(): JSONObject? { check(BuildConfig.DEBUG); return awaitSceneObservation()?.metadata }
-    private fun sendTurnContext() {
-        if(!socketReady)return
+    private fun sendTurnContext(userOwned:Boolean=false) {
+        if(!socketReady||!userOwned&&(speaking||generationOpen))return
         TalkPlayerConnection.current()?.talkSnapshot()?.let { current ->
             conversationContext.put("activePlayer",current)
             val payload=JSONObject().put("activePlayer",current).put("tasks",TalkTaskWork.get(context).state())
@@ -234,12 +234,12 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             if (!scene.metadata.has("groundingState")) scene.metadata.put("groundingState", if (talkNeedsCurrentSceneObservation(question)) "preparing" else "direct_evidence")
             val recallMode=parseTalkRecallRequest(question,scene.anchorSeconds).mode
             val recalledFrames = if(talkNeedsCurrentSceneObservation(question) || recallMode in setOf(TalkRecallMode.TIMESTAMP,TalkRecallMode.PREVIOUS))
-                TalkPlayerConnection.current()?.talkRecallFrames(question).orEmpty() else emptyList()
+                TalkPlayerConnection.current()?.talkRecallFrames(question).orEmpty().distinctBy { it.seconds }.takeLast(4) else emptyList()
             scene.metadata.put("attachedRecallFrameSeconds", JSONArray(recalledFrames.map { it.seconds }))
             val delivery = if (talkNeedsCurrentSceneObservation(question))
                 if (scene.metadata.optJSONObject("groundedObservation")?.optBoolean("titleBlind") == true)
                     scene.copy(frames = sceneFrameSelection(scene.frames, scene.anchorSeconds).let { listOfNotNull(it.firstOrNull(), it.lastOrNull()).distinctBy { frame -> frame.seconds } })
-                else scene
+                else scene.copy(frames=listOfNotNull(scene.frames.firstOrNull(),scene.frames.getOrNull(scene.frames.size/3),scene.frames.getOrNull(scene.frames.size*2/3),scene.frames.lastOrNull()).distinctBy { it.seconds })
             else scene.copy(frames =
                 if (parseTalkRecallRequest(question, scene.anchorSeconds).mode == TalkRecallMode.TIMESTAMP) emptyList() else scene.frames.takeLast(1))
             val key = "$epoch:$providerContext:${scene.key}"
@@ -333,7 +333,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 sendTurnContext()
                 val parts = JSONArray()
                 if (TalkPlayerConnection.current() != null && (talkSceneQuestion(question) || talkEpisodeRecallQuestion(question))) {
-                    parts.put(JSONObject().put("text", "Native answer contract: answer every part of the viewer's actual question clearly and completely from the attached timed story and video. Explain the supported cause, relevant earlier setup or inference they ask about. A narration of the pause frame is never a substitute for that answer. Retrieve a specifically missing causal link with scene_recall before answering; observed footage alone does not mean the question is fully supported. Earlier scenes through the pause are allowed. Caption windows are not cinematic scene boundaries. Participant names/faces have not been bound by the app: use roles/descriptions unless exact dialogue or grounded prior evidence establishes identity; never guess a name or spouse relationship from title familiarity. Respond in ${responseLanguage ?: "the viewer's question language"}."))
+                    parts.put(JSONObject().put("text", "Native answer contract: answer every part of the viewer's actual question clearly and completely from the attached timed story and video. Explain the supported cause, relevant earlier setup or inference they ask about. A narration of the pause frame is never a substitute for that answer. Retrieve a specifically missing causal link with scene_recall before answering; observed footage alone does not mean the question is fully supported. When explaining a character reasoning, explicitly attribute the conclusion to that character and connect each clue to the inference. A confident character deduction is not objective proof. Cover each requested premise and exception separately. Earlier scenes through the pause are allowed. Caption windows are not cinematic scene boundaries. Participant names/faces have not been bound by the app: use roles/descriptions unless exact dialogue or grounded prior evidence establishes identity; never guess a name or spouse relationship from title familiarity. Respond in ${responseLanguage ?: "the viewer's question language"}."))
                 }
                 parts.put(JSONObject().put("text",question))
                 if (BuildConfig.DEBUG) debugQuestionSentAt = SystemClock.elapsedRealtime()
@@ -351,7 +351,11 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         textSend?.cancel();textSend=null
         suspendSession();userTurn.incrementAndGet();inputTurnActive=false
         ephemeral=null;resumeHandle=null;outputText="";assistantLine=-1;finalReferences=emptyList()
-        update { it.copy(sending=false,phase="Ready",words="ALIFLIX") }
+        recommendationLookup=false;pendingAnswerNeedsTitle=false;awaitingToolAnswer=false;pendingToolReply=null
+        recommendationPool=emptyList();recommendationReply=null;recommendationRequestTurn=-1L
+        pendingTitles=emptyList();researchNote=null;spokenAttention=null;presentationDelivered=false
+        answerDeadline.clear()
+        update { it.copy(sending=false,answerComplete=true,phase="Ready",spokenCardKey=null) }
     }
     fun retryLastMessage() {
         val question=state.value.lines.lastOrNull { it.role=="user" }?.text ?: return
@@ -806,7 +810,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 } }
                 override fun onMessage(webSocket:WebSocket,bytes:okio.ByteString) { onMessage(webSocket,bytes.utf8()) }
                 override fun onFailure(webSocket:WebSocket,t:Throwable,response:Response?) { scope.launch {
-                    if(BuildConfig.DEBUG)debugConnectionIssue="socket:${response?.code?:0}:${t.javaClass.simpleName}"
+                    if(BuildConfig.DEBUG)debugConnectionIssue="socket:${response?.code?:0}:${t.javaClass.simpleName}:"+t.message.orEmpty().replace(Regex("(?:AIza|auth_tokens/)[A-Za-z0-9_./-]+"),"[redacted]").take(160)
                     if(ticket==epoch && response?.code in listOf(401,403)){ephemeral=null;resumeHandle=null}
                     disconnected(ticket,response?.code==429)
                 } }
@@ -817,12 +821,12 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     scope.launch {
                         if(BuildConfig.DEBUG)debugConnectionIssue="close:$code:"+reason.replace(Regex("(?:AIza|auth_tokens/)[A-Za-z0-9_./-]+"),"[redacted]").take(700)
                         if(ticket==epoch&&(code==1008||reason.contains("resum",true)||reason.contains("handle",true))){ephemeral=null;resumeHandle=null}
-                        disconnected(ticket,false)
+                        disconnected(ticket,talkProviderQuotaFailure(code,reason))
                     }
                 }
                 override fun onClosed(webSocket:WebSocket,code:Int,reason:String) { scope.launch {
                     if(ticket==epoch && (code==1008||reason.contains("resum",true)||reason.contains("handle",true))){ephemeral=null;resumeHandle=null}
-                    disconnected(ticket,false)
+                    disconnected(ticket,talkProviderQuotaFailure(code,reason))
                 } }
             })
         } catch(cancelled:CancellationException){throw cancelled}
@@ -856,7 +860,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private fun receiveLive(message:JSONObject,ticket:Long,resuming:Boolean) {
         message.optJSONObject("error")?.let{error->
             if(BuildConfig.DEBUG)debugConnectionIssue="live:"+error.optInt("code")+":"+error.optString("status").take(60)
-            scope.launch{disconnected(ticket,false)}
+            scope.launch{disconnected(ticket,error.optInt("code")==429||error.optString("status")=="RESOURCE_EXHAUSTED")}
             return
         }
         if(BuildConfig.DEBUG&&debugTraceInput) {
@@ -1047,6 +1051,15 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 }
                 val controlScheduling=talkControlScheduling(names,i,speaking||outputText.isNotBlank(),tools.isNotEmpty())
                 if(BuildConfig.DEBUG)debugToolCalls.merge(call.optString("name"),1){a,b->a+b}
+                val playerQuestion=currentQuestion()
+                if(call.optString("name") in setOf("conversation_topic","show_title_cards") && TalkPlayerConnection.current()!=null &&
+                    (talkSceneQuestion(playerQuestion)||talkEpisodeRecallQuestion(playerQuestion)) &&
+                    !Regex("(?i)\\b(?:show|open|display)\\b.{0,35}\\b(?:card|poster)\\b").containsMatchIn(playerQuestion)) {
+                    val result=JSONObject().put("status","player_title_already_visible").put("question",playerQuestion)
+                        .put("instruction","The player already identifies this title. This visual control creates no new question. Answer the exact question above from the attached timed dialogue and actual video, covering every requested part. A general film overview, production facts or static-frame description cannot answer it. Retrieve a missing earlier cause with app_control(scene_recall). Keep the established response language.")
+                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,wireName,result,controlScheduling)))))
+                    continue
+                }
                 if(call.optString("name")=="conversation_language") {
                     val args=call.optJSONObject("args")?:JSONObject()
                     responseLanguage=chooseTalkResponseLanguage(responseLanguage,args.optString("language"),args.optBoolean("explicitRequest"),currentQuestion())
@@ -1517,7 +1530,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         }
         // The newest typed or spoken question owns the response language. Film audio,
         // captions, quoted dialogue and titles never pass through this question path.
-        chooseQuestionResponseLanguage(responseLanguage,lastQuestion)
+        (if(microphoneTurn==userTurn.get())chooseSpokenResponseLanguage(responseLanguage,lastQuestion) else chooseQuestionResponseLanguage(responseLanguage,lastQuestion))
             ?.takeIf { it != responseLanguage }
             ?.let { language ->
                 responseLanguage=language
@@ -1551,6 +1564,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         history.save(TalkChat(chatId,title,System.currentTimeMillis(),state.value.lines))
         persistedLines=state.value.lines
     }
+    private val duplexGate=TalkDuplexGate()
     private var speechMonitor:TalkSpeechMonitor?=null
     private class OwnedNearPcm(val samples:ShortArray){var at=0;val done=CompletableDeferred<Unit>()}
     @Volatile private var debugNearPcm:OwnedNearPcm?=null
@@ -1566,7 +1580,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private fun microphoneDecision(frame:ByteArray,probability:Float,ticket:Long,captureTicket:Long,ownedFixture:Boolean) {
         val decision=synchronized(microphoneOwnership){
             if(ticket!=epoch||captureTicket!=captureGeneration||muted&&!ownedFixture)return
-            inputTurns.accept(frame,probability,false)
+            val echo=!ownedFixture&&duplexGate.isEcho(frame,probability)
+            inputTurns.accept(frame,probability,echo,outputActive=speaking&&!ownedFixture)
         }
         if(!decision.start&&!decision.end&&decision.frames.isEmpty())return
         scope.launch(Dispatchers.Main.immediate) { applyMicrophoneDecision(decision,probability,ticket,replay=ownedFixture,captureTicket=captureTicket) }
@@ -1590,13 +1605,14 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 update{it.copy(phase="Listening")}
                 if(interrupted)debugLocalBarges++
                 if(BuildConfig.DEBUG)debugActivityEvents.add(JSONObject().put("start",SystemClock.elapsedRealtime()).put("barge",interrupted).put("probability",probability))
-                sendTurnContext()
                 emit(JSONObject().put("realtimeInput",JSONObject().put("activityStart",JSONObject())))
+                sendTurnContext(userOwned=true)
             }
             for(bytes in decision.frames)emitPcm(bytes)
             if(decision.end&&remoteSpeechActive){
                 remoteSpeechActive=false;remoteSpeechEndedAt=SystemClock.elapsedRealtime()
                 update{it.copy(phase="Thinking")}
+                commitQuestion()
                 emit(JSONObject().put("realtimeInput",JSONObject().put("activityEnd",JSONObject())))
                 answerDeadline.awaiting(45000)
                 if(BuildConfig.DEBUG)debugActivityEvents.add(JSONObject().put("end",SystemClock.elapsedRealtime()))
@@ -1621,7 +1637,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         // Activate after network setup, immediately before the actual I/O.
         // Qualcomm and other HALs need this mode to supply the far-end AEC reference.
         requireNotNull(audioLease).activate()
-        synchronized(microphoneOwnership){captureGeneration++;inputTurns.reset()}
+        synchronized(microphoneOwnership){captureGeneration++;inputTurns.reset();duplexGate.reset()}
         val record = AudioRecord.Builder().setAudioSource(if(BuildConfig.DEBUG&&acousticProbe)MediaRecorder.AudioSource.UNPROCESSED else MediaRecorder.AudioSource.VOICE_COMMUNICATION)
             .setAudioFormat(AudioFormat.Builder().setSampleRate(16000).setChannelMask(AudioFormat.CHANNEL_IN_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
             .setBufferSizeInBytes(maxOf(12_800, AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT) * 2)).build()
@@ -1672,7 +1688,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     val wrote = synchronized(outputLock) {
                         if (!isActive || ticket != epoch || seq != sequence) -1
                         else if(awaitingInterrupt)0
-                        else runCatching { track.write(bytes, at, minOf(480, bytes.size - at), AudioTrack.WRITE_NON_BLOCKING) }.getOrDefault(-1).also { count->if(count>0){outputEnvelope.offer(bytes,at,count,writtenSamples);processor?.render(bytes,at,count);writtenSamples+=count/2} }
+                        else runCatching { track.write(bytes, at, minOf(480, bytes.size - at), AudioTrack.WRITE_NON_BLOCKING) }.getOrDefault(-1).also { count->if(count>0){outputEnvelope.offer(bytes,at,count,writtenSamples);processor?.render(bytes,at,count);duplexGate.reference(bytes,at,count);writtenSamples+=count/2} }
                     }
                     if (wrote < 0) {if(seq==sequence&&ticket==epoch&&isActive)withContext(Dispatchers.Main){disconnected(ticket,false)};break}
                     if (wrote == 0) { delay(5); continue }
@@ -1847,7 +1863,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         repeat(24){sendPcm(ByteArray(1600),ownedFixture=true);delay(50)}
     }
     private fun finishMicrophoneActivity(reason:String="input_closed"){
-        synchronized(microphoneOwnership){captureGeneration++;inputTurns.reset()}
+        synchronized(microphoneOwnership){captureGeneration++;inputTurns.reset();duplexGate.reset()}
         speechMonitor?.reset()
         // The wire owner can still be active after the neural gate queued End.
         // Conversely a queued Start that was never emitted owns no wire activity.
@@ -1882,7 +1898,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         speechToolJobs.values.toList().forEach{it.cancel()};speechToolJobs.clear()
         remoteSpeechActive=false;remoteActivitySeen=false;remoteSpeechEndedAt=0L;speechInputTurn=-1L;microphoneTurn=-1L;speechInputText="";joinSpeechInput=false
         comparisonPreparation?.cancel();comparisonPreparation=null
-        synchronized(microphoneOwnership){captureGeneration++;inputTurns.reset()}
+        synchronized(microphoneOwnership){captureGeneration++;inputTurns.reset();duplexGate.reset()}
         speechMonitor?.close();speechMonitor=null;generationOpen=false;discardInterruptedGeneration=false
         outputPump?.cancel();outputPump=null
         recommendationDelivery.clear()
@@ -2026,3 +2042,6 @@ internal fun explicitTalkLanguageRequest(text:String,code:String):Boolean =
     !negatedTalkLanguage.containsMatchIn(text)&&talkLanguageRequests[code.lowercase(Locale.ROOT).substringBefore('-')]?.containsMatchIn(text)==true
 internal fun explicitRequestedTalkLanguage(text:String):String? =
     if(negatedTalkLanguage.containsMatchIn(text))null else talkLanguageRequests.entries.firstOrNull{it.value.containsMatchIn(text)}?.key
+
+internal fun talkProviderQuotaFailure(code:Int,reason:String):Boolean =
+    code==4429||reason.contains("RESOURCE_EXHAUSTED",true)||reason.contains("exceeded your current quota",true)||reason.contains("quota exhausted",true)

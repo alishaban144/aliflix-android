@@ -150,4 +150,23 @@ class TalkWireReplayDeviceTest {
             assertEquals("",session.debugPresentationIssue)
         }
     }
+
+    @Test fun stoppingAPendingReplyClearsOnlyResponseOwnershipAndKeepsTheConversation() {
+        val session=compose.activity.voice
+        compose.runOnUiThread {
+            session.debugPreviewUserQuestion("Can you recommend a science fiction series?")
+            val conversation=session.state.value.conversationId
+            for(name in listOf("recommendationLookup","pendingAnswerNeedsTitle","awaitingToolAnswer"))
+                TalkVoiceSession::class.java.getDeclaredField(name).apply{isAccessible=true}.setBoolean(session,true)
+            session.stopAnswer()
+            val audio=session.debugAudioSnapshot()
+            assertFalse(audio.getBoolean("recommendationLookup"))
+            assertFalse(audio.getBoolean("pendingAnswerNeedsTitle"))
+            assertFalse(audio.getBoolean("awaitingToolAnswer"))
+            assertFalse(audio.getBoolean("deadlinePending"))
+            assertEquals(conversation,session.state.value.conversationId)
+            assertEquals("en",session.debugResponseLanguage)
+            assertTrue(session.state.value.lines.any{it.role=="user"})
+        }
+    }
 }
