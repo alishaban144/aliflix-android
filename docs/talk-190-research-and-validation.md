@@ -73,3 +73,18 @@ These typed live questions were asked after seeking into real playback. The earl
 An additional real English speech test exposed a canceled-response ownership defect: Stop canceled playback but left pending-answer flags set, so resume could remain in Thinking with no task to finish. Stop now clears only the canceled answer/tool ownership and deadline while retaining the conversation identity, language, cards and history. A new wire regression asserts this state transition; all nine wire replay cases pass on the Pixel. The real Live API retest recognized an English question, rendered 174,240 AudioTrack samples, stopped actual playback, then resumed the same conversation successfully. Its deliberately interrupted response is continuity evidence, not a recommendation-quality benchmark.
 
 Four additional physical UI checks passed with font scale 1.3 and animator duration scale 0. They cover the streaming bubble, answer anchor and both player orientations. Device settings were restored afterward.
+
+## Published mobile release
+
+[Aliflix 3.1.190](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.190) was published on 2026-11-03 at 23:14:21 UTC. [Workflow 41734995715](https://github.com/alishaban144/aliflix-android/actions/runs/41734995715) passed the 13-case automated device gate, affected host tests, mobile lint, signed builds, native/model parity and updater-manifest checks. Its tested/tagged source is `92b58ae5b95561e72564d30c061d5702672ebf29`; subsequent release-record changes are documentation only. Superseded candidate runs were canceled before publication.
+
+| Artifact | Version | Bytes | SHA-256 |
+|---|---|---:|---|
+| ARM64 mobile APK | 3.1.190 / 280 | 27,449,608 | `7a8f1344be64731c38ef38d380f35d7d1ab7f8e4d46000c0a60733a60a164700` |
+| Universal compatibility bridge | 3.1.175 / 265 | 69,133,014 | `e095e66cee6af94f56b82faf83ceb207fc898b828d23919dbf8878fa91e958f8` |
+
+Both APKs have production certificate SHA-256 `a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47`, matching the installed app before upgrade. ZIP integrity and ABI contents pass; the bridge retains all four ABIs for older updaters, while the normal mobile APK is ARM64. Native/model parity is recorded in the release's `native-parity.json`.
+
+After publication, anonymous downloads through the canonical `/releases/latest/download/` URLs matched both independently verified APKs byte-for-byte. Both public updater manifests match the verified draft manifests; the ARM64 manifest advertises versionCode 280 and the correct download URL, hash, size and minimum SDK.
+
+The official ARM64 APK installed successfully with `adb install -r` on the physical Pixel 7a. The app reports 3.1.190 / 280, launches successfully, retains its original 2026-10-27 first-install time and visibly retains the pre-upgrade Recently played entries. No uninstall or data reset was used. TV remains 3.1.69 / 159; no TV release or backend deployment is part of this change.
