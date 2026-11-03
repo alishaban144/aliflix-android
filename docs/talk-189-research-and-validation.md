@@ -44,6 +44,8 @@ Applied the installed Motion skill's universal guidance and UI/UX Pro Max's nati
 
 Seven physical-device UI checks passed in the optimized pass, including palette/composer interaction, card attention, semantic states and reduced motion. Frame metrics from that debug-device run: 1,112 samples, median 7.52 ms, 95th percentile 13.45 ms, 12 samples above 33.34 ms. The first pass before rendering refinement measured median 18.03 ms and 95th percentile 24.40 ms. These measurements describe the recorded workload, not a universal frame-rate guarantee.
 
+The final palette/orientation and context-state tests also passed at Android font scale 1.3. Whole-screen portrait/landscape screenshots were reviewed for visible controls and readable labels; the original phone setting was restored afterward.
+
 ## Answer acceptance
 
 Before reading Talk's answer, inspect the actual footage and allowed timed dialogue. Record two to five essential answer points. Require the correct event/referent, all essential points, supported claims, correct language and no future disclosure. Reject a fluent object/frame description, circular explanation, reversed relationship or unsupported motive. Retain failed attempts; do not replace difficult titles or pause points with easier ones.
@@ -63,11 +65,14 @@ Reviewed English responses on the physical Pixel:
 
 | Case | Reviewed outcome | First useful / completed |
 |---|---|---|
+| The Martian | Correct extended-cut evidence reaches the question. Explains the 1996 still camera, yes/no communication, long round-trip delay and alphabet arrangement; no later hexadecimal solution. Earlier wrong-cut answers were rejected for premature disclosure. | 2.151 / 4.202 s |
 | Knives Out | Correctly reports Marta's stated Toradol/morphine doses and her childhood vomiting response to dishonesty. An earlier answer incorrectly compressed the drugs' purposes and was rejected. | 1.526 / 3.561 s |
 | The Good Place | Correctly says Chidi has not agreed, explains his ethics conflict and wish to tell Michael about Eleanor's mistaken placement. | 2.473 / 3.635 s |
 | Andor | Correctly connects the lost plan, vehicle forty klicks away, surrounding Corpos and the west/old-furnace route; preserves the distance relationship. | 1.657 / 3.691 s |
 
 These are typed live questions with actual playback, retrieved timed story and current frames. They do not establish microphone, echo cancellation or universal plot accuracy. The earlier Dark, Inception, Truman Show and Severance checks are documented separately in [3.1.188 validation](talk-188-validation.md). The fuller source comparison and staged ingestion/indexing plan are in [the scene research plan](talk-188-scene-research-and-plan.md).
+
+The final Martian receipt used the independent extended VTT, included actual current video and contained no hexadecimal dialogue through the 51:40 boundary. A separate earlier retry stalled before reaching the question during upstream playback and produced no answer. All 281 affected Android host tests pass, including cache-edition selection and repeated scene delivery; all 312 Worker tests and typechecking pass. The signed release pipeline reruns these checks, mobile lint, offline device regression and native/signature/artifact checks.
 
 ## Remaining limits
 
