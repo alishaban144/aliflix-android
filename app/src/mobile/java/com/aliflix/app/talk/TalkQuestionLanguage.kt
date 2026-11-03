@@ -9,6 +9,12 @@ import java.util.Locale
 internal fun chooseQuestionResponseLanguage(current: String?, question: String): String? =
     explicitRequestedTalkLanguage(question) ?: detectTalkQuestionLanguage(question) ?: current
 
+internal fun chooseSpokenResponseLanguage(current: String?, question: String): String? {
+    explicitRequestedTalkLanguage(question)?.let { return it }
+    if(current!=null&&!question.contains('?')&&!question.contains('؟')&&question.split(Regex("\\s+")).count { word -> word.any(Char::isLetter) }<4)return current
+    return chooseQuestionResponseLanguage(current,question)
+}
+
 /** The language of the viewer's own question, not the film's audio or subtitle language.
  * Only high-confidence evidence may change the response language; a title, a name or a
  * single borrowed word leaves the established language intact. */

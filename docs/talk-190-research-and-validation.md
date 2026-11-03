@@ -1,0 +1,32 @@
+# Talk 3.1.190: inline conversation, continuity and earlier-scene evidence
+
+## Interaction changes
+
+Player Talk keeps the question and growing response in one floating surface. Sending never opens a full-screen conversation. The surface has a bounded reading area, an inline composer and 48 dp controls. Visible speaking/listening/connecting/reconnecting/ready labels and microphone icons are removed; accessibility state descriptions remain. Text conversation anchors once to the newest question rather than following each answer fragment and poster to the bottom. Cards wait until their accompanying answer text exists.
+
+Talk's response orbit is 2,200 ms with a half-cycle separation and constant angular speed. Ask's morph loader is slowed from 2 to 4 seconds; its small progress dots use a 2.2 second pulse. These are product timing choices, not a claimed universal optimum. Android's existing indicator source provides 1,332 and 1,800 ms baseline cycles; complex morphs need a longer period than a small orbit. Completion never waits for the animation. Reduced motion preserves static feedback. [Android source](https://android.googlesource.com/platform/frameworks/support/+/5dde8ea06b4bb537c538cc5ce4ac3dc282614318/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/ProgressIndicator.kt), [Compose lists](https://developer.android.com/develop/ui/compose/lists).
+
+## Speech and chat ownership
+
+The existing far-end correlation detector was disconnected from the microphone gate: the gate always received echo=false. It now receives actual echo evidence from PCM written to the output track, alongside platform/software AEC and the neural speech detector. A new activity needs 192 ms of sustained near speech during output, 96 ms at rest. A 1,056 ms quiet endpoint tolerates longer intra-sentence pauses; this trades 352 ms of silence latency for less premature turn splitting.
+
+Short spoken fragments preserve the established language; explicit language requests and substantial new questions can change it. Typed questions retain direct language detection. Starting a new chat requires an actual reset/new-conversation request; a greeting, unrelated question or model-proposed action cannot reset the session. Context refresh is blocked while output owns the floor unless confirmed human speech has explicitly taken it. [Live API message and activity semantics](https://ai.google.dev/api/live), [Live session management](https://ai.google.dev/gemini-api/docs/live-api/session-management).
+
+## Free scene index research and implemented retrieval
+
+No verified free service covers arbitrary catalogue titles and their exact playback cuts. MovieNet covers 1,100 films, MovieGraphs covers 51 films, and TVQA covers six shows. Their editions, research access conditions and scope prevent treating them as a production-wide exact-cut index. Condensed Movies offers selected scenes, not full timelines. [MovieNet](https://movienet.github.io/), [MovieGraphs](https://github.com/katha-ai/MovieGraphs-Dataset-CVPR2018), [TVQA](https://aclanthology.org/D18-1167/), [Condensed Movies](https://www.robots.ox.ac.uk/~vgg/data/condensed-movies/challenge.html).
+
+Causal/earlier-story questions now receive the full available chronological transcript through the playhead within the existing explicit context budget, rather than only lexical matches and the last five minutes. Search questions requiring physical evidence can decode the matching earlier intervals from the active playback source, in addition to the current moment, without moving the viewer's clock. Evidence packets record playback/request identity, runtime and caption alignment status. External caption edition selection remains unverified alignment: runtime and release name alone cannot prove the same cut. Frames are decoded from the active source. Film and caption content never authorizes a language switch or native action.
+
+The existing Gemini embedding model remains `gemini-embedding-2`. This change does not pretend to have ingested a persistent catalogue-wide semantic index. File-hash matching could strengthen direct-file subtitle matching, but the standard first/last 64 KiB hash is not directly applicable to HLS playlists. [Gemini Embedding 2](https://ai.google.dev/gemini-api/docs/models/gemini-embedding-2), [OpenSubtitles hash](https://opensubtitles.github.io/oshash/).
+
+## Validation
+
+Fresh scene questions are selected after inspecting the actual allowed footage and timed story. The new Talk190 suite checks each required answer point, language, evidence delivery, paused playback, inline rendering and latency. Old regression coverage is retained; old generic questions are not counted as new quality evidence. Device results and remaining failures are recorded below as they occur.
+
+The following answer points were recorded from inspected footage/captions before generating new answers:
+
+- **Back to the Future / 1800 s:** Why are these gunmen after Doc, and what did he give them instead of what he promised? Required: Libyan nationalists supplied plutonium for a bomb; Doc stole/kept it for the time machine; He supplied a sham bomb casing filled with used pinball machine parts.
+- **Chernobyl / 1800 s:** Does the earlier 3.6 roentgen reading actually establish that the radiation is low? What earlier evidence makes the officials reassurance unreliable? Required: 3.6 is the available meter ceiling, not a reliable upper bound on radiation; Earlier workers report the core exploded and one looked into it; Officials dismiss these reports and assume a hydrogen-tank fire; do not invent an exact later reading.
+- **The Matrix / 3000 s:** How did Neo suddenly learn kung fu, and why is this sparring match different from an ordinary physical fight? Required: Tank loads combat knowledge directly through the training system; The dojo is a sparring simulation analogous to the Matrix; Its computer rules, including gravity, can be bent or broken; no later combat outcome.
+- **Sherlock / 1800 s:** What evidence told Sherlock she had a suitcase, and why does its absence make him call this murder even though she swallowed the pills herself? Required: Tiny splash marks on right heel and calf, absent on the left; Dragging a wheeled suitcase in her right hand explains that pattern; Missing case implies another person removed it; Sherlock infers killer brought her by car and retained the bag; This is his deduction, not proof of an unrevealed killer identity or mechanism.

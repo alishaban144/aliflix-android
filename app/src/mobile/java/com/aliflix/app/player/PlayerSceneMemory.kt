@@ -116,7 +116,11 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
         val cues = when { exact.isNotEmpty() -> exact; retrievedTranscript != null -> retrievedTranscript!!.cues; else -> observedCaptions.toList() }
         val request = parseTalkRecallRequest(query, position)
         return buildTalkRecallPacket(query, request, position, cues, source,
-            if (exact.isNotEmpty()) state.optString("subtitleEdition") else retrievedTranscript?.edition.orEmpty(), watchedRanges.toList(), visualBeats.map { it.seconds }, includeWholeStory = fullStory)
+            if (exact.isNotEmpty()) state.optString("subtitleEdition") else retrievedTranscript?.edition.orEmpty(), watchedRanges.toList(), visualBeats.map { it.seconds }, includeWholeStory = fullStory || com.aliflix.app.talk.talkEpisodeRecallQuestion(query))
+            .put("playbackEvidence", JSONObject().put("contentKey",state.optString("contentKey"))
+                .put("requestId",state.optString("requestId")).put("durationSeconds",state.optDouble("durationSeconds",0.0))
+                .put("visualSource","active_playback_source").put("captionAlignment",if(source=="observed_captions")"observed_at_playback" else "edition_selected_alignment_unverified")
+                .put("instruction","Visual evidence is decoded from this exact active source. Caption edition selection alone does not certify cut alignment. Corroborate timing-sensitive causes against actual footage/heard dialogue; do not import a different cut or future plot. Answer the actual causal and earlier-story question, covering each requested part."))
     }
 
     /** Send actual earlier video evidence, rather than treating a timestamp as an image. */

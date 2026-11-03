@@ -74,9 +74,10 @@ internal fun talkSceneQuestion(question: String): Boolean = Regex(
  * a second observer of the unrelated paused still before answering an earlier event. */
 internal fun talkNeedsCurrentSceneObservation(question: String): Boolean {
     if (parseTalkRecallRequest(question, Double.MAX_VALUE).mode in setOf(TalkRecallMode.PREVIOUS, TalkRecallMode.TIMESTAMP, TalkRecallMode.RECAP)) return false
-    if (Regex("(?i)\\b(?:how did .{1,45}know|what did .{1,45}(?:say|tell|admit|claim|report)|what (?:does|did) .{0,30}(?:mean|letter|message)|who (?:said|told))\\b").containsMatchIn(question)) return false
+    if (Regex("(?i)\\b(?:how did .{1,45}(?:know|learn|discover|find out|realize|realise)|what did .{1,45}(?:say|tell|admit|claim|report)|what (?:does|did) .{0,30}(?:mean|letter|message)|who (?:said|told))\\b").containsMatchIn(question)) return false
+    if(Regex("(?i)\\b(?:what evidence|why (?:does|did) .{0,45}(?:think|believe|claim|say|promise))\\b").containsMatchIn(question))return false
     if (!Regex("(?i)\\b(fall|fell|push|pushed|hit|crash|shoot|shot|collapse|collapsed|drop|dropped)\\b").containsMatchIn(question) &&
-        Regex("(?i)\\b(agreed?|secret|disagreement|lying|lied|belief|believe|intention|promise|warned|warning|plan)\\b").containsMatchIn(question)) return false
+        Regex("(?i)\\b(agreed?|secret|disagreement|lying|lied|belief|believe|intention|promis(?:e|ed|es)|warned|warning|plan)\\b").containsMatchIn(question)) return false
     return talkSceneQuestion(question)
 }
 

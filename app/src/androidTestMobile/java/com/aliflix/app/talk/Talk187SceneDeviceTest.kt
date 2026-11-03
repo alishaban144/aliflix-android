@@ -80,11 +80,11 @@ class Talk187SceneDeviceTest {
             assertEquals(orb.center.y.toDouble(),anchored.center.y.toDouble(),2.0)
             val palette=bound(player,"player-palette")
             assertFalse("Palette overlaps orb: $palette $anchored",palette.overlaps(anchored))
-            val targets=listOf("player-microphone","player-type","player-expand","player-close").map { bound(player,it) }
+            val targets=listOf("player-type","player-close").map { bound(player,it) }
             val size=withContext(Dispatchers.Main) { 48*player.resources.displayMetrics.density }
             for(target in targets) { assertTrue(target.toString(),target.width>=size-2 && target.height>=size-2);assertTrue(palette.contains(target.center)) }
             for(a in targets.indices)for(b in a+1 until targets.size)assertFalse(targets[a].overlaps(targets[b]))
-            for(removed in listOf("player-explain","player-replay","player-dialogue"))
+            for(removed in listOf("player-explain","player-replay","player-dialogue","player-microphone","player-expand"))
                 assertNull("Removed upper-row control is still present: $removed",withContext(Dispatchers.Main) { player.talkVoice.debugCardBounds[removed] })
             screenshot("talk187-palette-$name.png")
             tap(bound(player,"player-type"));delay(900)
@@ -109,19 +109,20 @@ class Talk187SceneDeviceTest {
         val question="Why did she leave?"
         i.sendStringSync(question);delay(150)
         screenshot("talk187-draft-small.png")
-        tap(bound(player,"player-expand"));bound(player,"player-full-input");delay(400)
+        assertNull(withContext(Dispatchers.Main) { player.talkVoice.debugCardBounds["player-expand"] });delay(400)
         screenshot("talk187-draft-expanded.png")
         fun visibleText(node:android.view.accessibility.AccessibilityNodeInfo?):String = node?.let { root ->
             listOf(root.text?.toString().orEmpty(),*(0 until root.childCount).map { visibleText(root.getChild(it)) }.toTypedArray()).joinToString(" ")
         }.orEmpty()
         val expandedText=visibleText(i.uiAutomation.rootInActiveWindow)
         assertTrue("Draft lost on expansion: $expandedText",expandedText.contains(question,ignoreCase=true))
-        tap(bound(player,"player-full-close"));delay(500)
+        tap(bound(player,"player-orb"));delay(500)
+        tap(bound(player,"player-orb"));delay(300)
         tap(bound(player,"player-type"));bound(player,"player-input");delay(500)
         val returnedText=visibleText(i.uiAutomation.rootInActiveWindow)
         screenshot("talk187-draft-returned.png")
         assertTrue("Draft lost on return: $returnedText",returnedText.contains(question,ignoreCase=true))
-        tap(bound(player,"player-send"));bound(player,"player-full-input")
+        tap(bound(player,"player-send"));bound(player,"player-exchange")
         withTimeout(3000) { while(withContext(Dispatchers.Main) { player.talkVoice.state.value.lines.none { it.role=="user"&&it.text==question } })delay(30) }
         withContext(Dispatchers.Main) { player.talkVoice.stopAnswer() }
         assertFalse(withContext(Dispatchers.Main) { player.playbackController!!.isPlaying })

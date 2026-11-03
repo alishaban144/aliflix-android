@@ -16,8 +16,8 @@ import kotlin.math.*
 @Composable internal fun TalkThinking(motion:Boolean,modifier:Modifier=Modifier) {
     val phases=if(motion){
         val clock=rememberInfiniteTransition(label="twin-orbit")
-        val first by clock.animateFloat(0f,1f,infiniteRepeatable(tween(1000,easing=CubicBezierEasing(.25f,.1f,.25f,1f))),label="orbit-one")
-        val second by clock.animateFloat(0f,1f,infiniteRepeatable(tween(1000,easing=CubicBezierEasing(.25f,.1f,.25f,1f)),initialStartOffset=StartOffset(500)),label="orbit-two")
+        val first by clock.animateFloat(0f,1f,infiniteRepeatable(tween(2200,easing=LinearEasing)),label="orbit-one")
+        val second by clock.animateFloat(0f,1f,infiniteRepeatable(tween(2200,easing=LinearEasing),initialStartOffset=StartOffset(1100)),label="orbit-two")
         first to second
     }else 0f to .5f
     Canvas(modifier.size(26.dp)) {

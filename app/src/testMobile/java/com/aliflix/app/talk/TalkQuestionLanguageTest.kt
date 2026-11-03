@@ -43,4 +43,25 @@ class TalkQuestionLanguageTest {
         assertEquals("ar", detectTalkQuestionLanguage("من هي المرأة التي ترتدي القبعة؟"))
         assertNull(detectTalkQuestionLanguage(""))
     }
+
+    @org.junit.Test fun shortSpokenFragmentsPreserveTheEstablishedConversationLanguage() {
+        org.junit.Assert.assertEquals("en",chooseSpokenResponseLanguage("en","Hola"))
+        org.junit.Assert.assertEquals("en",chooseSpokenResponseLanguage("en","مرحبا"))
+        org.junit.Assert.assertEquals("en",chooseSpokenResponseLanguage("en","Hi"))
+        org.junit.Assert.assertEquals("de",chooseSpokenResponseLanguage("en","Answer in German"))
+        org.junit.Assert.assertEquals("de",chooseSpokenResponseLanguage("en","Warum hat sie das getan?"))
+        org.junit.Assert.assertFalse(talkActionRequested("new_chat","Hi"))
+        org.junit.Assert.assertFalse(talkActionRequested("new_chat","Can you tell me why she left?"))
+        org.junit.Assert.assertFalse(talkActionRequested("new_chat","Don't start a new chat"))
+        org.junit.Assert.assertTrue(talkActionRequested("new_chat","Start a new conversation"))
+    }
+
+    @org.junit.Test fun explicitProviderQuotaMustNotTriggerAnAutomaticReconnectLoop() {
+        org.junit.Assert.assertTrue(talkProviderQuotaFailure(1011,"You exceeded your current quota, please check your plan and billing details."))
+        org.junit.Assert.assertFalse(talkProviderQuotaFailure(1011,"Internal server error"))
+        org.junit.Assert.assertFalse(talkActionRequested("new_chat","What if I start a new chat?"))
+        org.junit.Assert.assertFalse(talkNeedsCurrentSceneObservation("How did Neo suddenly learn kung fu?"))
+        org.junit.Assert.assertFalse(talkNeedsCurrentSceneObservation("Why are these gunmen after him, and what did he give them instead of what he promised?"))
+        org.junit.Assert.assertTrue(talkNeedsCurrentSceneObservation("Why did she fall down?"))
+    }
 }
