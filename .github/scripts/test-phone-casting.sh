@@ -102,6 +102,8 @@ adb -s emulator-5554 shell wm density 160
   ensure_network
   adb -s emulator-5554 install -r app/build/outputs/apk/mobile/debug/app-mobile-debug.apk
   adb -s emulator-5554 install -r app/build/outputs/apk/androidTest/mobile/debug/app-mobile-debug-androidTest.apk
+  # Fresh AVDs otherwise cover the player's first taps with Android's tutorial.
+  adb -s emulator-5554 shell settings put secure immersive_mode_confirmations confirmed
   adb -s emulator-5554 shell am instrument -w -r -e class "$classes" \
     com.aliflix.app.test/androidx.test.runner.AndroidJUnitRunner | tee .validation/instrumentation.txt
   # am instrument can exit zero even when assertions fail. Require a completed successful test run.

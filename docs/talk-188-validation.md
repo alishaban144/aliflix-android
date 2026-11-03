@@ -78,6 +78,8 @@ Both accepted runs supplied actual temporal video evidence, independent title-bl
 
 The initial movie answer was rejected: it invented a dramatic motive for bringing the father back. Later initial attempts hit a Google Live quota error without answering. A minimal text-only capacity probe then succeeded in 4.181 s. The final corrections restore native evidence on reconnect, avoid decoding an already sufficient captured sequence, remove duplicate transcript passages, prefer structured independent observation with a delayed Live hedge, and send two corroborating current frames after a successful sequence observation. The final full Worker suite has 310 passing tests. The final pre-release backend used in these two accepted runs is `576d1f33-919c-4d4e-ae4d-ba38d88a7467`, configured with `gemini-embedding-2`.
 
+The first release CI device gate rejected two targeted taps because Android's first-use `ImmersiveModeConfirmation` tutorial, owned by the system UID, covered the app. Decoder isolation passed. The fresh-emulator setup now preconfirms that tutorial before instrumentation; no runtime app behavior or UI assertion is bypassed.
+
 The mobile release candidate is 3.1.188, version code 278. The CI workflow runs the complete Worker suite, all Talk host tests, mobile lint and the offline scene/palette/decoder device fixtures before signing. Original signing identity, native binary/model parity and empty app updater descriptions remain release requirements. The live scene tests are opt-in and were run on the connected physical Pixel; CI fixtures do not substitute for these plot checks.
 
 ## Limits and next implementation
