@@ -35,7 +35,8 @@ internal fun talkConnectionDetail(error:Throwable)=when((error as? TalkHttpExcep
 internal val VOICES=listOf("Aoede","Kore","Puck","Charon")
 internal data class TalkVoiceState(val phase: String = "Ready", val words: String = "ALIFLIX", val level: Float = 0f, val voice:String="Aoede",
     val muted: Boolean = false, val keepHistory: Boolean = false, val lines: List<TalkLine> = emptyList(), val provider: String = "", val textMode:Boolean=false, val sending:Boolean=false,
-    val conversationId:String=java.util.UUID.randomUUID().toString(),val cards:TalkCardContext=TalkCardContext(),val panelRequest:String="",val answerComplete:Boolean=true,val connectionDetail:String="",val spokenCardKey:String?=null)
+    val conversationId:String=java.util.UUID.randomUUID().toString(),val cards:TalkCardContext=TalkCardContext(),val panelRequest:String="",val answerComplete:Boolean=true,val connectionDetail:String="",val spokenCardKey:String?=null,
+    val evidenceStage:TalkEvidenceStage=TalkEvidenceStage.NONE)
 
 /** Live conversation. Scene media is ephemeral, with played PCM sent only to
  * the independent observer. Microphone input, source URLs and credentials stay separate. */
@@ -231,7 +232,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             }
             sceneObservations[scene.key]?.let { scene.metadata.put("groundedObservation", it).put("groundingState", "observed") }
             if (!scene.metadata.has("groundingState")) scene.metadata.put("groundingState", if (talkNeedsCurrentSceneObservation(question)) "preparing" else "direct_evidence")
-            val recalledFrames = TalkPlayerConnection.current()?.talkRecallFrames(question).orEmpty()
+            val recallMode=parseTalkRecallRequest(question,scene.anchorSeconds).mode
+            val recalledFrames = if(talkNeedsCurrentSceneObservation(question) || recallMode in setOf(TalkRecallMode.TIMESTAMP,TalkRecallMode.PREVIOUS))
+                TalkPlayerConnection.current()?.talkRecallFrames(question).orEmpty() else emptyList()
             scene.metadata.put("attachedRecallFrameSeconds", JSONArray(recalledFrames.map { it.seconds }))
             val delivery = if (talkNeedsCurrentSceneObservation(question))
                 if (scene.metadata.optJSONObject("groundedObservation")?.optBoolean("titleBlind") == true)
@@ -309,6 +312,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             val turnTicket=userTurn.get()
             try {
                 if (talkSceneQuestion(question) || talkEpisodeRecallQuestion(question)) {
+                    update { it.copy(evidenceStage = TalkEvidenceStage.RECALL) }
                     val recallStarted = SystemClock.elapsedRealtime()
                     TalkPlayerConnection.current()?.prepareTalkRecall(question)
                     if (BuildConfig.DEBUG) debugSceneRecallMs = SystemClock.elapsedRealtime() - recallStarted
@@ -316,6 +320,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if(!permitted)connect()
                 withTimeout(20000){while(!socketReady){check(permitted){"Connection ended"};delay(30)}}
                 if (talkSceneQuestion(question) || talkEpisodeRecallQuestion(question)) {
+                    update { it.copy(evidenceStage = if(talkNeedsCurrentSceneObservation(question)) TalkEvidenceStage.OBSERVE else TalkEvidenceStage.NONE) }
                     val observationStarted = SystemClock.elapsedRealtime()
                     if (talkNeedsCurrentSceneObservation(question)) awaitSceneObservation() else TalkPlayerConnection.current()?.prepareTalkScene()
                     if (BuildConfig.DEBUG) debugSceneObservationMs = SystemClock.elapsedRealtime() - observationStarted
@@ -328,13 +333,14 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 sendTurnContext()
                 val parts = JSONArray()
                 if (TalkPlayerConnection.current() != null && (talkSceneQuestion(question) || talkEpisodeRecallQuestion(question))) {
-                    parts.put(JSONObject().put("text", "Native answer contract: answer the viewer's actual question from the attached timed story and video. Earlier scenes through the pause are allowed. Caption windows are not cinematic scene boundaries. Participant names/faces have not been bound by the app: use roles/descriptions unless exact dialogue or grounded prior evidence establishes identity; never guess a name or spouse relationship from title familiarity. Respond in ${responseLanguage ?: "the viewer's question language"}."))
+                    parts.put(JSONObject().put("text", "Native answer contract: answer every part of the viewer's actual question clearly and completely from the attached timed story and video. Explain the supported cause, relevant earlier setup or inference they ask about. A narration of the pause frame is never a substitute for that answer. Retrieve a specifically missing causal link with scene_recall before answering; observed footage alone does not mean the question is fully supported. Earlier scenes through the pause are allowed. Caption windows are not cinematic scene boundaries. Participant names/faces have not been bound by the app: use roles/descriptions unless exact dialogue or grounded prior evidence establishes identity; never guess a name or spouse relationship from title familiarity. Respond in ${responseLanguage ?: "the viewer's question language"}."))
                 }
                 parts.put(JSONObject().put("text",question))
                 if (BuildConfig.DEBUG) debugQuestionSentAt = SystemClock.elapsedRealtime()
                 emit(JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",parts))).put("turnComplete",true)))
             } catch(cancelled:CancellationException){if(cancelled is TimeoutCancellationException){if(turnTicket==userTurn.get())failedTextTurn()}else throw cancelled}
             catch(_:Exception){if(turnTicket==userTurn.get())failedTextTurn()}
+            finally { if(turnTicket==userTurn.get())update { it.copy(evidenceStage=TalkEvidenceStage.NONE) } }
         }
     }
     fun stopAnswer() {
@@ -1804,7 +1810,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     internal val debugCardBounds=java.util.concurrent.ConcurrentHashMap<String,androidx.compose.ui.geometry.Rect>()
     internal fun debugPreviewUserQuestion(question:String){check(BuildConfig.DEBUG);beginUserTurn();inputText=question;commitQuestion()}
     internal fun debugReplayServerMessage(message:JSONObject){check(BuildConfig.DEBUG);receiveLive(message,epoch,false)}
-    internal fun debugPreviewOrbContext(phase:String,narration:String){check(BuildConfig.DEBUG);update{it.copy(phase=phase,spokenCardKey=it.cards.visible.getOrNull(talkOrbMention(narration,it.cards.visible.map{card->listOfNotNull(card.title,card.originalTitle)}))?.key,lines=it.lines.filter{line->line.role!="assistant"}+TalkLine("assistant",narration))}}
+    internal fun debugPreviewOrbContext(phase:String,narration:String,evidenceStage:TalkEvidenceStage=TalkEvidenceStage.NONE){check(BuildConfig.DEBUG);update{it.copy(phase=phase,evidenceStage=evidenceStage,spokenCardKey=it.cards.visible.getOrNull(talkOrbMention(narration,it.cards.visible.map{card->listOfNotNull(card.title,card.originalTitle)}))?.key,lines=it.lines.filter{line->line.role!="assistant"}+TalkLine("assistant",narration))}}
     internal fun debugPreviewTitles(titles:List<TalkTitleCard>,textMode:Boolean){check(BuildConfig.DEBUG);update{it.copy(textMode=textMode,words="CINEMA",cards=TalkCardContext().show(titles),lines=listOf(TalkLine("user","A cinema discovery"),TalkLine("assistant","A few thoughtful choices for tonight.",titles=titles)))}}
     internal fun debugInterrupt(){check(BuildConfig.DEBUG);sequence++;interruptOutput();emit(JSONObject().put("realtimeInput",JSONObject().put("text","Stop speaking.")))}
     internal fun debugReconnect(){check(BuildConfig.DEBUG);update{it.copy(phase="Reconnecting")};cancelSocket(ws)}
@@ -1911,7 +1917,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         }
         stopAudio()
         val lease=audioLease;audioLease=null;lease?.close();ducked=false
-        update {it.copy(phase="Resume",level=0f,sending=false)}
+        update {it.copy(phase="Resume",level=0f,sending=false,evidenceStage=TalkEvidenceStage.NONE)}
     }
     fun pauseSession() { pendingNativeNavigation=null;archiveReadSequence++;continueAfterReconnect=false;markStoppedTurn();textSend?.cancel();textSend=null;suspendSession() }
     override fun close() {

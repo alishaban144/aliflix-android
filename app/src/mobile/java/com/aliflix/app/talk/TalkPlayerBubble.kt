@@ -29,11 +29,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.TextStyle
@@ -53,7 +56,7 @@ import kotlin.math.roundToInt
     fun Modifier.measured(key: String): Modifier = if (!com.aliflix.app.BuildConfig.DEBUG) this else onGloballyPositioned {
         session.debugCardBounds[key] = it.findRootCoordinates().localBoundingBoxOf(it, clipBounds = false)
     }
-    val state by session.state.collectAsState()
+    val state by rememberTalkPresentation(session)
     val context = LocalContext.current
     val work = TalkTaskWork.get(context)
     val tasks by work.tasks.collectAsState()
@@ -67,11 +70,14 @@ import kotlin.math.roundToInt
     var dragX by rememberSaveable { mutableFloatStateOf(0f) }
     var dragY by rememberSaveable { mutableFloatStateOf(0f) }
     var panelHeight by remember { mutableIntStateOf(0) }
+    var compactOrbBounds by remember { mutableStateOf(Rect.Zero) }
     val density = LocalDensity.current
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val composerFocus = remember { FocusRequester() }
     val motion = com.aliflix.app.ui.common.rememberMobileMotionEnabled() && com.aliflix.app.ui.common.rememberMobileResumed()
+    val activity = talkOrbActivity(state, typing && !state.sending)
+    val appearance = remember(activity) { talkOrbAppearance(activity) }
     fun dismissComposer() { typing = false; focus.clearFocus(); keyboard?.hide() }
     fun dismissConversation() { expanded = false; readReply = false; dismissComposer() }
     fun send() {
@@ -136,6 +142,12 @@ import kotlin.math.roundToInt
                             ScenePaletteButton(Icons.Rounded.OpenInFull, "Open conversation", Modifier.measured("player-expand")) { focus.clearFocus(); keyboard?.hide(); expanded = true }
                             ScenePaletteButton(Icons.Rounded.Close, "Close Talk", Modifier.measured("player-close")) { dismissComposer(); onClose() }
                         }
+                        AnimatedContent(appearance.label,
+                            transitionSpec = { fadeIn(androidx.compose.animation.core.tween(if(motion)160 else 0)) togetherWith fadeOut(androidx.compose.animation.core.tween(if(motion)90 else 0)) },
+                            label = "player-talk-activity") { label ->
+                            Text(label,Modifier.padding(horizontal=10.dp).semantics { liveRegion=LiveRegionMode.Polite },
+                                color=Color(0xFFD5D0E3),fontSize=12.sp,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        }
                         AnimatedVisibility(typing && !expanded) {
                             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Color.Black.copy(alpha = .24f)).padding(start = 14.dp, end = 4.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.weight(1f).heightIn(min = 48.dp).measured("player-input")) {
@@ -162,16 +174,18 @@ import kotlin.math.roundToInt
                 }
             }
         }
-        Box(Modifier.absoluteOffset { IntOffset(orbX.roundToInt(), orbY.roundToInt()) }.size(orbSize).measured("player-orb").semantics {
-            contentDescription = "Talk controls"; stateDescription = if (controls) "Expanded, ${state.phase}" else state.phase
+        Box(Modifier.absoluteOffset { IntOffset(orbX.roundToInt(), orbY.roundToInt()) }.size(orbSize)
+            .onGloballyPositioned { compactOrbBounds=it.boundsInWindow() }.graphicsLayer { alpha=if(expanded)0f else 1f }.measured("player-orb").semantics {
+            contentDescription = "Talk controls"; stateDescription = if (controls) "Expanded, ${appearance.label}" else appearance.label
             customActions = listOf(CustomAccessibilityAction("Move to other side") { dragX = if (orbX > maxX / 2) -maxX else 0f; true })
         }.clickable(role = Role.Button, onClickLabel = if (controls) "Collapse controls" else "Expand controls") { controls = !controls; if (!controls) dismissComposer() }
             .pointerInput(maxX, maxY, top) { detectDragGestures(onDragStart = { controls = false; dismissComposer() }) { change, delta -> change.consume(); dragX = (dragX + delta.x).coerceIn(-maxX, 0f); dragY = (dragY + delta.y).coerceIn(-top, maxY - top) } }) {
-            TalkLiveOrb(state.phase, { session.state.value.level }, motion && !expanded, Modifier.fillMaxSize().testTag("talk-player-orb"))
+            TalkLiveOrb(state.phase, { session.state.value.level }, motion && !expanded, Modifier.fillMaxSize().testTag("talk-player-orb"),activity=activity)
         }
     }
     if (expanded) Dialog(onDismissRequest = ::dismissConversation, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        TalkVoiceScreen(session, onStart, onClose = ::dismissConversation, playerOverlay = true, composerDraft = draft, showComposer = typing, showTranscript = readReply)
+        TalkVoiceScreen(session, onStart, onClose = ::dismissConversation, playerOverlay = true, composerDraft = draft, showComposer = typing, showTranscript = readReply,
+            initialOrbPose=compactOrbBounds.takeIf { it.width>0f }?.let { TalkOrbPose(it.center.x,it.center.y,it.width) })
     }
 }
 

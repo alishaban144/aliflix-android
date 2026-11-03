@@ -5,7 +5,7 @@ import com.aliflix.app.model.PlaybackSelection
 import kotlin.math.abs
 
 internal class ReferenceAlignmentTimeout : RuntimeException()
-internal const val AUTOMATIC_CAPTION_SELECTION_POLICY = 4
+internal const val AUTOMATIC_CAPTION_SELECTION_POLICY = 5
 
 internal fun refreshAutomaticCaptionCache(automatic: Boolean, policy: Int, online: Boolean, offlineDownload: Boolean,
     sameEdition:Boolean=true): Boolean =

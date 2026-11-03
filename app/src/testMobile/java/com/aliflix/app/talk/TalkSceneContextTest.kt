@@ -4,6 +4,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkSceneContextTest {
+    @Test fun dialogueAndBeliefQuestionsUseStoryEvidenceWhilePhysicalCausesKeepTemporalObservation() {
+        assertFalse(talkNeedsCurrentSceneObservation("What did Marta tell the detectives about the medication?"))
+        assertFalse(talkNeedsCurrentSceneObservation("Has he agreed to keep her secret, and what is their conflict?"))
+        assertTrue(talkNeedsCurrentSceneObservation("Why did she fall down?"))
+        assertTrue(talkNeedsCurrentSceneObservation("Why did he drop the secret letter?"))
+    }
     @Test fun backfillIsNeededForFreshSeekStaleAndShortSequencesButNotObservedAction() {
         fun frames(vararg seconds: Double) = seconds.map { TalkSceneFrame(it, byteArrayOf(1)) }
         assertFalse(sceneNeedsVideoBackfill(frames(68.0,84.0,94.0,100.0),100.0))

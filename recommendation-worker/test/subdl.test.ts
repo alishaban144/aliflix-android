@@ -317,6 +317,33 @@ describe('SubDL subtitle proxy', () => {
       .toBe('Bearer private-subdl-key');
   });
 
+  it('recovers the original archive when v2 cannot return the selected unpacked file directly', async () => {
+    const token=parseSubdlSearchDocument({status:true,results:[{tmdb_id:286217,type:'movie'}],
+      subtitles:[{url:'/subtitle/parent123/file456',lang:'EN',release_name:'Movie.EXTENDED',file_name:'Movie.EXTENDED.srt'}]},'movie',286217)[0].downloadToken;
+    const archive=new Uint8Array([80,75,3,4,1,2,3,4]);
+    const fetchMock=vi.spyOn(globalThis,'fetch')
+      .mockResolvedValueOnce(new Response('expired',{status:404}))
+      .mockResolvedValueOnce(Response.json({error:'not_a_single_file'},{status:409}))
+      .mockResolvedValueOnce(new Response(archive,{headers:{'content-type':'application/zip'}}));
+    const response=await worker.fetch(new Request(`https://worker.test/v3/subtitles/download/${token}`),env);
+    expect(response.status).toBe(200);
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(archive);
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/subtitle/parent123/file456');
+    expect(String(fetchMock.mock.calls[2][0])).toBe('https://api.subdl.com/api/v2/subtitles/parent123/download?format=zip');
+    expect(new Headers(fetchMock.mock.calls[2][1]?.headers).get('authorization')).toBe('Bearer private-subdl-key');
+    expect(response.headers.get('content-type')).toBe('application/zip');
+  });
+
+  it('preserves provider capacity errors instead of treating them as an archive-selection failure', async () => {
+    const token=parseSubdlSearchDocument({status:true,results:[{tmdb_id:286217,type:'movie'}],subtitles:[{url:'/subtitle/parent123/file456',lang:'EN'}]},'movie',286217)[0].downloadToken;
+    const fetchMock=vi.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response('expired',{status:404}))
+      .mockResolvedValueOnce(Response.json({error:'api_download_limit_exceeded'},{status:429}));
+    const response=await worker.fetch(new Request(`https://worker.test/v3/subtitles/download/${token}`),env);
+    expect(response.status).toBe(429);
+    expect(await response.json()).toMatchObject({error:{code:'SUBDL_RATE_LIMITED',retryable:true}});
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('streams OpenSubtitles download directly with UTF-8 subtitle content', async () => {
     const rawUrl = 'https://subs5.strem.io/en/download/subencoding-stremio-utf8/src-api/file/1618';
     const token = btoa(rawUrl).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');

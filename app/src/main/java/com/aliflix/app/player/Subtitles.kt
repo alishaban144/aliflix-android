@@ -149,6 +149,7 @@ class SubdlSubtitleRepository(
                     readBytes(workerUrl)
                 } catch (e: Exception) {
                     if (!BuildConfig.IS_TV && e is CancellationException) throw e
+                    if(e is SubtitleException && e.status==429)throw e
                     if (directUrl != null) {
                         try {
                             readBytes(directUrl)
@@ -162,7 +163,10 @@ class SubdlSubtitleRepository(
             val subtitleBytes = if (response.isZip()) {
                 extractSubtitleFromZip(response, track.fileName,
                     selection?.takeUnless { BuildConfig.IS_TV }?.seasonNumber,
-                    selection?.takeUnless { BuildConfig.IS_TV }?.episodeNumber)
+                    selection?.takeUnless { BuildConfig.IS_TV }?.episodeNumber,
+                    requireExactMember = !BuildConfig.IS_TV && directUrl?.let { url ->
+                        runCatching { java.net.URI(url).path.split('/').filter(String::isNotBlank).let { it.size >= 3 && it[0]=="subtitle" } }.getOrDefault(false)
+                    } == true)
             } else {
                 response
             }
@@ -263,13 +267,13 @@ internal fun directSubtitleUrl(token: String): String? {
     }
 }
 
-internal class SubtitleException(message: String) : Exception(message)
+internal class SubtitleException(message: String, val status: Int? = null) : Exception(message)
 
 private fun ByteArray.isZip(): Boolean = size >= 4 &&
     this[0] == 0x50.toByte() && this[1] == 0x4b.toByte() &&
     this[2] in listOf(0x03.toByte(), 0x05.toByte(), 0x07.toByte())
 
-internal fun extractSubtitleFromZip(bytes: ByteArray, preferredName: String, season: Int? = null, episode: Int? = null): ByteArray {
+internal fun extractSubtitleFromZip(bytes: ByteArray, preferredName: String, season: Int? = null, episode: Int? = null, requireExactMember: Boolean = false): ByteArray {
     data class Entry(val name: String, val bytes: ByteArray)
 
     val entries = mutableListOf<Entry>()
@@ -310,7 +314,14 @@ internal fun extractSubtitleFromZip(bytes: ByteArray, preferredName: String, sea
             else throw SubtitleException("This archive has no exact file for the selected episode")
         }
     } else entries
-    val preferredStem = preferredName.substringBeforeLast('.').lowercase()
+    val basename=preferredName.substringAfterLast('/').substringAfterLast('\\')
+    eligible.singleOrNull { it.name.equals(basename,ignoreCase=true) }?.let { return it.bytes }
+    if(requireExactMember) {
+        val forced=Regex("(?i)forced|foreign[ ._-]*parts")
+        if(eligible.size==1 && (!forced.containsMatchIn(eligible.single().name) || forced.containsMatchIn(basename)))return eligible.single().bytes
+        throw SubtitleException("This archive has no unambiguous file for the selected subtitle")
+    }
+    val preferredStem = basename.substringBeforeLast('.').lowercase()
     return eligible.maxByOrNull { entry ->
         val stem = entry.name.substringBeforeLast('.').lowercase()
         commonPrefixLength(stem, preferredStem) + if (entry.name.endsWith(".srt", true)) 10 else 0

@@ -639,7 +639,24 @@ export async function downloadSubdlSubtitle(
           authorization: `Bearer ${key}`,
         },
       });
+      if (response.status === 409) {
+        await response.body?.cancel();
+        fallback.searchParams.set('format', 'zip');
+        // v2 can require its original archive even for an unpacked-file link.
+        // The client retains the selected filename and extracts that member.
+        response = await fetchWithTimeout(fallback, {
+          headers: {
+            accept: 'application/zip, application/octet-stream',
+            'user-agent': userAgent,
+            authorization: `Bearer ${key}`,
+          },
+        });
+      }
     }
+  }
+  if (response.status === 429) {
+    await response.body?.cancel();
+    throw new ServiceError('SUBDL_RATE_LIMITED', 'Subtitle provider download capacity has been reached', 429, true);
   }
   if (!response.ok || !response.body) {
     const errorBody = await response.text().catch(() => '');

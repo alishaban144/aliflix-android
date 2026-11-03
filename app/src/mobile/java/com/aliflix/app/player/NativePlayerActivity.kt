@@ -65,13 +65,16 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     override suspend fun prepareTalkRecall(query: String, fullStory: Boolean): JSONObject? {
         val current = selection ?: return talkRecall(query)
         val requestId = NativePlaybackService.activeRequestId ?: return talkRecall(query)
-        if (NativePlaybackService.episodeCaptionCues().isEmpty()) {
+        if(com.aliflix.app.BuildConfig.DEBUG)android.util.Log.d("TalkEdition", "prepare duration=${controller?.duration} selectedEnd=${NativePlaybackService.episodeCaptionCues().maxOfOrNull { it.endSeconds }}")
+        if (talkShouldCompareCaptionEdition(NativePlaybackService.episodeCaptionCues(), controller?.duration ?: 0L,
+                current.media.type == com.aliflix.app.model.MediaType.MOVIE)) {
             val language = canonicalSubtitleLanguageCode(NativePlaybackService.selectedAudioLanguage().orEmpty())
                 .takeIf { code -> com.aliflix.app.model.SubtitleLanguage.entries.any { it.code == code } } ?: "en"
             talkTranscript.prepare(requestId, current, language,
                 ui.subtitleTracks + NativePlaybackService.activeRequest?.sourceCaptionTracks().orEmpty(),
                 controller?.duration ?: 0L,
-                { !isDestroyed && selection?.key == current.key && NativePlaybackService.activeRequestId == requestId })
+                { !isDestroyed && selection?.key == current.key && NativePlaybackService.activeRequestId == requestId },
+                latestDurationMs={controller?.duration ?: 0L})
                 ?.let(sceneMemory::transcript)
         }
         val packet = sceneMemory.recall(query, fullStory) ?: return null

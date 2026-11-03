@@ -78,8 +78,8 @@ import java.util.Locale
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onClose: () -> Unit, touchTracker:DiscoverTouchTracker?=null,
-    playerOverlay:Boolean=false,composerDraft:MutableState<TextFieldValue>?=null,showComposer:Boolean=false,showTranscript:Boolean=false) {
-    val state by session.state.collectAsState()
+    playerOverlay:Boolean=false,composerDraft:MutableState<TextFieldValue>?=null,showComposer:Boolean=false,showTranscript:Boolean=false,initialOrbPose:TalkOrbPose?=null) {
+    val state by rememberTalkPresentation(session)
     val titleContext=LocalContext.current
     fun openTitle(title:TalkTitleCard){titleContext.startActivity(Intent(titleContext,TalkTitleActivity::class.java).putExtra("title",title.media().toJson().toString()))}
     val chats by session.history.chats.collectAsState()
@@ -109,6 +109,14 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
     val tracker=touchTracker ?: localTracker
     val resumed=rememberMobileResumed()
     val motion=rememberMobileMotionEnabled() && resumed
+    val orbActivity=talkOrbActivity(state)
+    val orbAppearance=remember(orbActivity) { talkOrbAppearance(orbActivity) }
+    val playerMoment=remember(playerOverlay,state.phase,state.conversationId) {
+        if(playerOverlay)TalkPlayerConnection.current()?.talkSnapshot()?.let { player ->
+            val seconds=player.optDouble("positionSeconds",0.0).toInt().coerceAtLeast(0)
+            player.optString("title").takeIf { it.isNotBlank() }?.let { "$it · ${seconds/60}:${(seconds%60).toString().padStart(2,'0')}" }
+        } else null
+    }
     LaunchedEffect(resumed,agentTasks){
         if(resumed&&!agentTasks)while(true){
             runCatching{session.agent.refresh()}
@@ -130,12 +138,15 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
     fun send(){if(draft.text.isNotBlank()){session.sendText(draft.text);draft=TextFieldValue()}}
     BoxWithConstraints(Modifier.fillMaxSize().background(AliflixBackgroundBase).imePadding().observeDiscoverTouches(tracker).onGloballyPositioned{screenOrigin=it.boundsInRoot().topLeft;screenSize=it.size}.testTag("talk-screen")) {
         val compactComposer=chatLayout&&maxHeight<320.dp
-        TalkPixelField("",state.phase,{state.level},motion&&!chatLayout,Modifier.fillMaxSize().graphicsLayer { alpha=if(chatLayout).15f else .52f })
+        Box(Modifier.fillMaxSize().background(Brush.radialGradient(
+            listOf(AliflixAccentSecondary.copy(alpha=if(chatLayout).035f else .085f),Color.Transparent),
+            center=Offset(screenSize.width*.5f,screenSize.height*.36f),radius=(screenSize.height*.66f).coerceAtLeast(1f))))
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.displayCutout)).padding(horizontal=20.dp)) {
             Row(Modifier.fillMaxWidth().padding(vertical=if(compactComposer)0.dp else 8.dp),verticalAlignment=Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     if(!compactComposer)Text("ALIFLIX",color=AliflixAccentSecondary,fontSize=9.sp,letterSpacing=3.sp,fontWeight=FontWeight.Bold)
-                    Text(if(state.textMode)"Ask Aliflix" else "Talk",color=AliflixContentPrimary,fontSize=if(compactComposer)20.sp else 25.sp,fontWeight=FontWeight.SemiBold,maxLines=1)
+                    Text("Talk",color=AliflixContentPrimary,fontSize=if(compactComposer)20.sp else 25.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
+                    if(!compactComposer&&playerMoment!=null)Text(playerMoment,color=AliflixContentSecondary,fontSize=12.sp,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=4.dp))
                 }
                 AliflixIconButton(onClick={session.setTextMode(!state.textMode);onStart()},modifier=Modifier.testTag("talk-chat-mode").semantics { stateDescription=if(state.textMode)"Text chat selected" else "Voice selected" }) {
                     Icon(if(state.textMode)Icons.Rounded.GraphicEq else Icons.Rounded.EditNote,if(state.textMode)"Voice conversation" else "Chat",tint=AliflixAccentSecondary)
@@ -212,7 +223,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                     }
                     if(talkShowsResponseProgress(state.sending,state.answerComplete))item(key="response-status") { Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.semantics { liveRegion=LiveRegionMode.Polite }.testTag("talk-response-status")) {
                         TalkThinking(motion);Spacer(Modifier.width(10.dp))
-                        Text("Thinking..",color=AliflixContentTertiary,fontSize=12.sp)
+                        Text(talkOrbAppearance(talkOrbActivity(state)).label,color=AliflixContentTertiary,fontSize=12.sp)
                     } }
                   }
                   if(!following&&list.canScrollForward)FilledTonalIconButton(onClick={following=true},modifier=Modifier.align(Alignment.BottomCenter)) { Icon(Icons.Rounded.ArrowDownward,"Latest message") }
@@ -233,6 +244,9 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 }
             } else {
                 Box(anchor(Modifier.fillMaxWidth().weight(.56f)),contentAlignment=Alignment.Center) {}
+                AnimatedContent(orbAppearance.label,transitionSpec={fadeIn(tween(if(motion)180 else 0)) togetherWith fadeOut(tween(if(motion)100 else 0))},label="talk-activity") { label ->
+                    Text(label,color=AliflixContentSecondary,fontSize=13.sp,modifier=Modifier.fillMaxWidth().semantics { liveRegion=LiveRegionMode.Polite },textAlign=androidx.compose.ui.text.style.TextAlign.Center)
+                }
                 Box(Modifier.fillMaxWidth().weight(.32f),contentAlignment=Alignment.Center) { TalkDottedTopic(state.words,motion) }
                 TalkTitleCards(state.cards.visible,::openTitle,Modifier.padding(bottom=8.dp),motion=motion,focusedKey=state.spokenCardKey,onBounds={key,bounds->cardBounds[key]=bounds;if(com.aliflix.app.BuildConfig.DEBUG)session.debugCardBounds[key]=bounds})
                 if(idle&&state.phase!="Ready") Text(state.phase,color=AliflixContentSecondary,fontSize=12.sp,modifier=Modifier.align(Alignment.CenterHorizontally).padding(bottom=12.dp))
@@ -265,7 +279,8 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
             val y=desiredY.coerceIn(minOf(orbAnchor.center.y,orbAnchor.top+margin),maxOf(orbAnchor.center.y,orbAnchor.bottom-margin))-screenOrigin.y
             val panel=agentTasks||recent||privacy||voices
             val goal=if(panel)TalkOrbPose(screenSize.width-with(density){52.dp.toPx()},WindowInsets.systemBars.getTop(density)+with(density){104.dp.toPx()},with(density){42.dp.toPx()})else TalkOrbPose(x,y,diameter)
-            TalkFloatingOrb(goal,if(panel)0f else roam,state.phase,{state.level},motion,tracker,if(compact)"talk-chat-orb" else "talk-orb",if(panel||compact)null else focusedBounds?.center)
+            TalkFloatingOrb(goal,if(panel)0f else roam,state.phase,{session.state.value.level},motion,tracker,if(compact)"talk-chat-orb" else "talk-orb",if(panel||compact)null else focusedBounds?.center,
+                activity=talkOrbActivity(state,keyboardOpen&&!state.sending),initialPose=initialOrbPose)
         }
         if(recent||privacy||voices) ModalBottomSheet(onDismissRequest={recent=false;privacy=false;voices=false},containerColor=AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated)) {
             Column(Modifier.fillMaxWidth().padding(horizontal=22.dp).navigationBarsPadding().padding(bottom=20.dp)) {
@@ -402,10 +417,16 @@ private class TalkParticleField(private val width: Int, private val height: Int,
 /** Native adaptation of Unlumen Glow's five-second, linear conic rotation.
  * A feathered radial alpha replaces CSS blur: no rings, clipped layers or resets
  * between listening/speaking. The uninterrupted clock and PCM envelope are separate. */
-@Composable internal fun TalkLiveOrb(phase:String,level:()->Float,motion:Boolean,modifier:Modifier=Modifier,tracker:DiscoverTouchTracker=remember{DiscoverTouchTracker()},attention:Offset?=null) {
+@Composable internal fun TalkLiveOrb(phase:String,level:()->Float,motion:Boolean,modifier:Modifier=Modifier,tracker:DiscoverTouchTracker=remember{DiscoverTouchTracker()},attention:Offset?=null,
+    activity:TalkOrbActivity?=null) {
+    val appearance=remember(activity,phase) { talkOrbAppearance(activity ?: talkOrbPhaseActivity(phase)) }
     val seconds=rememberMobileAnimationClock(motion)
     val currentLevel by rememberUpdatedState(level)
     var energy by remember{mutableFloatStateOf(0f)}
+    var lightRotation by remember { mutableFloatStateOf(0f) }
+    val glow=animateFloatAsState(appearance.glow,tween(if(motion)240 else 0),label="orb-activity-light")
+    val flow=animateFloatAsState(appearance.flow,tween(if(motion)320 else 0),label="orb-activity-flow")
+    val tilt=animateFloatAsState(appearance.tilt,if(motion)spring(dampingRatio=.9f,stiffness=240f)else tween(0),label="orb-attention-tilt")
     LaunchedEffect(motion){
         if(!motion){energy=0f;return@LaunchedEffect}
         var previous=0L
@@ -415,10 +436,10 @@ private class TalkParticleField(private val width: Int, private val height: Int,
                 // while the light never collapses between phonemes.
                 val tau=if(target>energy).045f else .27f
                 energy+=(target-energy)*(1f-exp(-dt/tau))
+                lightRotation=(lightRotation+dt*72f*flow.value)%360f
             };previous=now
         }
     }
-    val ready by animateFloatAsState(if(phase in listOf("Listening","Speaking","Thinking","Muted"))1f else .12f,tween(if(motion)650 else 0),label="listening-light")
     var bounds by remember {mutableStateOf(IntSize.Zero)}
     val lights=remember(bounds){
         if(bounds.width<=0||bounds.height<=0)null else{
@@ -435,19 +456,20 @@ private class TalkParticleField(private val width: Int, private val height: Int,
             aura to rim
         }
     }
-    Box(modifier.onSizeChanged{bounds=it}.semantics {contentDescription="Aliflix voice: $phase"},contentAlignment=Alignment.Center){
+    Box(modifier.onSizeChanged{bounds=it}.semantics {contentDescription="Aliflix voice: ${appearance.label}";stateDescription=appearance.label},contentAlignment=Alignment.Center){
         Canvas(Modifier.fillMaxSize()){
-            val extent=size.minDimension*.475f;val breath=1f+sin(seconds.value*.82f)*.006f+energy*.02f
+            val extent=size.minDimension*.475f;val breath=1f+sin(seconds.value*.82f)*appearance.breath+energy*.02f
             lights?.let{(aura,rim)->
-                rotate(seconds.value*72f){scale(breath){drawCircle(aura,extent,alpha=ready*(.53f+energy*.37f))}}
+                rotate(lightRotation){scale(breath){drawCircle(aura,extent,alpha=(glow.value+energy*.25f).coerceIn(0f,1f))}}
                 // A second feathered light moves independently along the inner
                 // corona, rather than drawing a hard ring or restarting a pulse.
-                rotate(-seconds.value*31f+38f){scale(1f+energy*.012f){drawCircle(rim,extent,alpha=ready*(.17f+energy*.36f))}}
+                rotate(-lightRotation*.43f+38f){scale(1f+energy*.012f){drawCircle(rim,extent,alpha=glow.value*(.23f+energy*.36f))}}
             }
         }
         DiscoverLiveOrb(tracker,Modifier.fillMaxSize(.66f).graphicsLayer{
-            scaleX=1f+energy*.012f;scaleY=scaleX
+            scaleX=1f+energy*.012f;scaleY=1f-energy*.004f;rotationZ=tilt.value
             translationY=if(motion)sin(seconds.value*.95f)*.65.dp.toPx() else 0f
-        },conversing=phase=="Speaking",voiceCompanion=true,voiceEnergy={energy},attention=attention)
+        },conversing=phase=="Speaking",voiceCompanion=true,voiceEnergy={energy},attention=attention,
+            expression=appearance.face,motionEnabled=motion)
     }
 }

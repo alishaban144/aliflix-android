@@ -39,7 +39,10 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
     private val captureMutex = Mutex()
     private var retrievedTranscript: TalkTranscript? = null
 
-    fun transcript(value: TalkTranscript) { observe(snapshot()); retrievedTranscript = value }
+    fun transcript(value: TalkTranscript) {
+        observe(snapshot())
+        if (retrievedTranscript != value) { retrievedTranscript = value; cached = null }
+    }
 
     fun retrievedFrames(values: List<TalkSceneFrame>) {
         val position = observe(snapshot())
@@ -107,7 +110,8 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
     fun recall(query: String, fullStory: Boolean = false): JSONObject? {
         val state = snapshot(); val position = observe(state)
         if (state.optString("contentKey").isBlank()) return null
-        val exact = NativePlaybackService.episodeCaptionCues()
+        val selected = NativePlaybackService.episodeCaptionCues()
+        val exact = if (talkPrefersRetrievedCaptionEdition(selected, retrievedTranscript, state.optDouble("durationSeconds"))) emptyList() else selected
         val source = when { exact.isNotEmpty() -> "timed_captions"; retrievedTranscript != null -> retrievedTranscript!!.source; observedCaptions.isNotEmpty() -> "observed_captions"; else -> "none" }
         val cues = when { exact.isNotEmpty() -> exact; retrievedTranscript != null -> retrievedTranscript!!.cues; else -> observedCaptions.toList() }
         val request = parseTalkRecallRequest(query, position)
@@ -139,7 +143,7 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
     fun current(): TalkSceneContext? {
         val state = snapshot(); val position = observe(state)
         return cached?.takeIf { it.identity == identity && it.revision == revision && abs(it.anchorSeconds - position) < .8 &&
-            it.metadata.optString("subtitleEdition") == state.optString("subtitleEdition") }
+            it.metadata.optString("displayedSubtitleEdition", it.metadata.optString("subtitleEdition")) == state.optString("subtitleEdition") }
     }
 
     suspend fun capture(includeAudio: Boolean = false): TalkSceneContext? = captureMutex.withLock { captureOnce(includeAudio) }
@@ -169,8 +173,11 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
         }
         if (owner != identity || generation != revision) return null
         val selected = sceneFrameSelection(frames.toList(), position)
-        val exactCues = NativePlaybackService.episodeCaptionCues()
-        val timed = NativePlaybackService.sceneCaptionEvidence(position).ifEmpty {
+        val selectedCues = NativePlaybackService.episodeCaptionCues()
+        val retrieved = retrievedTranscript.takeIf { talkPrefersRetrievedCaptionEdition(selectedCues, it, state.optDouble("durationSeconds")) }
+        val exactCues = retrieved?.cues ?: selectedCues
+        val timed = (retrieved?.cues?.filter { it.startSeconds <= position && it.endSeconds >= position - 45 }
+            ?: NativePlaybackService.sceneCaptionEvidence(position)).ifEmpty {
             observedCaptions.filter { it.startSeconds <= position && it.startSeconds >= position - 45 }
         }.takeLast(12)
         val words = NativePlaybackService.dialogueWordHistory(position).filter { it.start >= position - 40 && it.playedThrough <= position }.takeLast(100)
@@ -181,8 +188,9 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
             .put("season", state.opt("season")).put("episode", state.opt("episode"))
             .put("anchorSeconds", position).put("viewedThroughSeconds", position).put("replayStartSeconds", replay)
             .put("audioLanguage", state.opt("audioLanguage")).put("subtitleLanguage", state.opt("subtitles"))
-            .put("subtitleEdition", state.optString("subtitleEdition"))
-            .put("episodeTranscript", JSONObject().put("source", if (exactCues.isNotEmpty()) "timed_captions" else if (observedCaptions.isNotEmpty()) "observed_captions" else "none")
+            .put("subtitleEdition", retrieved?.edition ?: state.optString("subtitleEdition"))
+            .put("displayedSubtitleEdition", state.optString("subtitleEdition"))
+            .put("episodeTranscript", JSONObject().put("source", retrieved?.source ?: if (exactCues.isNotEmpty()) "timed_captions" else if (observedCaptions.isNotEmpty()) "observed_captions" else "none")
                 .put("cueCount", exactCues.size).put("observedCueCount", observedCaptions.size)
                 .put("availableThroughSeconds", position).put("visualBeatCount", visualBeats.count { it.seconds <= position }))
             .put("audioChecked", includeAudio).put("playedAudio", audio?.let { JSONObject().put("startSeconds", it.startSeconds).put("endSeconds", it.endSeconds) })

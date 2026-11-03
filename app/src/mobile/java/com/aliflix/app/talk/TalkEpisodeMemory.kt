@@ -238,9 +238,13 @@ internal fun buildTalkRecallPacket(
         request.mode in setOf(TalkRecallMode.SEARCH, TalkRecallMode.CONTEXT) &&
         scenes.sumOf { it.text.length } > 12_000 &&
         !Regex("(?i)\\b(opening|beginning|start of|first scene)\\b").containsMatchIn(query)
+    val availableCues=scenes.flatMap { it.cues }
+    val weightedTerms=request.terms.map { term -> term to (1.0+kotlin.math.ln((availableCues.size+1.0)/(availableCues.count { it.text.contains(term,true) }+1.0))) }
+    val hits=if(focusedQuestion)availableCues.map { cue -> cue to weightedTerms.sumOf { (term,weight) -> if(cue.text.contains(term,true))weight else 0.0 } }
+        .filter { it.second>0 }.sortedByDescending { it.second }.take(8).map { it.first } else emptyList()
     val storyScenes = if (focusedQuestion) buildTalkCueScenes(cues.filter { cue ->
-        cue.endSeconds >= anchorSeconds - 600 || selected.any { choice ->
-            cue.startSeconds <= choice.scene.endSeconds + 30 && cue.endSeconds >= choice.scene.startSeconds - 30
+        cue.endSeconds >= anchorSeconds - 300 || hits.any { hit ->
+            cue.startSeconds <= hit.endSeconds + 25 && cue.endSeconds >= hit.startSeconds - 25
         }
     }, anchorSeconds)
         else if (focusedPrevious) buildTalkCueScenes(cues.filter { it.endSeconds >= anchorSeconds - 600 }, anchorSeconds)
@@ -250,6 +254,8 @@ internal fun buildTalkRecallPacket(
         .put("coverage", if (focusedQuestion) "question_context" else if (focusedPrevious) "recent_context" else "chronological_prefix")
         .put("fullPrefixAvailable", captionSource !in setOf("none", "observed_captions"))
         .put("fromSeconds", storyScenes.firstOrNull()?.startSeconds ?: 0.0)
+    val suppliedCues=storyScenes.flatMap { it.cues }.take(story.getInt("includedCues")).toHashSet()
+    fun supplied(scene:TalkCueScene)=request.mode!=TalkRecallMode.TIMESTAMP && (focusedQuestion || scene.cues.all(suppliedCues::contains))
     val latestDialogue = scenes.lastOrNull()
     val currentScene = latestDialogue?.takeIf { anchorSeconds <= it.endSeconds + 1.5 }
     val gaps = mutableListOf<String>()
@@ -286,11 +292,11 @@ internal fun buildTalkRecallPacket(
         .put("watchedRanges", JSONArray(watchedRanges.map { range ->
             JSONArray().put(range.start.coerceAtLeast(0.0)).put(range.endInclusive.coerceAtLeast(range.start))
         }))
-        .put("currentScene", currentScene?.let { sceneJson(it, "current", request, watchedRanges, visualBeatSeconds, summaryOnly = focusedQuestion) })
-        .put("latestDialogue", latestDialogue?.let { sceneJson(it, "latest_exchange", request, watchedRanges, visualBeatSeconds, summaryOnly = focusedQuestion) })
+        .put("currentScene", currentScene?.let { sceneJson(it, "current", request, watchedRanges, visualBeatSeconds, summaryOnly = supplied(it)) })
+        .put("latestDialogue", latestDialogue?.let { sceneJson(it, "latest_exchange", request, watchedRanges, visualBeatSeconds, summaryOnly = supplied(it)) })
         .put("dialogueWindowsAreSceneBoundaries", false)
         .put("participantIdentities", "Unverified: these captions do not attribute speakers or bind character names to faces. Use roles/descriptions unless exact dialogue or separately grounded evidence identifies the participant. Never assign a name or spouse relationship from remembered cast/plot familiarity.")
-        .put("scenes", JSONArray(selected.map { sceneJson(it.scene, it.role, request, watchedRanges, visualBeatSeconds, summaryOnly = focusedQuestion) }))
+        .put("scenes", JSONArray(selected.map { sceneJson(it.scene, it.role, request, watchedRanges, visualBeatSeconds, summaryOnly = supplied(it.scene)) }))
         .put("evidenceGaps", JSONArray(gaps))
         .put("responseLanguage", responseLanguage ?: JSONObject.NULL)
         .put("scope", scopeInstruction)

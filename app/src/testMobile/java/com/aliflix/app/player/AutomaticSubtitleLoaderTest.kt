@@ -8,6 +8,40 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AutomaticSubtitleLoaderTest {
+    @Test fun sourceDurationArrivingDuringDownloadStillSelectsTheMatchingLongerEdition() = runTest {
+        var duration=0L
+        val theatrical=listOf(SubtitleCue(125.0,130.0,"We need to go back home."),SubtitleCue(8280.0,8289.0,"We made it home."))
+        val extended=theatrical.dropLast(1)+SubtitleCue(8860.0,8868.0,"We made it home.")
+        val result=AutomaticSubtitleLoader({listOf(track("theatrical"),track("extended"))},{emptyList()},
+            { duration=9_080_654;if(it.id=="theatrical")theatrical else extended })
+            .load(movie,"EN",0,23.976f,{true},latestDurationMs={duration})
+        assertEquals("extended",result?.track?.id)
+        assertEquals(duration,result?.timingDurationMs)
+    }
+    @Test fun independentCatalogueCanRecoverEarlierDialogueWithoutThePrimaryProvider() = runTest {
+        var primarySearched=false
+        val result=AutomaticSubtitleLoader({emptyList()},{primarySearched=true;error("provider limited")},{english},
+            alternateTracks={listOf(track("independent"))}).load(movie,"EN",0,24f,{true})
+        assertEquals("independent",result?.track?.id)
+        assertFalse(primarySearched)
+    }
+    @Test fun missingAlternateCatalogueStillAllowsThePrimarySearch() = runTest {
+        val result=AutomaticSubtitleLoader({emptyList()},{listOf(track("primary"))},{english},
+            alternateTracks={throw java.io.IOException("unavailable")}).load(movie,"EN",0,24f,{true})
+        assertEquals("primary",result?.track?.id)
+    }
+    @Test fun aCompleteTheatricalTrackDoesNotPreventCheckingForTheLongerSourceEdition() = runTest {
+        val theatrical=listOf(SubtitleCue(125.0,130.0,"We need to get back home."),SubtitleCue(8280.0,8289.0,"We made it home."))
+        val extended=theatrical.dropLast(1)+SubtitleCue(8860.0,8868.0,"We made it home.")
+        val result=AutomaticSubtitleLoader({listOf(track("theatrical"))},{listOf(track("extended",name="Movie.EXTENDED.BluRay"))},
+            { if(it.id=="theatrical")theatrical else extended }).load(movie,"EN",9_080_654,23.976f,{true})
+        assertEquals("extended",result?.track?.id)
+    }
+    @Test fun aSourceWithLongCreditsIsRetainedWhenNoBetterMatchingEditionExists() = runTest {
+        val full=listOf(SubtitleCue(125.0,130.0,"We need to get back home."),SubtitleCue(8280.0,8289.0,"We made it home."))
+        val result=AutomaticSubtitleLoader({listOf(track("source"))},{emptyList()},{full}).load(movie,"EN",9_080_654,23.976f,{true})
+        assertEquals("source",result?.track?.id)
+    }
     @Test fun decodedCadenceCanArriveAfterAFastCatalogueResponse() = runTest {
         var fps = -1f
         launch { delay(250); fps = 23.976f }

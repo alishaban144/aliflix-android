@@ -7,8 +7,8 @@ import kotlin.math.*
  * Attribution and full notice: assets/talk-orb-motion-license.txt. */
 internal data class TalkOrbPose(val x:Float,val y:Float,val diameter:Float,val bank:Float=0f)
 
-internal class TalkOrbFlight {
- private var pose:TalkOrbPose?=null
+internal class TalkOrbFlight(initialPose:TalkOrbPose?=null) {
+ private var pose:TalkOrbPose?=initialPose
  private var vx=0f;private var vy=0f;private var vs=0f
  private var phase="";private var arousal=0f
  private var attentionX=0f;private var attentionY=0f
@@ -32,18 +32,19 @@ internal class TalkOrbFlight {
   val aimX=target.x+(attentionX+pointerX.coerceIn(-1f,1f)*follow)*roam
   val aimY=target.y+(attentionY+pointerY.coerceIn(-1f,1f)*follow)*roam*.6f-arousal*roam*.15f
   val size=target.diameter*(1f+arousal*(if(state=="Listening").035f else .022f))
-  var p=requireNotNull(pose)
+  val previous=requireNotNull(pose)
+  var x=previous.x;var y=previous.y;var diameter=previous.diameter
   // Regard's head arrives after attention. Retain all velocities when a card,
   // keyboard or mode changes the target; no animation is restarted mid-flight.
   val steps=maxOf(1,ceil(dt/.008f).toInt());val h=dt/steps
   repeat(steps){
-   val omega=5f
-   vx+=((aimX-p.x)*omega*omega-2f*omega*vx)*h
-   vy+=((aimY-p.y)*omega*omega-2f*omega*vy)*h
-   vs+=((size-p.diameter)*36f-12f*vs)*h
-   p=p.copy(x=p.x+vx*h,y=p.y+vy*h,diameter=(p.diameter+vs*h).coerceAtLeast(1f))
+   val omega=8f
+   vx+=((aimX-x)*omega*omega-2f*omega*vx)*h
+   vy+=((aimY-y)*omega*omega-2f*omega*vy)*h
+   vs+=((size-diameter)*64f-16f*vs)*h
+   x+=vx*h;y+=vy*h;diameter=(diameter+vs*h).coerceAtLeast(1f)
   }
-  p=p.copy(bank=(-vx/300f).coerceIn(-.8f,.8f))
+  val p=TalkOrbPose(x,y,diameter,(-vx/300f).coerceIn(-.8f,.8f))
   pose=p;return p
  }
 }

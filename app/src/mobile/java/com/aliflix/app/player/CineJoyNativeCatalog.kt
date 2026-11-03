@@ -109,6 +109,28 @@ internal object CineJoyNativeCatalog {
         }.distinct()
     }
 
+    internal fun parseCaptionOptions(decrypted: JSONObject, playlist: String): String {
+        val streams=decrypted.optJSONObject("result")?.optJSONObject("data")?.optJSONArray("stream") ?: return "[]"
+        val result=org.json.JSONArray()
+        for(index in 0 until streams.length()) {
+            val stream=streams.optJSONObject(index) ?: continue
+            if(stream.optString("playlist").ifBlank { stream.optString("url") }!=playlist)continue
+            val captions=stream.optJSONArray("captions") ?: continue
+            for(n in 0 until minOf(captions.length(),80)) {
+                val caption=captions.optJSONObject(n) ?: continue
+                val raw=caption.optString("file").ifBlank { caption.optString("url").ifBlank { caption.optString("src") } }
+                val language=canonicalSubtitleLanguageCode(caption.optString("language").ifBlank { caption.optString("lang").ifBlank { caption.optString("label") } })
+                if(raw.isBlank() || com.aliflix.app.model.SubtitleLanguage.entries.none { it.code==language })continue
+                val uri=runCatching { java.net.URI(playlist).resolve(raw) }.getOrNull() ?: continue
+                if(uri.scheme!="https" || uri.host.isNullOrBlank() || uri.userInfo!=null)continue
+                result.put(JSONObject().put("language",language).put("label",caption.optString("label",language)).put("file",uri.toString()))
+            }
+        }
+        return result.toString()
+    }
+
+    private data class Playlist(val url:String,val captions:String)
+
     /** Reject child playlists: they omit the site's alternate audio menu. */
     fun audioTracksInMaster(manifest: String): List<String> {
         if (!manifest.lineSequence().firstOrNull()?.trim().orEmpty().startsWith("#EXTM3U") ||
@@ -153,7 +175,7 @@ internal object CineJoyNativeCatalog {
         selection: PlaybackSelection,
         server: String,
         userAgent: String,
-    ): List<String> = withContext(Dispatchers.IO) {
+    ): List<Playlist> = withContext(Dispatchers.IO) {
         currentCoroutineContext().ensureActive()
         val inner = innerUrl(selection, server)
         val encPayload = httpGet("$ENC_ENDPOINT?url=${encode(inner)}", userAgent)
@@ -170,7 +192,7 @@ internal object CineJoyNativeCatalog {
             .toString(Charsets.UTF_8)
         val dec = JSONObject(decPayload)
         check(dec.optInt("status") == 200) { dec.optString("error").takeIf { it.isNotBlank() } ?: "CineJoy decrypt failed" }
-        parsePlaylists(dec)
+        parsePlaylists(dec).map { Playlist(it,parseCaptionOptions(dec,it)) }
     }
 
     suspend fun resolve(
@@ -212,8 +234,9 @@ internal object CineJoyNativeCatalog {
             firstSuccessful(candidates.map { server -> suspend {
                 currentCoroutineContext().ensureActive()
                 val playlists = playlistsForServer(selection, server, userAgent)
-                val master = playlists.firstOrNull()
+                val entry = playlists.firstOrNull()
                     ?: throw NoNativeServersException()
+                val master=entry.url
                 val body = httpGet(master, userAgent)
                 val manifest = CineJoyHlsProbe.master(master, body)
                 // A media playlist can carry muxed audio/video without variants.
@@ -235,6 +258,7 @@ internal object CineJoyNativeCatalog {
                     selectionJson = selection.nativeJson(),
                     preferredVideoWidth = video?.width ?: 0,
                     preferredVideoHeight = video?.height ?: 0,
+                    sourceSubtitleOptions = entry.captions,
                 )
                 // A foreground/preload race must verify usable media before this server wins.
                 // Pinned recovery can still use the catalogue without a speculative gate.
