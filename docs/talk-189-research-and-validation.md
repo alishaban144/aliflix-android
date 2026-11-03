@@ -27,6 +27,8 @@ The app already contains independent original Flixer subtitle catalogues. Both w
 
 Runtime/cadence and edition labels rank candidates; they do not certify alignment. Automatic movie selection checks beyond a first complete-looking theatrical file when the longer source suggests another edition. Long-credits candidates remain available if no better edition is found. Different cuts can require piecewise alignment; runtime proximity alone must never be described as proof of every timestamp.
 
+The phone test also exposed two cache paths: a transcript selected before runtime was known, and a shorter cut already restored as selected captions. The first is re-evaluated when duration becomes available. The second triggers independent Talk comparison; a materially closer retrieved edition supplies both current dialogue and earlier-story evidence without changing visible subtitles. This comparison is a ranking heuristic, not verified piecewise alignment.
+
 ## Motion and interaction
 
 Applied the installed Motion skill's universal guidance and UI/UX Pro Max's native Compose guidance. The implementation uses native Compose APIs. Motion represents actual state, retains continuity across interruption, uses short physical transitions, and respects Android's animation preference. Rendering work is deferred to draw/layer phases rather than recomposing the full conversation for every audio-level update. [Compose animation guidance](https://developer.android.com/develop/ui/compose/animation/quick-guide), [Android performance reference](https://github.com/android/skills/blob/main/jetpack-compose/jetpack-compose-performance/references/animation.md)

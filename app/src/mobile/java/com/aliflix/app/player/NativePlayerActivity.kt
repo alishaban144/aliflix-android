@@ -65,7 +65,8 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     override suspend fun prepareTalkRecall(query: String, fullStory: Boolean): JSONObject? {
         val current = selection ?: return talkRecall(query)
         val requestId = NativePlaybackService.activeRequestId ?: return talkRecall(query)
-        if (NativePlaybackService.episodeCaptionCues().isEmpty()) {
+        if (talkShouldCompareCaptionEdition(NativePlaybackService.episodeCaptionCues(), controller?.duration ?: 0L,
+                current.media.type == com.aliflix.app.model.MediaType.MOVIE)) {
             val language = canonicalSubtitleLanguageCode(NativePlaybackService.selectedAudioLanguage().orEmpty())
                 .takeIf { code -> com.aliflix.app.model.SubtitleLanguage.entries.any { it.code == code } } ?: "en"
             talkTranscript.prepare(requestId, current, language,
