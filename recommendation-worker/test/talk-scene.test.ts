@@ -55,12 +55,26 @@ describe('native player scene companion', () => {
  it('leaves earlier installed clients on the prior evidence contract', () => {
   expect(setup(12).systemInstruction.parts[0].text).not.toContain('PLAYER SCENE COMPANION');
  });
+ it('gives story-capable clients causal earlier context without relaxing the spoiler ceiling', () => {
+  const prompt=setup(15,true).systemInstruction.parts[0].text;
+  expect(prompt).toContain('STORY CAUSAL REASONING');
+  expect(prompt).toContain('storyThroughAnchor');
+  expect(prompt).toContain('Earlier events are allowed; future events are not');
+  expect(prompt).toContain('A list of frame timestamps alone is NOT visual evidence');
+  expect(setup(14).systemInstruction.parts[0].text).not.toContain('STORY CAUSAL REASONING');
+ });
 });
 
 describe('independent scene observation',()=>{
  const scene=()=>ScenePacketSchema.parse({anchorSeconds:80,frames:[{seconds:76,data:'/9j/AA=='}],dialogue:[{start:73,end:77,text:'Keep this sealed until Friday.'}],heardDialogue:''});
  const observation=()=>({visiblePeople:['A man at a desk'],timeline:[{event:'A sealed message has an instruction about Friday.',frames:[0],dialogue:[0],heard:false}],safeSummary:'The message is being withheld until Friday; its contents have not been shown.',spokenDialogue:'',unknowns:['The contents of the message are not visible.']});
  const config={...env,CURSOR_SIGNING_SECRET:'scene-test-only',GEMINI_API_KEY:'scene-test-only'};
+ it('accepts eight temporal samples but fences both excess frames and future timestamps',()=>{
+  const packet={...scene(),frames:Array.from({length:8},(_,index)=>({seconds:72+index,data:'/9j/AA=='}))};
+  expect(ScenePacketSchema.safeParse(packet).success).toBe(true);
+  expect(ScenePacketSchema.safeParse({...packet,frames:[...packet.frames,packet.frames[0]]}).success).toBe(false);
+  expect(ScenePacketSchema.safeParse({...packet,frames:[{seconds:81,data:'/9j/AA=='}]}).success).toBe(false);
+ });
  it('sends actual frames and dialogue without title, episode or cast priors',()=>{
   const packet={...scene(),title:'Dark',episode:1,cast:['Jonas']};
   const body=sceneObservationBody(packet);const serialized=JSON.stringify(body);

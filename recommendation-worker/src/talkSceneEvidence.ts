@@ -5,7 +5,7 @@ import { validateSubtitleWav, speechTimingWords } from './subtitleAudio';
 
 export const ScenePacketSchema = z.object({
  anchorSeconds:z.number().finite().min(0).max(604800),
- frames:z.array(z.object({seconds:z.number().finite().min(0),data:z.string().min(4).max(214000).regex(/^\/9j\/[A-Za-z0-9+/=\r\n]*$/)}).strict()).max(4),
+ frames:z.array(z.object({seconds:z.number().finite().min(0),data:z.string().min(4).max(214000).regex(/^\/9j\/[A-Za-z0-9+/=\r\n]*$/)}).strict()).max(8),
  dialogue:z.array(z.object({start:z.number().finite().min(0),end:z.number().finite().min(0),text:z.string().min(1).max(300)}).strict()).max(12),
  heardDialogue:z.string().max(1000).default('')
  ,audio:z.object({startSeconds:z.number().finite().min(0),endSeconds:z.number().finite().min(0),mimeType:z.literal('audio/wav'),data:z.string().min(60).max(512100).regex(/^UklGR[A-Za-z0-9+/=\r\n]*$/)}).strict().optional()

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { recommendDescribeTitles, recommendSimilarTitles } from '../src/gemini';
+import { embedForSearch, recommendDescribeTitles, recommendSimilarTitles } from '../src/gemini';
 import { EDITORIAL_RECOMMENDATIONS_PROMPT } from '../src/prompts';
 
 describe('Gemini editorial contract', () => {
@@ -25,5 +25,32 @@ describe('Gemini editorial contract', () => {
     vi.stubGlobal('fetch', fetchMock);
     await expect(recommendDescribeTitles({GEMINI_API_KEY: 'fixture'} as any, 'aliens', 'movie', {})).rejects.toMatchObject({code: 'GEMINI_UNAVAILABLE'});
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe('Gemini Embedding 2 retrieval', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it('uses the current model, independent batches and the model-2 prefix contract', async () => {
+    const fetchMock=vi.fn(async (_url:string,init?:RequestInit)=>{
+      const request=JSON.parse(String(init?.body));
+      return Response.json({embeddings:request.requests.map((_:unknown,index:number)=>({values:Array.from({length:768},(_,i)=>i===index?1:0)}))});
+    });
+    vi.stubGlobal('fetch',fetchMock);
+    const result=await embedForSearch({GEMINI_API_KEY:'fixture'} as any,'Why did she fall?', ['Someone loosened the railing.', 'The train departed.']);
+    expect(result.queryVector).toHaveLength(768);
+    expect(result.candidateVectors).toHaveLength(2);
+    const bodies=fetchMock.mock.calls.map(([url,init])=>{expect(url).toContain('/gemini-embedding-2:batchEmbedContents');return JSON.parse(String(init?.body));});
+    expect(bodies[0].requests[0].content.parts[0].text).toBe('task: search result | query: Why did she fall?');
+    expect(bodies[1].requests).toHaveLength(2);
+    expect(bodies[1].requests[0].content.parts[0].text).toBe('title: none | text: Someone loosened the railing.');
+    for(const body of bodies)for(const request of body.requests){
+      expect(request).not.toHaveProperty('taskType');
+      expect(request.embedContentConfig.outputDimensionality).toBe(768);
+    }
+    expect(result.candidateVectors[0]).not.toEqual(result.candidateVectors[1]);
+  });
+  it('rejects non-finite or wrong-dimensional vectors instead of corrupting relevance scores', async () => {
+    vi.stubGlobal('fetch',vi.fn(async()=>Response.json({embeddings:[{values:[1,2,3]}]})));
+    await expect(embedForSearch({GEMINI_API_KEY:'fixture'} as any,'question',[])).rejects.toMatchObject({code:'GEMINI_UNAVAILABLE'});
   });
 });

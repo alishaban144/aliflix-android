@@ -105,6 +105,10 @@ android {
         getByName("debug") {
             // Install device validation alongside the user's signed production app without clearing its data.
             providers.gradleProperty("aliflix.testApplicationIdSuffix").orNull?.let { applicationIdSuffix = it }
+            providers.gradleProperty("aliflix.testRecommendationBaseUrl").orNull?.let { baseUrl ->
+                require(baseUrl.matches(Regex("https?://[A-Za-z0-9.:/_-]+")))
+                buildConfigField("String", "RECOMMENDATION_AI_BASE_URL", "\"$baseUrl\"")
+            }
         }
         release {
             isMinifyEnabled = true
@@ -210,7 +214,7 @@ dependencies {
     add("mobileImplementation", "com.google.firebase:firebase-firestore")
     add("mobileImplementation", "org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
     add("mobileImplementation", "androidx.fragment:fragment-ktx:1.8.9")
-    listOf("exoplayer", "exoplayer-hls", "inspector", "session", "ui", "cast").forEach { module ->
+    listOf("exoplayer", "exoplayer-hls", "inspector", "inspector-frame", "session", "ui", "cast").forEach { module ->
         add("mobileImplementation", "androidx.media3:media3-$module:1.11.0")
     }
 

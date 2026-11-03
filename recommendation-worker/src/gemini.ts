@@ -521,11 +521,14 @@ export async function assessSimilarCandidates(
 }
 
 async function embedBatch(env: RecommendationEnv, texts: string[], taskType: 'RETRIEVAL_QUERY' | 'RETRIEVAL_DOCUMENT'): Promise<number[][]> {
-  const model = env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001';
+  const model = env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2';
   const data = await geminiFetch<GeminiEmbeddingResponse>(env, `${API_BASE}/${encodeURIComponent(model)}:batchEmbedContents`, {
     requests: texts.map(text => ({
-      model: `models/${model}`, taskType, outputDimensionality: 768,
-      content: { parts: [{ text }] },
+      model: `models/${model}`, embedContentConfig: { outputDimensionality: 768 },
+      // Embedding 2 uses text task prefixes; taskType is not supported. One
+      // batch request per document avoids aggregating independent scene vectors.
+      content: { parts: [{ text: taskType === 'RETRIEVAL_QUERY'
+        ? `task: search result | query: ${text}` : `title: none | text: ${text}` }] },
     })),
   }, 10_000);
   const embeddings = data?.embeddings;
@@ -534,10 +537,10 @@ async function embedBatch(env: RecommendationEnv, texts: string[], taskType: 'RE
   }
   return embeddings.map(entry => {
     const values = entry?.values;
-    if (!Array.isArray(values) || !values.length) {
+    if (!Array.isArray(values) || values.length !== 768 || values.some(value => typeof value !== 'number' || !Number.isFinite(value))) {
       throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini returned an invalid embedding vector', 502, true);
     }
-    return values.map(Number);
+    return values as number[];
   });
 }
 

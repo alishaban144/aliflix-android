@@ -1,0 +1,26 @@
+topic: Player Talk whole-story and timestamp-grounded scene understanding
+date: 2026-11-03
+time_range: unlimited, prioritizing current official documentation
+items:
+  - exact_native_media_and_independent_decoder
+  - source_subtitles_and_subdl
+  - opensubtitles_rest
+  - audio_description_tracks_and_licensed_scripts
+  - gemini_video_understanding
+  - gemini_embedding_2_and_cloudflare_vectorize
+  - twelvelabs
+  - videodb_azure_video_indexer_aws_bda
+  - narrative_scene_graph_and_prefix_summaries
+  - causal_temporal_and_long_video_benchmarks
+execution:
+  batch_size: 1
+  items_per_agent: 10
+  output_dir: docs/talk-188-research
+report: ../talk-188-scene-research-and-plan.md
+constraints:
+  - Every earlier scene in the exact film or episode is within scope through the playhead, even after a seek.
+  - Future events and future-derived identities must be filtered before generation.
+  - English questions require English answers independently of soundtrack and caption language.
+  - Distinguish an existing scene corpus from software requiring media ingestion.
+  - Gemini embeddings must use the stable gemini-embedding-2 model and its current API contract.
+  - Evaluate actual causal correctness, cold and warm latency, not fluent prose alone.

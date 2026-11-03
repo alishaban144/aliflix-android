@@ -37,6 +37,19 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
     private var cached: TalkSceneContext? = null
     private var lastCaptionText = ""
     private val captureMutex = Mutex()
+    private var retrievedTranscript: TalkTranscript? = null
+
+    fun transcript(value: TalkTranscript) { observe(snapshot()); retrievedTranscript = value }
+
+    fun retrievedFrames(values: List<TalkSceneFrame>) {
+        val position = observe(snapshot())
+        for (frame in values.filter { it.seconds <= position }) {
+            if (visualBeats.none { abs(it.seconds - frame.seconds) < .1 }) visualBeats.addLast(frame)
+            if (frame.seconds >= position - 48 && frames.none { abs(it.seconds - frame.seconds) < .1 }) frames.addLast(frame)
+        }
+        while (visualBeats.size > 240) visualBeats.removeFirst()
+        cached = null
+    }
 
     /** A seek keeps the episode transcript and prior visual journal; only the live window is stale. */
     fun invalidate() {
@@ -47,6 +60,7 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
         revision++; frames.clear(); visualBeats.clear(); observedCaptions.clear(); watchedRanges.clear()
         cached = null; lastPosition = Double.NaN; lastWatchedPosition = Double.NaN; lastBeatPosition = Double.NaN
         lastCaptionText = ""; identity = ""
+        retrievedTranscript = null
     }
 
     private fun observe(state: JSONObject): Double {
@@ -90,15 +104,36 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
     }
 
     /** The live worker gets whole-episode cues only through this bounded, anchor-filtered slice. */
-    fun recall(query: String): JSONObject? {
+    fun recall(query: String, fullStory: Boolean = false): JSONObject? {
         val state = snapshot(); val position = observe(state)
         if (state.optString("contentKey").isBlank()) return null
         val exact = NativePlaybackService.episodeCaptionCues()
-        val source = when { exact.isNotEmpty() -> "timed_captions"; observedCaptions.isNotEmpty() -> "observed_captions"; else -> "none" }
-        val cues = when { exact.isNotEmpty() -> exact; else -> observedCaptions.toList() }
+        val source = when { exact.isNotEmpty() -> "timed_captions"; retrievedTranscript != null -> retrievedTranscript!!.source; observedCaptions.isNotEmpty() -> "observed_captions"; else -> "none" }
+        val cues = when { exact.isNotEmpty() -> exact; retrievedTranscript != null -> retrievedTranscript!!.cues; else -> observedCaptions.toList() }
         val request = parseTalkRecallRequest(query, position)
         return buildTalkRecallPacket(query, request, position, cues, source,
-            state.optString("subtitleEdition"), watchedRanges.toList(), visualBeats.map { it.seconds })
+            if (exact.isNotEmpty()) state.optString("subtitleEdition") else retrievedTranscript?.edition.orEmpty(), watchedRanges.toList(), visualBeats.map { it.seconds }, includeWholeStory = fullStory)
+    }
+
+    /** Send actual earlier video evidence, rather than treating a timestamp as an image. */
+    fun recallFrames(query: String): List<TalkSceneFrame> {
+        val packet = recall(query) ?: return emptyList()
+        val anchor = packet.optDouble("anchorSeconds")
+        val scenes = packet.optJSONArray("scenes") ?: return emptyList()
+        if (packet.optString("mode") == "timestamp") {
+            val target = packet.optDouble("targetSeconds")
+            return visualBeats.filter { it.seconds <= anchor && kotlin.math.abs(it.seconds - target) <= 8.1 }
+                .sortedBy { kotlin.math.abs(it.seconds - target) }.take(6).sortedBy { it.seconds }
+        }
+        val selected = mutableListOf<TalkSceneFrame>()
+        for (index in 0 until scenes.length()) {
+            val scene = scenes.getJSONObject(index)
+            val start = scene.getDouble("startSeconds"); val end = minOf(scene.getDouble("endSeconds"), anchor)
+            val eligible = visualBeats.filter { it.seconds in start..end }.sortedBy { it.seconds }
+            eligible.firstOrNull()?.let(selected::add)
+            eligible.lastOrNull()?.let(selected::add)
+        }
+        return selected.distinctBy { it.seconds }.takeLast(6)
     }
 
     fun current(): TalkSceneContext? {

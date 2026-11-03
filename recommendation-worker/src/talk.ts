@@ -23,7 +23,7 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
  if(request.method!=='POST'||!['/v1/talk/session','/v1/talk/scene','/v1/talk/renew','/v1/talk/knowledge','/v1/talk/titles','/v1/talk/close','/v1/talk/viewing','/v1/talk/research','/v1/talk/recommendations','/v1/talk/cancel','/v1/talk/chats'].includes(path))return json({error:'UPDATE_REQUIRED'},426);
  try {
   const owner=await verifyIdentity(request.headers.get('Authorization')?.replace(/^Bearer /,'')||'',env.CURSOR_SIGNING_SECRET);
-  const bodyLimit=path.endsWith('/scene')?1500000:24000;
+  const bodyLimit=path.endsWith('/scene')?2300000:24000;
   if(Number(request.headers.get('Content-Length')||0)>bodyLimit)return json({error:'REQUEST_LIMIT'},413);
   const bodyRaw=await boundedJson(new Response(request.body),bodyLimit);
   if(path.endsWith('/chats')) {
