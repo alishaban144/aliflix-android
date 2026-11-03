@@ -67,3 +67,9 @@ The final reviewed English answers cover the actual earlier causal facts and eac
 | Sherlock S1E1 / 30:00 | Right-sided splashes, wheeled suitcase, hotel/hair reasoning and Sherlock's inference that the killer retained the case in a car. | 1.363 / 3.925 s |
 
 These typed live questions were asked after seeking into real playback. The earlier transcript includes unplayed material before the pause; the player stays paused and the reply stays in its bubble. This validates these cases, not universal plot accuracy. Independent scene observation hit provider quota during this session, so a small narrative benchmark does not certify arbitrary physical-action explanations or all cuts. Missing captions, sparse frames, ambiguous speaker identities, edition alignment and provider capacity remain material limits. No complete free catalogue-wide scene service or persistent semantic catalogue ingestion is claimed.
+
+## Final continuity and accessibility checks
+
+An additional real English speech test exposed a canceled-response ownership defect: Stop canceled playback but left pending-answer flags set, so resume could remain in Thinking with no task to finish. Stop now clears only the canceled answer/tool ownership and deadline while retaining the conversation identity, language, cards and history. A new wire regression asserts this state transition; all nine wire replay cases pass on the Pixel. The real Live API retest recognized an English question, rendered 174,240 AudioTrack samples, stopped actual playback, then resumed the same conversation successfully. Its deliberately interrupted response is continuity evidence, not a recommendation-quality benchmark.
+
+Four additional physical UI checks passed with font scale 1.3 and animator duration scale 0. They cover the streaming bubble, answer anchor and both player orientations. Device settings were restored afterward.

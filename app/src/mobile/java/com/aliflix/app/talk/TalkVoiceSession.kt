@@ -351,7 +351,11 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         textSend?.cancel();textSend=null
         suspendSession();userTurn.incrementAndGet();inputTurnActive=false
         ephemeral=null;resumeHandle=null;outputText="";assistantLine=-1;finalReferences=emptyList()
-        update { it.copy(sending=false,phase="Ready",words="ALIFLIX") }
+        recommendationLookup=false;pendingAnswerNeedsTitle=false;awaitingToolAnswer=false;pendingToolReply=null
+        recommendationPool=emptyList();recommendationReply=null;recommendationRequestTurn=-1L
+        pendingTitles=emptyList();researchNote=null;spokenAttention=null;presentationDelivered=false
+        answerDeadline.clear()
+        update { it.copy(sending=false,answerComplete=true,phase="Ready",spokenCardKey=null) }
     }
     fun retryLastMessage() {
         val question=state.value.lines.lastOrNull { it.role=="user" }?.text ?: return
