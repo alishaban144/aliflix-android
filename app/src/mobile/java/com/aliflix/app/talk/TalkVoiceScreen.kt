@@ -78,7 +78,7 @@ import java.util.Locale
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onClose: () -> Unit, touchTracker:DiscoverTouchTracker?=null,
-    playerOverlay:Boolean=false,composerDraft:MutableState<TextFieldValue>?=null,showComposer:Boolean=false) {
+    playerOverlay:Boolean=false,composerDraft:MutableState<TextFieldValue>?=null,showComposer:Boolean=false,showTranscript:Boolean=false) {
     val state by session.state.collectAsState()
     val titleContext=LocalContext.current
     fun openTitle(title:TalkTitleCard){titleContext.startActivity(Intent(titleContext,TalkTitleActivity::class.java).putExtra("title",title.media().toJson().toString()))}
@@ -93,7 +93,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
     var agentTasks by remember { mutableStateOf((titleContext as? android.app.Activity)?.intent?.getBooleanExtra("agentTasks",false)==true) }
     val localDraft=rememberSaveable(state.conversationId,stateSaver=TextFieldValue.Saver) { mutableStateOf(TextFieldValue()) }
     var draft by (composerDraft ?: localDraft)
-    val chatLayout=state.textMode||showComposer
+    val chatLayout=state.textMode||showComposer||showTranscript
     val composerFocus=remember{FocusRequester()}
     val keyboard=LocalSoftwareKeyboardController.current
     fun Modifier.playerMeasured(key:String)=if(!com.aliflix.app.BuildConfig.DEBUG||!playerOverlay)this else onGloballyPositioned{session.debugCardBounds[key]=it.findRootCoordinates().localBoundingBoxOf(it,clipBounds=false)}

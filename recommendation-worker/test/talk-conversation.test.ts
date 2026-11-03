@@ -33,4 +33,12 @@ describe('contextual conversation protocol',()=>{
   expect(prompt).toContain('Never list these supported actions as limitations');
   expect(current.realtimeInputConfig.activityHandling).toBe('START_OF_ACTIVITY_INTERRUPTS');
  });
+ it('treats the newest question language as authoritative for version fourteen',()=>{
+  const context=TalkContextSchema.parse({companionVersion:14,recentProgress:[],stickyLanguage:true,responseLanguage:'de'});
+  const prompt=liveSetup(context).systemInstruction.parts[0].text;
+  expect(prompt).toContain("viewer's latest typed or spoken question language");
+  expect(prompt).toContain('film audio');
+  expect(prompt).toContain('quoted dialogue');
+  expect(context.responseLanguage).toBe('de');
+ });
 });

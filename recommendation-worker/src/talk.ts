@@ -7,6 +7,7 @@ import { TalkContextSchema, TalkContext, KnowledgeSchema, KnowledgeRequest, expl
 import { issueLiveToken, TALK_MODEL, TALK_VOICE, boundedJson } from './talkProviders';
 import { talkRecommendationPolicy, cachedTalkDiscovery, canRetainTalkResearch, talkRecommendationQuery, talkRecommendationCount, talkChatRecommendationCount, talkSeriesStatus, refineTalkCollection } from './talkIntent';
 import { TalkChat, TalkChatsRequestSchema, talkChatAccountOwner } from './talkChats';
+import { ScenePacketSchema, observePlayerScene } from './talkSceneEvidence';
 const MINUTE=60000,DAY=86400000;
 // Starts include legitimate reconnects, chat/voice switches and fresh-turn
 // ownership boundaries, not minutes of generated audio. Forty starts shared
@@ -19,11 +20,12 @@ const requestSchema=z.object({session:z.string().uuid(),question:z.string().max(
 const TitlesRequest=z.object({titles:z.array(z.string().trim().min(1).max(180)).min(1).max(8),kind:z.enum(['movie','tv']).optional(),year:z.number().int().min(1870).max(2200).optional(),dismiss:z.boolean().optional()}).strict();
 export async function talkRoute(request:Request,env:RecommendationEnv):Promise<Response|null> {
  const path=new URL(request.url).pathname;if(!path.startsWith('/v1/talk'))return null;
- if(request.method!=='POST'||!['/v1/talk/session','/v1/talk/renew','/v1/talk/knowledge','/v1/talk/titles','/v1/talk/close','/v1/talk/viewing','/v1/talk/research','/v1/talk/recommendations','/v1/talk/cancel','/v1/talk/chats'].includes(path))return json({error:'UPDATE_REQUIRED'},426);
+ if(request.method!=='POST'||!['/v1/talk/session','/v1/talk/scene','/v1/talk/renew','/v1/talk/knowledge','/v1/talk/titles','/v1/talk/close','/v1/talk/viewing','/v1/talk/research','/v1/talk/recommendations','/v1/talk/cancel','/v1/talk/chats'].includes(path))return json({error:'UPDATE_REQUIRED'},426);
  try {
   const owner=await verifyIdentity(request.headers.get('Authorization')?.replace(/^Bearer /,'')||'',env.CURSOR_SIGNING_SECRET);
-  if(Number(request.headers.get('Content-Length')||0)>24000)return json({error:'REQUEST_LIMIT'},413);
-  const bodyRaw=await boundedJson(new Response(request.body),24000);
+  const bodyLimit=path.endsWith('/scene')?1500000:24000;
+  if(Number(request.headers.get('Content-Length')||0)>bodyLimit)return json({error:'REQUEST_LIMIT'},413);
+  const bodyRaw=await boundedJson(new Response(request.body),bodyLimit);
   if(path.endsWith('/chats')) {
    if(owner.kind!=='account')return json({error:'ACCOUNT_REQUIRED'},403);
    const archiveOwner=talkChatAccountOwner(owner.sub),body=TalkChatsRequestSchema.parse(bodyRaw);
@@ -34,6 +36,11 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
   }
   if(!(await env.RECOMMENDATION_RATE_LIMITER.limit({key:'talk-live:'+owner.sub})).success)return json({error:'TRY_LATER'},429);
   const user=env.TALK_SESSIONS.getByName('user:'+owner.sub);
+  if(path.endsWith('/scene')) {
+   const body=z.object({session:z.string().uuid(),scene:ScenePacketSchema}).strict().parse(bodyRaw);
+   await user.authorizeScene(body.session);
+   return json(await observePlayerScene(body.scene,env));
+  }
   if(path.endsWith('/session')) {
    const body=sessionSchema.parse(bodyRaw);
    // Shared networks must not freeze after connection starts/cancellations.
@@ -60,6 +67,7 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
   const code=e instanceof Error?e.message:'';
   if(e && typeof e==='object' && 'code' in e && 'status' in e)return json({error:String(e.code)},Number(e.status));
   if(e instanceof z.ZodError||e instanceof SyntaxError)return json({error:'INVALID_REQUEST'},400);
+  if(['SCENE_UNAVAILABLE','SCENE_UNSUPPORTED'].includes(code))return json({error:'SCENE_UNAVAILABLE'},503);
   if(['LIVE_UNAVAILABLE','SOURCE_UNAVAILABLE','EMPTY_RESPONSE'].includes(code))return json({error:'LIVE_UNAVAILABLE'},503);
   if(code==='RESPONSE_LIMIT')return json({error:'REQUEST_LIMIT'},413);
   if(code==='SESSION_EXPIRED')return json({error:code},410);if(code==='TOOL_LIMIT')return json({error:code},429);
@@ -67,7 +75,7 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
  }
 }
 type TalkSelection={tmdbId:number;mediaType:'movie'|'tv';title:string;originalTitle?:string;year?:string;posterPath?:string};
-type Session={context:TalkContext;expires:number;calls:number;searches:number;grants:string[];renewals?:number;selection?:TalkSelection[];recommendationRequest?:string;recommendationCollection?:RecommendationResult[];recommendationQuery?:string;recommendationAnchors?:Array<{tmdbId:number;mediaType:"movie"|"tv";title:string}>};
+type Session={context:TalkContext;expires:number;calls:number;searches:number;grants:string[];renewals?:number;sceneCalls?:number;selection?:TalkSelection[];recommendationRequest?:string;recommendationCollection?:RecommendationResult[];recommendationQuery?:string;recommendationAnchors?:Array<{tmdbId:number;mediaType:"movie"|"tv";title:string}>};
 export class TalkSession extends DurableObject<RecommendationEnv> {
  constructor(ctx:DurableObjectState,env:RecommendationEnv){super(ctx,env);ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS memory (key TEXT PRIMARY KEY,value TEXT NOT NULL,expires INTEGER NOT NULL)');for(const ws of ctx.getWebSockets())ws.close(1012,'Update');}
  private read<T>(key:string):T|undefined {const r=this.ctx.storage.sql.exec<{value:string}>('SELECT value FROM memory WHERE key=? AND expires>?',key,Date.now()).toArray()[0];return r?JSON.parse(r.value):undefined;}
@@ -106,7 +114,10 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   const r=this.ctx.storage.sql.exec<{value:string}>('SELECT value FROM memory WHERE key=?',key).toArray()[0];const n=Number(r?.value||0);if(n+amount>limit)return false;
   this.ctx.storage.sql.exec('INSERT OR REPLACE INTO memory VALUES(?,?,?)',key,String(n+amount),(day+2)*DAY);await this.ctx.storage.setAlarm((day+2)*DAY);return true;}
  async open(context:TalkContext) {const expires=Date.now()+20*MINUTE,session=crypto.randomUUID();const token=await issueLiveToken(this.env,context,expires);
-  this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'live:%' OR key LIKE 'viewing:%'");this.put('live:'+session,{context,expires,calls:0,searches:0,grants:[]} satisfies Session,expires);
+  this.ctx.storage.sql.exec('DELETE FROM memory WHERE expires<?',Date.now());
+  this.put('live:'+session,{context,expires,calls:0,searches:0,grants:[]} satisfies Session,expires);
+  // A new player/text connection must not invalidate another in-flight session.
+  this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'live:%' AND key NOT IN (SELECT key FROM memory WHERE key LIKE 'live:%' ORDER BY expires DESC, rowid DESC LIMIT 8)");
   await this.ctx.storage.setAlarm(expires);return {...token,session};}
  async renew(session:string,responseLanguage?:string){
   const state=this.read<Session>('live:'+session);if(!state||state.expires<Date.now()+10000)throw Error('SESSION_EXPIRED');
@@ -117,6 +128,14 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   if(!this.read<Session>('live:'+session))throw Error('SESSION_EXPIRED');
   // No expiry extension, new voice/model or reset of knowledge/search budgets.
   return {...token,session};
+ }
+ async authorizeScene(session:string) {
+  const state=this.read<Session>('live:'+session);
+  if(!state)throw Error('SESSION_EXPIRED');
+  if((state.context.companionVersion||0)<13)throw Error('SCENE_UNAVAILABLE');
+  state.sceneCalls=(state.sceneCalls||0)+1;
+  if(state.sceneCalls>60)throw Error('TOOL_LIMIT');
+  this.put('live:'+session,state,state.expires);
  }
  async viewing(session:string,items?:z.infer<typeof TalkLibraryItemSchema>[],page?:z.infer<typeof TalkViewingPageSchema>) {
   const state=this.read<Session>('live:'+session);if(!state)throw Error('SESSION_EXPIRED');
