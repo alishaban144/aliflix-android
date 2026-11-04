@@ -69,6 +69,14 @@ class Talk190SceneDeviceTest {
                 } finally {
                     receipt.put("connection",player.talkVoice.debugConnectionIssue).put("readyState",player.talkVoice.debugAudioSnapshot())
                 }
+                args.getString("sceneNoiseFixture")?.let { noise ->
+                    val identity=player.talkVoice.state.value.conversationId
+                    withContext(Dispatchers.Main) { player.talkVoice.debugInjectMicrophonePcm(talkValidationFixture(noise).readBytes()) }
+                    delay(1500)
+                    assertEquals("Noise must not select another response language","en",player.talkVoice.debugResponseLanguage)
+                    assertEquals("Noise must not start a new conversation",identity,player.talkVoice.state.value.conversationId)
+                    receipt.put("noiseLanguage",player.talkVoice.debugResponseLanguage).put("noiseRetainedConversation",true)
+                }
                 val baseline=withContext(Dispatchers.Main) { player.talkVoice.state.value.lines.size }
                 val conversationBefore=player.talkVoice.state.value.conversationId
                 val before=android.os.SystemClock.elapsedRealtime()

@@ -33,12 +33,21 @@ describe('contextual conversation protocol',()=>{
   expect(prompt).toContain('Never list these supported actions as limitations');
   expect(current.realtimeInputConfig.activityHandling).toBe('START_OF_ACTIVITY_INTERRUPTS');
  });
- it('treats the newest question language as authoritative for version fourteen',()=>{
+ it('locks voice language against uncertain ASR while keeping typed language intentional',()=>{
   const context=TalkContextSchema.parse({companionVersion:14,recentProgress:[],stickyLanguage:true,responseLanguage:'de'});
   const prompt=liveSetup(context).systemInstruction.parts[0].text;
-  expect(prompt).toContain("viewer's latest typed or spoken question language");
+  expect(prompt).toContain('RESPOND IN de');
+  expect(liveSetup(context).inputAudioTranscription).toEqual({languageCodes:['de','en']});
+  expect(prompt).toContain('long ASR fragment');
+  expect(prompt).toContain('clear, explicit request');
   expect(prompt).toContain('film audio');
   expect(prompt).toContain('quoted dialogue');
   expect(context.responseLanguage).toBe('de');
+  const typed=liveSetup({...context,textMode:true}).systemInstruction.parts[0].text;
+  expect(typed).toContain("actual typed question language");
+  const initial=liveSetup(TalkContextSchema.parse({companionVersion:15,recentProgress:[]})).systemInstruction.parts[0].text;
+  expect(initial).toContain('RESPOND IN en');
+  expect(liveSetup(TalkContextSchema.parse({companionVersion:15,recentProgress:[]})).inputAudioTranscription).toEqual({languageCodes:['en']});
+  expect(initial).not.toContain('latest typed or spoken question language');
  });
 });

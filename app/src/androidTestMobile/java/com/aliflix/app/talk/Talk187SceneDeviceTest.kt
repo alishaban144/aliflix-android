@@ -75,6 +75,29 @@ class Talk187SceneDeviceTest {
         assertTrue(rewind.frames.all { it.seconds<8 })
         assertFalse(rewind.key==after.key)
     }
+    @Test fun modeToggleRestoresTheSameVoiceConversationAndMicrophone()=fixture { player ->
+        val live=InstrumentationRegistry.getArguments().getString("liveTalk187")=="true"
+        val receipts=JSONArray()
+        withContext(Dispatchers.Main) { player.openTalk() }
+        val id=player.talkVoice.state.value.conversationId
+        delay(700);tap(bound(player,"player-orb"))
+        repeat(2) {
+            tap(bound(player,"player-type"));delay(500)
+            assertTrue(player.talkVoice.state.value.textMode)
+            assertTrue(player.talkVoice.state.value.muted)
+            tap(bound(player,"player-type"))
+            withTimeout(25000) { while(withContext(Dispatchers.Main) {
+                player.talkVoice.state.value.phase!="Listening" || live&&player.talkVoice.debugAudioSnapshot().optInt("recordSource",-1)<0
+            })delay(40) }
+            assertFalse(player.talkVoice.state.value.textMode);assertFalse(player.talkVoice.state.value.muted)
+            assertEquals(id,player.talkVoice.state.value.conversationId)
+            assertEquals("en",player.talkVoice.debugResponseLanguage)
+            assertFalse(withContext(Dispatchers.Main){player.talkSnapshot().optBoolean("playing")})
+            receipts.put(withContext(Dispatchers.Main){player.talkVoice.debugAudioSnapshot()})
+        }
+        File(context.getExternalFilesDir(null),"talk191-mode-microphone.json").writeText(receipts.toString(2))
+        screenshot("talk191-single-mode-control.png")
+    }
     @Test fun underlyingCaptionsCannotStealTalkBubbleGestures()=fixture { player ->
         withContext(Dispatchers.Main) {
             player.playbackController!!.pause()
@@ -111,7 +134,7 @@ class Talk187SceneDeviceTest {
         screenshot("talk191-reopened-voice.png")
     }
     @Test fun paletteRetainsTheOrbAnchorAndRealTargetsAcrossBothOrientations()=fixture { player ->
-        withContext(Dispatchers.Main) { player.openTalk();player.talkVoice.setTextMode(true);player.openTalk() }
+        withContext(Dispatchers.Main) { player.openTalk() }
         for((orientation,name) in listOf(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT to "portrait",android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE to "landscape")) {
             withContext(Dispatchers.Main) { player.requestedOrientation=orientation };delay(900)
             val orb=bound(player,"player-orb");tap(orb);delay(450)
@@ -147,7 +170,7 @@ class Talk187SceneDeviceTest {
         }
     }
     @Test fun typedDraftSurvivesExpansionAndSendingMakesTheConversationVisible()=fixture { player ->
-        withContext(Dispatchers.Main) { player.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;player.openTalk();player.talkVoice.setTextMode(true);player.openTalk() }
+        withContext(Dispatchers.Main) { player.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;player.openTalk() }
         delay(900);tap(bound(player,"player-orb"));delay(300);tap(bound(player,"player-type"));delay(700)
         val question="Why did she leave?"
         i.sendStringSync(question);delay(150)

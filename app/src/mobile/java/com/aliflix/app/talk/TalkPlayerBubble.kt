@@ -64,7 +64,7 @@ import kotlin.math.roundToInt
     }
     val state by rememberTalkPresentation(session)
     var controls by rememberSaveable { mutableStateOf(false) }
-    var typing by rememberSaveable { mutableStateOf(false) }
+    val typing = state.textMode
     val draft = rememberSaveable(state.conversationId, stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue()) }
     var dragX by rememberSaveable { mutableFloatStateOf(0f) }
     var dragY by rememberSaveable { mutableFloatStateOf(0f) }
@@ -84,14 +84,19 @@ import kotlin.math.roundToInt
     LaunchedEffect(controls, lastUser) {
         if (controls) historyScroll.scrollToItem(maxOf(openingLine, lastUser).coerceAtMost(state.lines.size))
     }
-    fun dismissComposer() { typing = false; focus.clearFocus(); keyboard?.hide() }
+    fun dismissComposer() { focus.clearFocus(); keyboard?.hide() }
+    fun returnToVoice() {
+        dismissComposer()
+        if(state.textMode || state.muted) { session.setTextMode(false); onStart() }
+    }
+    val returnToVoiceOnDrag by rememberUpdatedState(::returnToVoice)
     fun send() {
         val text = draft.value.text.trim()
         if (text.isNotEmpty()) {
             session.sendText(text); draft.value = TextFieldValue(); dismissComposer(); controls = true
         }
     }
-    BackHandler(enabled = controls || typing) { if (typing) dismissComposer() else controls = false }
+    BackHandler(enabled = controls || typing) { if (typing) returnToVoice() else controls = false }
     LaunchedEffect(state.sending,lastUser) { if(state.sending && lastUser>=openingLine) controls=true }
     LaunchedEffect(controls, typing) {
         listOf("player-microphone", "player-expand", "player-full-input", "player-full-close", "player-full-send").forEach(session.debugCardBounds::remove)
@@ -143,11 +148,9 @@ import kotlin.math.roundToInt
                         val compactComposer=typing&&LocalConfiguration.current.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE
                         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.End) {
                             if(compactComposer)composer(Modifier.weight(1f),true)
-                            if(state.textMode||state.muted)ScenePaletteButton(Icons.Rounded.GraphicEq,"Voice conversation") { dismissComposer();controls=false;session.setTextMode(false);onStart() }
-                            ScenePaletteButton(Icons.Rounded.Keyboard,"Type",Modifier.measured("player-type").semantics { selected=typing },active=typing) {
-                                if(!typing) { session.setTextMode(true); onStart() }
-                                typing=!typing
-                                if(!typing) { focus.clearFocus();keyboard?.hide() }
+                            ScenePaletteButton(if(typing)Icons.Rounded.GraphicEq else Icons.Rounded.Keyboard,
+                                if(typing)"Voice conversation" else "Type",Modifier.measured("player-type").semantics { selected=typing },active=typing) {
+                                if(typing) returnToVoice() else { session.setTextMode(true); onStart() }
                             }
                             ScenePaletteButton(Icons.Rounded.Close,"Close Talk",Modifier.measured("player-close")) { dismissComposer();onClose() }
                         }
@@ -178,8 +181,8 @@ import kotlin.math.roundToInt
         Box(Modifier.absoluteOffset { IntOffset(orbX.roundToInt(),orbY.roundToInt()) }.then(orbTransition).size(orbSize).measured("player-orb").semantics {
             contentDescription="Talk controls";stateDescription=appearance.label
             customActions=listOf(CustomAccessibilityAction("Move to other side") { dragX=if(orbX>maxX/2)-maxX else 0f;true })
-        }.clickable(role=Role.Button,onClickLabel=if(controls)"Collapse conversation" else "Expand conversation") { controls=!controls;if(!controls)dismissComposer() }
-            .pointerInput(maxX,maxY,top) { detectDragGestures(onDragStart={controls=false;dismissComposer()}) { change,delta -> change.consume();dragX=(dragX+delta.x).coerceIn(-maxX,0f);dragY=(dragY+delta.y).coerceIn(-top,maxY-top) } }) {
+        }.clickable(role=Role.Button,onClickLabel=if(controls)"Collapse conversation" else "Expand conversation") { controls=!controls;if(!controls)returnToVoice() }
+            .pointerInput(maxX,maxY,top) { detectDragGestures(onDragStart={controls=false;returnToVoiceOnDrag()}) { change,delta -> change.consume();dragX=(dragX+delta.x).coerceIn(-maxX,0f);dragY=(dragY+delta.y).coerceIn(-top,maxY-top) } }) {
             TalkLiveOrb(state.phase,{session.state.value.level},motion,Modifier.fillMaxSize().testTag("talk-player-orb"),activity=activity,tracker=tracker)
         }
     }

@@ -10,16 +10,16 @@ internal fun chooseQuestionResponseLanguage(current: String?, question: String):
     explicitRequestedTalkLanguage(question) ?: detectTalkQuestionLanguage(question) ?: current
 
 internal fun chooseSpokenResponseLanguage(current: String?, question: String): String? {
-    explicitRequestedTalkLanguage(question)?.let { return it }
-    if(current!=null&&!question.contains('?')&&!question.contains('؟')&&question.split(Regex("\\s+")).count { word -> word.any(Char::isLetter) }<4)return current
-    return chooseQuestionResponseLanguage(current,question)
+    // ASR can hallucinate a complete foreign sentence, including punctuation,
+    // from noise. Neither sentence length nor detected script expresses intent.
+    return explicitRequestedTalkLanguage(question) ?: current ?: "en"
 }
 
 /** The language of the viewer's own question, not the film's audio or subtitle language.
  * Only high-confidence evidence may change the response language; a title, a name or a
  * single borrowed word leaves the established language intact. */
 internal fun detectTalkQuestionLanguage(text: String): String? {
-    val clean = text.trim()
+    val clean = talkLanguageIntentText(text).trim()
     if (clean.isBlank()) return null
     scriptTalkLanguage(clean)?.let { return it }
     val normalized = Normalizer.normalize(clean.lowercase(Locale.ROOT), Normalizer.Form.NFD)

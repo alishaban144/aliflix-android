@@ -83,7 +83,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     internal fun restoreHandoff(value:TalkConversationHandoff) {
         if(permitted||closed)return
         val previous=value.state
-        chatId=previous.conversationId;persistedLines=previous.lines;responseLanguage=value.language
+        chatId=previous.conversationId;persistedLines=previous.lines;responseLanguage=value.language?:"en"
         muted=previous.textMode||previous.muted
         lastQuestion=previous.lines.lastOrNull{it.role=="user"}?.text.orEmpty()
         greeted=true
@@ -393,7 +393,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         persistHistory();suspendSession();userTurn.incrementAndGet();inputTurnActive=false
         chatId=java.util.UUID.randomUUID().toString();ephemeral=null;backendSession=null;resumeHandle=null;greeted=false
         persistedLines=emptyList()
-        inputText="";lastQuestion="";outputText="";assistantLine=-1;responseLanguage=null
+        inputText="";lastQuestion="";outputText="";assistantLine=-1;responseLanguage="en"
         synchronized(knownFilmTopics){knownFilmTopics.clear()}
         update { it.copy(lines=emptyList(),words="ALIFLIX",sending=false,conversationId=chatId,cards=TalkCardContext()) }
     }
@@ -462,7 +462,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private var backendSession:String?=null
     private var providerContext=0L
     private var resumeHandle: String? = null
-    @Volatile private var responseLanguage:String?=null
+    @Volatile private var responseLanguage:String?="en"
     internal val debugResponseLanguage get()=responseLanguage
     private var inputText = ""
     private var outputText = ""
@@ -929,7 +929,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     emitContinuation("The new session is now actually configured with voice "+changedVoice+". You are already speaking with it: acknowledge the completed change, not a future plan, without a greeting or feature pitch. Complete any other explicit part of the same request that remains undone: "+lastQuestion)
                 }else if(!greeted&&!state.value.textMode&&state.value.lines.isEmpty()&&textSend?.isActive!=true&&TalkPlayerConnection.current()==null){
                     greeted=true
-                    emitContinuation("The viewer has just opened a fresh voice conversation. Offer a brief, naturally voiced welcome in their device language ("+Locale.getDefault().toLanguageTag()+"). Compose it for this moment; use relaxed, warm prosody. One short greeting, no pitch, feature list, lookup, question or canned catchphrase. Never greet again after a reconnect or a voice change. If the viewer starts speaking, yield immediately.")
+                    emitContinuation("The viewer has just opened a fresh voice conversation. Offer a brief, naturally voiced welcome in the established response language ("+(responseLanguage?:"en")+"). Compose it for this moment; use relaxed, warm prosody. One short greeting, no pitch, feature list, lookup, question or canned catchphrase. Never greet again after a reconnect or a voice change. If the viewer starts speaking, yield immediately.")
                 }
             }
             catch(_:Exception){suspendSession();update{it.copy(phase="Audio unavailable")}}
@@ -1549,8 +1549,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         if(state.value.sending&&!state.value.answerComplete&&recommendationRequestTurn!=userTurn.get()&&talkDiscoveryQuestion(lastQuestion,state.value.cards.group.isNotEmpty())) {
             recommendationLookup=true
         }
-        // The newest typed or spoken question owns the response language. Film audio,
-        // captions, quoted dialogue and titles never pass through this question path.
+        // Typed words are intentional language evidence. Speech transcription can
+        // be noise, so voice keeps its language until a genuine explicit request.
         (if(microphoneTurn==userTurn.get())chooseSpokenResponseLanguage(responseLanguage,lastQuestion) else chooseQuestionResponseLanguage(responseLanguage,lastQuestion))
             ?.takeIf { it != responseLanguage }
             ?.let { language ->
@@ -1909,7 +1909,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         persistedLines=emptyList()
         synchronized(knownFilmTopics){knownFilmTopics.clear()}
         sequence++;interruptOutput();val session=ephemeral?.optString("session")
-        resumeHandle=null;ephemeral=null;backendSession=null;inputText="";lastQuestion="";inputTurnActive=false;responseLanguage=null;outputText="";assistantLine=-1;finalReferences=emptyList()
+        resumeHandle=null;ephemeral=null;backendSession=null;inputText="";lastQuestion="";inputTurnActive=false;responseLanguage="en";outputText="";assistantLine=-1;finalReferences=emptyList()
         prefs.edit().remove("history").remove("suggestions").remove("suggestions-at").apply();update{it.copy(lines=emptyList(),words="ALIFLIX",conversationId=chatId,phase="Ready",sending=false,cards=TalkCardContext())}
         scope.launch {
             if(!session.isNullOrBlank())runCatching{post("close",JSONObject().put("session",session))}
@@ -2031,13 +2031,10 @@ internal fun topicWords(question:String,answer:String,previous:String="ALIFLIX")
 /** A foreign title, mixed-language phrase, film audio or subtitle cannot unlock an
  * established language. The newest user question is the only automatic authority. */
 internal fun chooseTalkResponseLanguage(current:String?,requested:String,explicitRequest:Boolean,userText:String):String? {
-    if(current!=null&&(!explicitRequest||!explicitTalkLanguageRequest(userText,requested)))return current
+    val established=current?:"en"
+    if(!explicitRequest||!explicitTalkLanguageRequest(userText,requested))return established
     val code=requested.trim().lowercase(Locale.ROOT)
-    if(!code.matches(Regex("[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}")))return current
-    if(!explicitRequest) {
-        val detected=detectTalkQuestionLanguage(userText)
-        if(detected!=null&&detected!=code.substringBefore('-'))return current
-    }
+    if(!code.matches(Regex("[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}")))return established
     return code
 }
 
@@ -2060,10 +2057,21 @@ private val talkLanguageRequests=talkLanguageNames.mapValues{(_,language)->
     val romance="(?:habla|responde|contesta|continúa|cambia|parle|réponds|répondez|parla|rispondi|continua)(?:\\s+(?:solo|ahora|por favor|maintenant)){0,3}\\s+(?:(?:en|in)\\s+)?(?:$language)"
     Regex("(?i)(?:$en|$de|$ar|$romance)")
 }
-internal fun explicitTalkLanguageRequest(text:String,code:String):Boolean =
-    !negatedTalkLanguage.containsMatchIn(text)&&talkLanguageRequests[code.lowercase(Locale.ROOT).substringBefore('-')]?.containsMatchIn(text)==true
+private val quotedTalkLanguage=Regex("\"[^\"\\n]*\"|“[^”\\n]*”|«[^»\\n]*»|(?<!\\p{L})'[^'\\n]+'(?!\\p{L})")
+private val reportedTalkLanguage=Regex("(?i)\\b(?:said|says|say|told|asked|quoted?|means?|meaning|sagt|sagte|dice|dijo)\\b|(?:قال|قالت|يقول)")
+internal fun talkLanguageIntentText(text:String):String=quotedTalkLanguage.replace(text," ")
+internal fun explicitTalkLanguageRequest(text:String,code:String):Boolean {
+    val clean=talkLanguageIntentText(text)
+    if(negatedTalkLanguage.containsMatchIn(clean))return false
+    val request=talkLanguageRequests[code.lowercase(Locale.ROOT).substringBefore('-')]?:return false
+    return request.findAll(clean).any { match ->
+        val prefix=clean.substring(0,match.range.first).split(Regex("[.!?;,،\\n]|(?i)\\b(?:and then|then|and|but|also)\\b")).last()
+        !Regex("(?i)^\\s*what\\s+(?:does|did|is)\\b").containsMatchIn(prefix)&&
+            (!reportedTalkLanguage.containsMatchIn(prefix)||Regex("(?i)^\\s*i\\s+(?:asked|want|need|would like|am asking)\\s+you\\s+to\\s*$").matches(prefix))
+    }
+}
 internal fun explicitRequestedTalkLanguage(text:String):String? =
-    if(negatedTalkLanguage.containsMatchIn(text))null else talkLanguageRequests.entries.firstOrNull{it.value.containsMatchIn(text)}?.key
+    talkLanguageRequests.keys.firstOrNull { explicitTalkLanguageRequest(text,it) }
 
 internal fun talkProviderQuotaFailure(code:Int,reason:String):Boolean =
     code==4429||reason.contains("RESOURCE_EXHAUSTED",true)||reason.contains("exceeded your current quota",true)||reason.contains("quota exhausted",true)
