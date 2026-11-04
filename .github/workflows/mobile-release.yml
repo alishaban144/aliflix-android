@@ -49,7 +49,7 @@ env:
 
 jobs:
   changed-paths:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       worker: ${{ steps.paths.outputs.worker }}
     steps:
@@ -70,7 +70,7 @@ jobs:
   playback-device-tests:
     # v3.1.157: the user explicitly waived emulator/device testing; retain unit/lint/signing gates.
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.backend_only) && github.ref_name != 'release/v3.1.157' && github.ref_name != 'v3.1.157' && github.ref_name != 'release/v3.1.156' && github.ref_name != 'v3.1.156' && github.ref_name != 'release/v3.1.150' && github.ref_name != 'v3.1.150' && github.ref_name != 'release/v3.1.148' && github.ref_name != 'v3.1.148' && !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' && github.ref_name != 'release/v3.1.96' && github.ref_name != 'release/v3.1.97' && github.ref_name != 'v3.1.99' && github.ref_name != 'v3.1.100' && github.ref_name != 'v3.1.101' && github.ref_name != 'release/v3.1.102' && github.ref_name != 'v3.1.102' && github.ref_name != 'release/v3.1.103' && github.ref_name != 'v3.1.103' && github.ref_name != 'release/v3.1.104' && github.ref_name != 'v3.1.104' && github.ref_name != 'release/v3.1.105' && github.ref_name != 'v3.1.105' && github.ref_name != 'release/v3.1.106' && github.ref_name != 'v3.1.106' && github.ref_name != 'release/v3.1.107' && github.ref_name != 'v3.1.107' && github.ref_name != 'release/v3.1.108' && github.ref_name != 'v3.1.108' && github.ref_name != 'release/v3.1.109' && github.ref_name != 'v3.1.109' && github.ref_name != 'release/v3.1.110' && github.ref_name != 'v3.1.110' && github.ref_name != 'release/v3.1.111' && github.ref_name != 'v3.1.111' && github.ref_name != 'release/v3.1.112' && github.ref_name != 'v3.1.112' && github.ref_name != 'v3.1.113' && github.ref_name != 'release/v3.1.114' && github.ref_name != 'v3.1.114' && github.ref_name != 'release/v3.1.115' && github.ref_name != 'v3.1.115' && github.ref_name != 'release/v3.1.116' && github.ref_name != 'v3.1.116' && github.ref_name != 'release/v3.1.117' && github.ref_name != 'v3.1.117' && github.ref_name != 'release/v3.1.118' && github.ref_name != 'v3.1.118' && github.ref_name != 'release/v3.1.119' && github.ref_name != 'v3.1.119' && github.ref_name != 'release/v3.1.120' && github.ref_name != 'v3.1.120' && github.ref_name != 'release/v3.1.121' && github.ref_name != 'v3.1.121' && github.ref_name != 'release/v3.1.122' && github.ref_name != 'v3.1.122' && github.ref_name != 'release/v3.1.123' && github.ref_name != 'v3.1.123' && github.ref_name != 'release/v3.1.124' && github.ref_name != 'v3.1.124' && github.ref_name != 'release/v3.1.125' && github.ref_name != 'v3.1.125' && github.ref_name != 'release/v3.1.126' && github.ref_name != 'v3.1.126' && github.ref_name != 'release/v3.1.128' && github.ref_name != 'v3.1.128' && github.ref_name != 'release/v3.1.129' && github.ref_name != 'v3.1.129' && github.ref_name != 'release/v3.1.130' && github.ref_name != 'v3.1.130' && github.ref_name != 'release/v3.1.131' && github.ref_name != 'v3.1.131' && github.ref_name != 'release/v3.1.132' && github.ref_name != 'release/v3.1.133' && github.ref_name != 'v3.1.133' && github.ref_name != 'release/v3.1.134' && github.ref_name != 'v3.1.134' && github.ref_name != 'release/v3.1.135' && github.ref_name != 'v3.1.135' && github.ref_name != 'release/v3.1.136' && github.ref_name != 'v3.1.136' && github.ref_name != 'release/v3.1.137' && github.ref_name != 'v3.1.137' && github.ref_name != 'release/v3.1.138' && github.ref_name != 'v3.1.138' && github.ref_name != 'release/v3.1.139' && github.ref_name != 'v3.1.139' && github.ref_name != 'release/v3.1.140' && github.ref_name != 'v3.1.140' && github.ref_name != 'release/v3.1.142' && github.ref_name != 'v3.1.142' && github.ref_name != 'release/v3.1.141' && github.ref_name != 'v3.1.141' && github.ref_name != 'release/v3.1.143' && github.ref_name != 'v3.1.143' && github.ref_name != 'release/v3.1.144' && github.ref_name != 'v3.1.144' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -111,7 +111,7 @@ jobs:
   worker-checks:
     needs: changed-paths
     if: needs.changed-paths.outputs.worker == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out source
         uses: actions/checkout@v5
@@ -138,7 +138,7 @@ jobs:
 
   deploy-recommendations:
     needs: worker-checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: "2bd02586ce22e6e64d878d35d25e44c9"
@@ -194,7 +194,7 @@ jobs:
 
       (needs.worker-checks.result == 'success' || needs.worker-checks.result == 'skipped') &&
       (needs.deploy-recommendations.result == 'success' || needs.deploy-recommendations.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out source
         uses: actions/checkout@v5
