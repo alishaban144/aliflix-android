@@ -31,6 +31,14 @@ class Talk191UiDeviceTest {
    compose.setContent{AliflixMobileTheme{TalkPlayerBubble(session,{}, {})}}
    compose.onNodeWithTag("talk-player-orb",useUnmergedTree=true).performClick()
    compose.onNodeWithTag("talk-player-input").assertDoesNotExist()
+   compose.onNodeWithText("Earlier question number 0 about the dialogue.").assertDoesNotExist()
+   compose.onNodeWithTag("talk-inline-exchange").performTouchInput{swipeDown(durationMillis=800)}
+   compose.onNodeWithText("Earlier answer number 8 preserves the evidence and the story.").assertIsDisplayed()
+   compose.onNodeWithTag("talk-inline-exchange").performScrollToIndex(0)
+   compose.onNodeWithText("Earlier question number 0 about the dialogue.").assertIsDisplayed()
+   assertFalse("Reading history must not switch speech to typing",session.state.value.textMode)
+   compose.onNodeWithTag("talk-player-input").assertDoesNotExist()
+   compose.onNodeWithTag("talk-inline-exchange").performScrollToIndex(session.state.value.lines.size)
    compose.onNodeWithContentDescription("Type").performClick()
    compose.onNodeWithTag("talk-player-input").assertIsDisplayed()
    // Android IME resize is outside Compose's test clock; settle its window before absolute gestures.

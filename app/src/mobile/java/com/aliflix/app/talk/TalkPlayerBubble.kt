@@ -158,7 +158,7 @@ import kotlin.math.roundToInt
                         }
                         val readingHeight=with(density){currentHeight.toDp()}.coerceAtLeast(96.dp)
                             .coerceAtMost((panelLimit-if(typing&&!compactComposer)132.dp else 80.dp).coerceAtLeast(64.dp))
-                        if(typing||currentLines.isNotEmpty())LazyColumn(Modifier.fillMaxWidth().height(readingHeight).weight(1f,fill=false)
+                        if(typing||state.lines.isNotEmpty())LazyColumn(Modifier.fillMaxWidth().height(readingHeight).weight(1f,fill=false)
                             .measured("player-exchange").testTag("talk-inline-exchange"),state=historyScroll) {
                             itemsIndexed(state.lines,key={index,_->"line-$index"}) { _,line ->
                                 if(line.text.isNotBlank())androidx.compose.foundation.text.selection.SelectionContainer {
