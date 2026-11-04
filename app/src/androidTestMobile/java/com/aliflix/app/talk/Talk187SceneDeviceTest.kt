@@ -21,7 +21,12 @@ class Talk187SceneDeviceTest {
     private val i get() = InstrumentationRegistry.getInstrumentation()
     private val context get() = i.targetContext
     private fun command(action:String, seconds:Double?=null) = JSONObject().put("action",action).apply { seconds?.let { put("numberValue",it) } }
+    private fun visibleText(node:android.view.accessibility.AccessibilityNodeInfo?):String {
+        if(node==null)return ""
+        return node.text.toString()+" "+node.contentDescription.toString()+" "+(0 until node.childCount).joinToString(" "){visibleText(node.getChild(it))}
+    }
     private fun fixture(body:suspend (NativePlayerActivity)->Unit) {
+        i.uiAutomation.grantRuntimePermission(context.packageName,android.Manifest.permission.RECORD_AUDIO)
         grantNativeFixtureNetworkPermission()
         val bytes=i.context.assets.open("cast-test.mp4").use { it.readBytes() }
         NativeBackgroundPlaybackTest.FixtureServer(bytes).use { server ->
@@ -30,7 +35,7 @@ class Talk187SceneDeviceTest {
             try {
                 ActivityScenario.launch<NativePlayerActivity>(Intent(context,NativePlayerActivity::class.java).putExtra("requestFile",file.name).putExtra("validationFreshHistory",true),nativePhoneLaunchOptions()).use { scenario ->
                     lateinit var player:NativePlayerActivity
-                    scenario.onActivity { player=it }
+                    scenario.onActivity { player=it;player.talkVoice.debugOfflineConnection=!(InstrumentationRegistry.getArguments().getString("liveTalk187")=="true") }
                     runBlocking {
                         withTimeout(25000) { while(withContext(Dispatchers.Main) { player.playbackController?.isPlaying!=true }) delay(60) }
                         try { body(player) } finally { withContext(Dispatchers.Main) { player.closeTalk() } }
@@ -39,10 +44,10 @@ class Talk187SceneDeviceTest {
             } finally { context.startService(Intent(context,NativePlaybackService::class.java).setAction(NativePlaybackService.ACTION_STOP)); file.delete() }
         }
     }
-    private suspend fun bound(player:NativePlayerActivity,key:String)=withTimeout(6000) {
+    private suspend fun bound(player:NativePlayerActivity,key:String):androidx.compose.ui.geometry.Rect = try { withTimeout(6000) {
         while(true) { withContext(Dispatchers.Main) { player.talkVoice.debugCardBounds[key] }?.let { return@withTimeout it };delay(30) }
         @Suppress("UNREACHABLE_CODE") error(key)
-    }
+    } } catch(error:TimeoutCancellationException) { throw AssertionError("Missing $key phase=${player.talkVoice.state.value.phase} bounds=${player.talkVoice.debugCardBounds.keys}",error) }
     private fun tap(rect:androidx.compose.ui.geometry.Rect) {
         val time=android.os.SystemClock.uptimeMillis()
         for(action in listOf(android.view.MotionEvent.ACTION_DOWN,android.view.MotionEvent.ACTION_UP)) {
@@ -70,8 +75,66 @@ class Talk187SceneDeviceTest {
         assertTrue(rewind.frames.all { it.seconds<8 })
         assertFalse(rewind.key==after.key)
     }
+    @Test fun modeToggleRestoresTheSameVoiceConversationAndMicrophone()=fixture { player ->
+        val live=InstrumentationRegistry.getArguments().getString("liveTalk187")=="true"
+        val receipts=JSONArray()
+        withContext(Dispatchers.Main) { player.openTalk() }
+        val id=player.talkVoice.state.value.conversationId
+        delay(700);tap(bound(player,"player-orb"))
+        repeat(2) {
+            tap(bound(player,"player-type"));delay(500)
+            assertTrue(player.talkVoice.state.value.textMode)
+            assertTrue(player.talkVoice.state.value.muted)
+            tap(bound(player,"player-type"))
+            withTimeout(25000) { while(withContext(Dispatchers.Main) {
+                player.talkVoice.state.value.phase!="Listening" || live&&player.talkVoice.debugAudioSnapshot().optInt("recordSource",-1)<0
+            })delay(40) }
+            assertFalse(player.talkVoice.state.value.textMode);assertFalse(player.talkVoice.state.value.muted)
+            assertEquals(id,player.talkVoice.state.value.conversationId)
+            assertEquals("en",player.talkVoice.debugResponseLanguage)
+            assertFalse(withContext(Dispatchers.Main){player.talkSnapshot().optBoolean("playing")})
+            receipts.put(withContext(Dispatchers.Main){player.talkVoice.debugAudioSnapshot()})
+        }
+        File(context.getExternalFilesDir(null),"talk191-mode-microphone.json").writeText(receipts.toString(2))
+        screenshot("talk191-single-mode-control.png")
+    }
+    @Test fun underlyingCaptionsCannotStealTalkBubbleGestures()=fixture { player ->
+        withContext(Dispatchers.Main) {
+            player.playbackController!!.pause()
+            NativePlaybackService.updateSubtitles("WEBVTT\n\n00:00:00.000 --> 00:01:20.000\nCAPTIONS UNDER THE TALK BUBBLE\n\n", "en", "English")
+        }
+        withTimeout(10000) { while(withContext(Dispatchers.Main) { player.captionBounds()==null }) delay(40) }
+        withContext(Dispatchers.Main) {
+            assertNotNull("Caption dragging works before Talk",player.captionBounds())
+            player.openTalk()
+            assertFalse("The caption fixture must remain present",NativePlaybackService.currentCaptionCues().isEmpty())
+            assertNull("Underlying captions must not intercept Talk touches",player.captionBounds())
+            player.closeTalk()
+            assertNotNull("Caption dragging is restored after Talk closes",player.captionBounds())
+        }
+    }
+    @Test fun reopeningStartsAsSpeechAndKeepsEarlierHistoryOutOfTheNewExchange()=fixture { player ->
+        withContext(Dispatchers.Main) { player.openTalk() }
+        assertFalse(player.talkVoice.state.value.textMode)
+        delay(800);tap(bound(player,"player-orb"));delay(250);tap(bound(player,"player-type"));delay(350)
+        assertTrue(player.talkVoice.state.value.textMode)
+        withContext(Dispatchers.Main) {
+            player.talkVoice.debugPreviewUserQuestion("Earlier question retained in this chat")
+            player.closeTalk()
+        }
+        delay(450)
+        val id=player.talkVoice.state.value.conversationId
+        withContext(Dispatchers.Main) { player.openTalk() }
+        delay(800)
+        assertFalse(player.talkVoice.state.value.textMode)
+        assertEquals(id,player.talkVoice.state.value.conversationId)
+        assertFalse(withContext(Dispatchers.Main){player.talkSnapshot().optBoolean("playing")})
+        assertFalse(visibleText(i.uiAutomation.rootInActiveWindow).contains("Earlier question retained in this chat"))
+        assertFalse(visibleText(i.uiAutomation.rootInActiveWindow).contains("Stop reply"))
+        screenshot("talk191-reopened-voice.png")
+    }
     @Test fun paletteRetainsTheOrbAnchorAndRealTargetsAcrossBothOrientations()=fixture { player ->
-        withContext(Dispatchers.Main) { player.talkVoice.setTextMode(true);player.openTalk() }
+        withContext(Dispatchers.Main) { player.openTalk() }
         for((orientation,name) in listOf(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT to "portrait",android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE to "landscape")) {
             withContext(Dispatchers.Main) { player.requestedOrientation=orientation };delay(900)
             val orb=bound(player,"player-orb");tap(orb);delay(450)
@@ -98,13 +161,16 @@ class Talk187SceneDeviceTest {
             }
             screenshot("talk187-composer-$name.png")
             assertNotNull(input);assertTrue("$name input=$input minimum=$size",input!!.height>=size-2)
+            i.sendStringSync("$name draft")
+            delay(350)
+            assertTrue("$name composer lost focus during keyboard resize",visibleText(i.uiAutomation.rootInActiveWindow).contains("$name draft"))
             i.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);delay(250)
             i.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);delay(250)
             if(withContext(Dispatchers.Main) { player.talkVoice.debugCardBounds["player-type"]!=null }) { tap(bound(player,"player-orb"));delay(250) }
         }
     }
     @Test fun typedDraftSurvivesExpansionAndSendingMakesTheConversationVisible()=fixture { player ->
-        withContext(Dispatchers.Main) { player.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;player.talkVoice.setTextMode(true);player.openTalk() }
+        withContext(Dispatchers.Main) { player.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;player.openTalk() }
         delay(900);tap(bound(player,"player-orb"));delay(300);tap(bound(player,"player-type"));delay(700)
         val question="Why did she leave?"
         i.sendStringSync(question);delay(150)
@@ -132,7 +198,7 @@ class Talk187SceneDeviceTest {
         assumeTrue(InstrumentationRegistry.getArguments().getString("liveTalk187")=="true")
         withTimeout(30000) { while(withContext(Dispatchers.Main) { player.playbackController!!.currentPosition < 14000 }) delay(80) }
         player.talkCommand(command("pause"))
-        withContext(Dispatchers.Main) { player.talkVoice.setTextMode(true);player.openTalk() }
+        withContext(Dispatchers.Main) { player.openTalk();player.talkVoice.setTextMode(true);player.openTalk() }
         withTimeout(25000) { while(withContext(Dispatchers.Main) { player.talkVoice.state.value.phase !in setOf("Listening","Muted") })delay(40) }
         val began=android.os.SystemClock.elapsedRealtime()
         val scene=withContext(Dispatchers.Main) { player.talkVoice.debugInspectScene() }

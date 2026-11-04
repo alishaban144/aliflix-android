@@ -57,7 +57,6 @@ class Talk190UiDeviceTest {
   val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
   val session=TalkVoiceSession(InstrumentationRegistry.getInstrumentation().targetContext,scope,restoreHistory=false)
   try{
-   session.setTextMode(true)
    compose.setContent{AliflixMobileTheme{TalkPlayerBubble(session,{}, {})}}
    val question="Why did she return the key instead of keeping it?"
    compose.runOnIdle{session.debugPreviewUserQuestion(question)}

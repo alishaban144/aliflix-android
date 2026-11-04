@@ -14,7 +14,9 @@ class TalkTurnDetectorTest {
         assertEquals("de",chooseTalkResponseLanguage("en","de",true,"Antworte auf Deutsch"))
         assertEquals("de",chooseTalkResponseLanguage("de","ar",false,"Arabic cinema"))
         assertEquals("en",chooseTalkResponseLanguage("en","not a code",true,"Answer in not a code"))
-        assertNull(chooseTalkResponseLanguage(null,"de",false,"What happened?"))
+        assertEquals("en",chooseTalkResponseLanguage(null,"de",false,"What happened?"))
+        assertEquals("en",chooseTalkResponseLanguage(null,"ar",true,"ماذا حدث في المشهد السابق؟"))
+        assertEquals("en",chooseTalkResponseLanguage("en","ar",true,"He said 'speak Arabic'. Why?"))
         assertEquals("en",chooseTalkResponseLanguage(null,"en",false,"What happened?"))
         assertEquals("de",chooseTalkResponseLanguage("de","en",false,"What happened?"))
     }

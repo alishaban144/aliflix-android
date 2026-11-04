@@ -407,15 +407,16 @@ private class TalkParticleField(private val width: Int, private val height: Int,
 @Composable internal fun TalkLiveOrb(phase:String,level:()->Float,motion:Boolean,modifier:Modifier=Modifier,tracker:DiscoverTouchTracker=remember{DiscoverTouchTracker()},attention:Offset?=null,
     activity:TalkOrbActivity?=null) {
     val appearance=remember(activity,phase) { talkOrbAppearance(activity ?: talkOrbPhaseActivity(phase)) }
-    val seconds=rememberMobileAnimationClock(motion)
+    val animate=motion&&android.animation.ValueAnimator.areAnimatorsEnabled()
+    val seconds=rememberMobileAnimationClock(animate)
     val currentLevel by rememberUpdatedState(level)
     var energy by remember{mutableFloatStateOf(0f)}
     var lightRotation by remember { mutableFloatStateOf(0f) }
-    val glow=animateFloatAsState(appearance.glow,tween(if(motion)240 else 0),label="orb-activity-light")
-    val flow=animateFloatAsState(appearance.flow,tween(if(motion)320 else 0),label="orb-activity-flow")
-    val tilt=animateFloatAsState(appearance.tilt,if(motion)spring(dampingRatio=.9f,stiffness=240f)else tween(0),label="orb-attention-tilt")
-    LaunchedEffect(motion){
-        if(!motion){energy=0f;return@LaunchedEffect}
+    val glow=animateFloatAsState(appearance.glow,tween(if(animate)240 else 0),label="orb-activity-light")
+    val flow=animateFloatAsState(appearance.flow,tween(if(animate)320 else 0),label="orb-activity-flow")
+    val tilt=animateFloatAsState(appearance.tilt,if(animate)spring(dampingRatio=.9f,stiffness=240f)else tween(0),label="orb-attention-tilt")
+    LaunchedEffect(animate){
+        if(!animate){energy=0f;return@LaunchedEffect}
         var previous=0L
         while(true)withInfiniteAnimationFrameNanos{now->
             if(previous!=0L){val target=currentLevel().coerceIn(0f,1f);val dt=((now-previous)/1_000_000_000f).coerceIn(0f,.05f)
@@ -429,25 +430,35 @@ private class TalkParticleField(private val width: Int, private val height: Int,
     }
     var bounds by remember {mutableStateOf(IntSize.Zero)}
     val lights=remember(bounds){
-        if(bounds.width<=0||bounds.height<=0)null else{
-            val cx=bounds.width/2f;val cy=bounds.height/2f;val extent=min(bounds.width,bounds.height)*.475f
-            val sweep=android.graphics.SweepGradient(cx,cy,intArrayOf(
-                Color(0xFFA58BE4).toArgb(),Color(0xFFF1DEFF).toArgb(),Color(0xFF8E80CB).toArgb(),
-                Color(0xFFACCCDD).toArgb(),Color(0xFFA58BE4).toArgb()),floatArrayOf(0f,.19f,.48f,.78f,1f))
-            fun light(stops:FloatArray,colors:IntArray):ShaderBrush{
-                val mask=android.graphics.RadialGradient(cx,cy,extent,colors,stops,android.graphics.Shader.TileMode.CLAMP)
-                return ShaderBrush(android.graphics.ComposeShader(sweep,mask,android.graphics.PorterDuff.Mode.DST_IN))
+        val extent=min(bounds.width,bounds.height)*.475f
+        if(extent<=0f)null else {
+            val center=Offset(bounds.width/2f,bounds.height/2f)
+            val aura=Brush.radialGradient(0f to Color(0xFFDDCFFF).copy(alpha=.5f),
+                .52f to Color(0xFFA58BE4).copy(alpha=.4f),.76f to Color(0xFFA58BE4).copy(alpha=.12f),
+                1f to Color.Transparent,center=center,radius=extent)
+            val rim=Brush.radialGradient(0f to Color.Transparent,.58f to Color.Transparent,
+                    .68f to Color(0xFFF1DEFF).copy(alpha=.3f),1f to Color.Transparent,center=center,radius=extent)
+            val dimension=min(bounds.width,bounds.height).toFloat()
+            val colors=listOf(Color(0xFFF0DDFF),Color(0xFFC4ABF4),Color(0xFFF2C9E6))
+            val lobes=colors.mapIndexed { index,color ->
+                val angle=index*2f*PI.toFloat()/3f
+                val at=center+Offset(cos(angle),sin(angle))*dimension*.27f
+                Brush.radialGradient(0f to color.copy(alpha=.78f),.34f to color.copy(alpha=.46f),
+                    .7f to color.copy(alpha=.12f),1f to Color.Transparent,center=at,radius=dimension*.205f) to at
             }
-            val aura=light(floatArrayOf(0f,.52f,.64f,.77f,.9f,1f),intArrayOf(-1,-1,0xc0ffffff.toInt(),0x68ffffff,0x16ffffff,0))
-            val rim=light(floatArrayOf(0f,.58f,.64f,.69f,.76f,.88f,1f),intArrayOf(0,0,0xcaffffff.toInt(),0x88ffffff.toInt(),0x30ffffff,0x08ffffff,0))
-            aura to rim
+            Triple(aura,rim,lobes)
         }
     }
     Box(modifier.onSizeChanged{bounds=it}.semantics {contentDescription="Aliflix voice: ${appearance.label}";stateDescription=appearance.label},contentAlignment=Alignment.Center){
-        Canvas(Modifier.fillMaxSize()){
+        Canvas(Modifier.fillMaxSize().clip(androidx.compose.foundation.shape.CircleShape)){
             val extent=size.minDimension*.475f;val breath=1f+sin(seconds.value*.82f)*appearance.breath+energy*.02f
-            lights?.let{(aura,rim)->
+            lights?.let{(aura,rim,lobes)->
                 rotate(lightRotation){scale(breath){drawCircle(aura,extent,alpha=(glow.value+energy*.25f).coerceIn(0f,1f))}}
+                // Off-centre feathered lights make rotation visibly travel around
+                // the face. A symmetric radial gradient alone cannot show motion.
+                rotate(lightRotation){scale(breath){lobes.forEach { (brush,at) ->
+                    drawCircle(brush,size.minDimension*.205f,center=at,alpha=(glow.value+energy*.3f).coerceIn(0f,1f))
+                }}}
                 // A second feathered light moves independently along the inner
                 // corona, rather than drawing a hard ring or restarting a pulse.
                 rotate(-lightRotation*.43f+38f){scale(1f+energy*.012f){drawCircle(rim,extent,alpha=glow.value*(.23f+energy*.36f))}}
@@ -455,8 +466,8 @@ private class TalkParticleField(private val width: Int, private val height: Int,
         }
         DiscoverLiveOrb(tracker,Modifier.fillMaxSize(.66f).graphicsLayer{
             scaleX=1f+energy*.012f;scaleY=1f-energy*.004f;rotationZ=tilt.value
-            translationY=if(motion)sin(seconds.value*.95f)*.65.dp.toPx() else 0f
+            translationY=if(animate)sin(seconds.value*.95f)*.65.dp.toPx() else 0f
         },conversing=phase=="Speaking",voiceCompanion=true,voiceEnergy={energy},attention=attention,
-            expression=appearance.face,motionEnabled=motion)
+            expression=appearance.face,motionEnabled=animate)
     }
 }

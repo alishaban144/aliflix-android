@@ -49,11 +49,32 @@ class TalkQuestionLanguageTest {
         org.junit.Assert.assertEquals("en",chooseSpokenResponseLanguage("en","مرحبا"))
         org.junit.Assert.assertEquals("en",chooseSpokenResponseLanguage("en","Hi"))
         org.junit.Assert.assertEquals("de",chooseSpokenResponseLanguage("en","Answer in German"))
-        org.junit.Assert.assertEquals("de",chooseSpokenResponseLanguage("en","Warum hat sie das getan?"))
+        org.junit.Assert.assertEquals("en",chooseSpokenResponseLanguage("en","Warum hat sie das getan?"))
         org.junit.Assert.assertFalse(talkActionRequested("new_chat","Hi"))
         org.junit.Assert.assertFalse(talkActionRequested("new_chat","Can you tell me why she left?"))
         org.junit.Assert.assertFalse(talkActionRequested("new_chat","Don't start a new chat"))
         org.junit.Assert.assertTrue(talkActionRequested("new_chat","Start a new conversation"))
+    }
+
+    @Test fun speechNoiseCannotChooseALanguageEvenWhenASRInventsASentence() {
+        for(fragment in listOf("", "¿Qué?", "Warum hat sie das getan?", "Почему она упала и кто ее толкнул?", "ماذا حدث في المشهد السابق؟", "这是怎么回事？", "Hi, hi, hi!")) {
+            assertEquals(fragment,"en",chooseSpokenResponseLanguage(null,fragment))
+            assertEquals(fragment,"en",chooseSpokenResponseLanguage("en",fragment))
+            assertEquals(fragment,"ar",chooseSpokenResponseLanguage("ar",fragment))
+        }
+        assertEquals("de",chooseSpokenResponseLanguage("en","Please answer in German."))
+        assertEquals("en",chooseSpokenResponseLanguage("de","Please answer in English again."))
+    }
+
+    @Test fun quotedAndReportedLanguageCommandsAreSceneEvidence() {
+        for(question in listOf("What does 'speak Arabic' mean?", "He said answer in German. Why?", "She says “speak French”. Is that a clue?", "Why did she say speak Arabic to him?")) {
+            assertNull(question,explicitRequestedTalkLanguage(question))
+            assertEquals(question,"en",chooseSpokenResponseLanguage("en",question))
+        }
+        assertEquals("en",detectTalkQuestionLanguage("What does \"ماذا حدث في المشهد السابق وكيف يمكن تفسير ذلك\" mean?"))
+        assertEquals("ar",explicitRequestedTalkLanguage("He said 'speak French'. Please answer in Arabic."))
+        assertEquals("de",explicitRequestedTalkLanguage("Explain the line and answer in German."))
+        assertNull(explicitRequestedTalkLanguage("What does speak Arabic mean?"))
     }
 
     @org.junit.Test fun explicitProviderQuotaMustNotTriggerAnAutomaticReconnectLoop() {

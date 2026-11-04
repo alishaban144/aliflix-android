@@ -15,7 +15,7 @@ export const LIVE_TOOLS = [{ functionDeclarations: [{
   parameters:{type:'OBJECT',properties:{}}
 },{
   name:'conversation_language',behavior:'NON_BLOCKING',
-  description:'Set the response language from the FIRST substantive user utterance once. After that, change it ONLY when the user explicitly requests another response language. A foreign film title, quotation, character name or code-switching does not authorize a change. Never announce this silent control call.',
+  description:'Preserve the locked response language (English by default for voice). Change it ONLY when the viewer clearly and explicitly requests another response language; ASR language detection and noise never authorize a change. A foreign film title, quotation, character name or code-switching does not authorize a change. Never announce this silent control call.',
   parameters:{type:'OBJECT',properties:{language:{type:'STRING',description:'Lowercase BCP-47 language code, e.g. en, de, ar.'},explicitRequest:{type:'BOOLEAN',description:'True only if the user explicitly asked you to change your response language.'}},required:['language','explicitRequest']}
 },{
   name:'conversation_topic',behavior:'NON_BLOCKING',
@@ -130,7 +130,7 @@ export function liveSetup(context: TalkContext) {
   }]:[]),...((context.companionVersion||0)>=8?agentTools:[]),...((context.companionVersion||0)>=6&&!context.textMode?[{
    name:'present_recommendations',behavior:'NON_BLOCKING',description:'Commit the recommendation speech and poster cards TOGETHER. REQUIRED after recommendations returns its pool. Choose requestedCount returned movie:id/tv:id keys (all if fewer), in your preferred order. Give each a distinct 4-7 word spoiler-free reason in the established language, without naming other films. Read the returned approved speechText exactly, without introduction, additions, substitutions or a closing question. Do not call this for ordinary card display or follow-ups.',
    parameters:{type:'OBJECT',properties:{picks:{type:'ARRAY',minItems:1,maxItems:(context.companionVersion||0)>=11?8:3,items:{type:'OBJECT',properties:{key:{type:'STRING'},reason:{type:'STRING'}},required:['key','reason']}},...((context.companionVersion||0)>=9?{narration:{type:'STRING',description:'Compose the actual spoken answer for this request in natural connected sentences, naming ALL selected canonical titles and no unselected alternatives. Give concrete useful observations; vary structure and rhythm with the request. No list-reading template, generic introduction, match explanation or search filler. Max 1800 characters.'}}:{})},required:(context.companionVersion||0)>=9?['picks','narration']:['picks']}
-  }]:[])]}], inputAudioTranscription: {}, outputAudioTranscription: {},
+  }]:[])]}], inputAudioTranscription: context.textMode?{}:{languageCodes:[...new Set([context.responseLanguage||'en','en'])]}, outputAudioTranscription: {},
   realtimeInputConfig: { automaticActivityDetection: (context.companionVersion||0)>=9 ? {disabled:true} : { disabled: false, startOfSpeechSensitivity: (context.companionVersion||0)>=8?'START_SENSITIVITY_LOW':'START_SENSITIVITY_HIGH',
     endOfSpeechSensitivity: 'END_SENSITIVITY_LOW', prefixPaddingMs: (context.companionVersion||0)>=8?500:180, silenceDurationMs: (context.companionVersion||0)>=8?1500:650 },
     activityHandling: 'START_OF_ACTIVITY_INTERRUPTS', turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY' },

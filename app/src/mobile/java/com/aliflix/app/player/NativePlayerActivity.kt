@@ -18,6 +18,7 @@ import android.os.Looper
 import android.provider.Settings
 import android.util.TypedValue
 import android.view.*
+import androidx.compose.ui.Modifier
 import android.widget.FrameLayout
 import androidx.compose.runtime.*
 import androidx.activity.addCallback
@@ -56,6 +57,8 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     } }
     internal fun talkHandoff()=if(talkCreated)talkVoice.handoff()else null
     private var talkCreated = false
+    private var talkOpening by mutableIntStateOf(0)
+    internal val talkTouches = com.aliflix.app.ui.discover.DiscoverTouchTracker()
     private val sceneMemory by lazy { PlayerSceneMemory({ if (::video.isInitialized) video else null }, ::talkSnapshot) }
     private var sceneCaptureJob: Job? = null
     override fun talkScene() = sceneMemory.current()
@@ -80,7 +83,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         val packet = sceneMemory.recall(query, fullStory) ?: return null
         val needsCurrentVideo = com.aliflix.app.talk.talkNeedsCurrentSceneObservation(query) &&
             com.aliflix.app.talk.sceneNeedsVideoBackfill(sceneMemory.current()?.frames.orEmpty(), packet.optDouble("anchorSeconds"))
-        if (query != "current scene" && (packet.optString("mode") in setOf("previous", "timestamp") || needsCurrentVideo || packet.optString("mode")=="search" && com.aliflix.app.talk.talkNeedsCurrentSceneObservation(query))) {
+        if (query != "current scene" && (packet.optString("mode") in setOf("previous", "timestamp") || needsCurrentVideo || packet.optString("mode")=="search" && com.aliflix.app.talk.talkNeedsCurrentSceneObservation(query) && Regex("(?i)earlier|previous|before|beginning|first|zuvor|vorher|سابق|قبل").containsMatchIn(query))) {
             val anchor = packet.optDouble("anchorSeconds")
             val windows = packet.optJSONArray("scenes") ?: JSONArray()
             val target = packet.optDouble("targetSeconds", Double.NaN)
@@ -115,15 +118,27 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     override suspend fun prepareTalkScene() = sceneMemory.current()?.takeIf { controller?.isPlaying != true && it.frames.isNotEmpty() && it.metadata.optBoolean("audioChecked") } ?: sceneMemory.capture(includeAudio = true)
     private var talkPreparationPaused = false
     private val talkPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted && talkVisible) lifecycleScope.launch { talkVoice.connect() } else if (talkCreated) talkVoice.permissionDenied()
+        if (granted && talkVisible) lifecycleScope.launch {
+            sceneMemory.capture(includeAudio=true);talkVoice.connect()
+            prepareTalkRecall("What is happening in the current scene?");talkVoice.inspectPlayerScene()
+        } else if (talkCreated) talkVoice.permissionDenied()
     }
     internal fun openTalk() {
         controller?.pause()
+        val opening = !talkVisible
         talkCreated = true
+        if(opening) { talkVoice.stopAnswer();talkVoice.setTextMode(false);talkOpening++ }
         talkVisible = true
         lifecycleScope.launch { prepareTalkRecall("current scene") }
         if (talkVoice.state.value.textMode || ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED)
-            lifecycleScope.launch { sceneMemory.capture(includeAudio = true); talkVoice.connect() }
+            lifecycleScope.launch {
+                sceneMemory.capture(includeAudio = true)
+                talkVoice.connect()
+                if(opening) {
+                    prepareTalkRecall("What is happening in the current scene?")
+                    talkVoice.inspectPlayerScene()
+                }
+            }
         else talkPermission.launch(android.Manifest.permission.RECORD_AUDIO)
     }
     internal fun closeTalk() {
@@ -672,7 +687,18 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                     onControlsVisibilityChanged = ::updateSubtitlePadding,
                     onOverlayVisibilityChanged = { captionGestureBlocked = it },
                 )
-                if (talkVisible) com.aliflix.app.talk.TalkPlayerBubble(talkVoice, onStart = ::openTalk, onClose = ::closeTalk)
+                androidx.compose.animation.AnimatedVisibility(talkVisible,
+                    enter=androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(180)),
+                    exit=androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(240))) {
+                    key(talkOpening) {
+                        com.aliflix.app.talk.TalkPlayerBubble(talkVoice,onStart=::openTalk,onClose=::closeTalk,tracker=talkTouches,
+                            orbTransition=Modifier.animateEnterExit(
+                                enter=androidx.compose.animation.scaleIn(androidx.compose.animation.core.spring(dampingRatio=.78f,stiffness=210f),initialScale=.35f)+
+                                    androidx.compose.animation.slideInVertically(androidx.compose.animation.core.tween(420)){it/3},
+                                exit=androidx.compose.animation.scaleOut(androidx.compose.animation.core.tween(240),targetScale=.35f)+
+                                    androidx.compose.animation.slideOutVertically(androidx.compose.animation.core.tween(240)){it/4}))
+                    }
+                }
             } }
         }, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
@@ -748,7 +774,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     }
 
     internal fun captionBounds(): android.graphics.RectF? {
-        if (captionGestureBlocked || ui.external || renderedCaptions.isEmpty() || !subtitles.isShown) return null
+        if (talkVisible || captionGestureBlocked || ui.external || renderedCaptions.isEmpty() || !subtitles.isShown) return null
         val paint = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP,
                 settingsStore.settings.value.subtitleFontSizeSp, resources.displayMetrics)
@@ -768,6 +794,10 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if(talkVisible && event.actionMasked in setOf(MotionEvent.ACTION_DOWN,MotionEvent.ACTION_MOVE,MotionEvent.ACTION_UP)) {
+            talkTouches.point=androidx.compose.ui.geometry.Offset(event.x,event.y)
+            talkTouches.lastTouchMillis=android.os.SystemClock.uptimeMillis()
+        }
         if (::subtitles.isInitialized && captionDrag.onTouch(event)) return true
         return super.dispatchTouchEvent(event)
     }
