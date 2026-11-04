@@ -5,7 +5,7 @@ import org.junit.Test
 
 class TalkSceneContextTest {
     @Test fun visualReferentsRequireImageEvidenceEvenInUnusualQuestionForms() {
-        for(question in listOf("Could the woman in red actually see the door?", "Is that cup empty?", "Which person on the left is holding the bag?")) {
+        for(question in listOf("Is she wearing red?", "Could the woman in red actually see the door?", "Is that cup empty?", "Which person on the left is holding the bag?")) {
             assertTrue(question,talkSceneQuestion(question));assertTrue(question,talkNeedsCurrentSceneObservation(question))
         }
         assertFalse(talkSceneQuestion("Recommend a comedy"))

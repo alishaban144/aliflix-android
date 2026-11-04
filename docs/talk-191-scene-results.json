@@ -6,19 +6,23 @@
     "episode": null,
     "pauseSeconds": 1800,
     "question": "Is the woman in black behind him actually driving? What exact reason does she give for refusing a ride all the way home, and can we verify that reason yet?",
-    "answer": "No, the woman in black is sitting in the backseat, not driving. She refuses a ride all the way home because she is supposed to meet her boyfriend at exit number three of the Hyehwa station. We cannot verify that reason at this moment.",
-    "firstUsefulMs": 5667,
-    "completeMs": 5871,
+    "answer": "No, the woman in black is a passenger in the backseat, not driving. She refuses a ride all the way home, stating she is supposed to meet her boyfriend at exit #3 of the Hyehwa station. We cannot verify this reason yet, as we only have her word for it.",
+    "firstUsefulMs": 4568,
+    "completeMs": 6212,
     "requiredPoints": [
       "She is a rear passenger, not the driver",
       "Driver offers the whole trip home; she insists on Hyehwa station exit 3",
       "She says she will meet a boyfriend there",
       "The boyfriend claim is not independently confirmed; no later planted-evidence plot"
     ],
-    "manualReview": "Accepted against inspected active-source footage and earlier timed dialogue; requested facts covered without later plot.",
+    "manualReview": "Accepted against inspected active-source footage and earlier timed dialogue. Each requested fact and uncertainty reviewed.",
     "responseLanguage": "en",
-    "observerAvailable": false,
-    "framesSent": 6
+    "followUp": {
+      "question": "Hold on, is she wearing red and moving into the driver's seat, or have I misread the shot? Use what is actually visible.",
+      "answer": "You've misread the shot; she is wearing dark clothing, not red, and she is remaining seated as a passenger in the backseat.",
+      "completeMs": 7799,
+      "sameConversation": true
+    }
   },
   {
     "title": "The Truman Show",
@@ -27,19 +31,17 @@
     "episode": null,
     "pauseSeconds": 1800,
     "question": "If this were an ordinary traffic report, why would the radio say Stand by, all extras? What earlier warning from Sylvia does that echo, and does this radio line alone prove her entire claim?",
-    "answer": "The broadcast says \"Stand by, all extras\" because Truman's world is a controlled production, not a real city. This echoes Sylvia's warning that everyone around him is just pretending and everything is a set. While this confirms coordinated actors, it doesn't fully prove her claim about the scale of the fake sky and sea.",
-    "firstUsefulMs": 3229,
-    "completeMs": 5311,
+    "answer": "That radio line refers to \"extras,\" strongly implying that people in his world are just actors, echoing Sylvia's warning that everything is a controlled set. While it confirms the stagging, one line alone doesn't prove every detail of her entire claim about the scope of the show.",
+    "firstUsefulMs": 5731,
+    "completeMs": 7516,
     "requiredPoints": [
       "The radio line addresses extras and coordinates action rather than merely reporting traffic",
       "Sylvia earlier said people were pretending and the world around him was a set",
       "The line supports her warning but does not alone prove every claim",
       "No events after the current playhead"
     ],
-    "manualReview": "Accepted against inspected active-source footage and earlier timed dialogue; requested facts covered without later plot.",
-    "responseLanguage": "en",
-    "observerAvailable": false,
-    "framesSent": 4
+    "manualReview": "Accepted against inspected active-source footage and earlier timed dialogue. Each requested fact and uncertainty reviewed.",
+    "responseLanguage": "en"
   },
   {
     "title": "Severance",
@@ -57,10 +59,8 @@
       "The prior flowchart says trainee must ask to leave three times, with page 19 for agitation",
       "Do not invent a medical diagnosis or later revelations"
     ],
-    "manualReview": "Accepted against inspected active-source footage and earlier timed dialogue; requested facts covered without later plot.",
-    "responseLanguage": "en",
-    "observerAvailable": false,
-    "framesSent": 4
+    "manualReview": "Accepted against inspected active-source footage and earlier timed dialogue. Each requested fact and uncertainty reviewed.",
+    "responseLanguage": "en"
   },
   {
     "title": "Better Call Saul",
@@ -78,9 +78,71 @@
       "Jimmy repeatedly tries to prevent a police call",
       "Do not assert the later-revealed scam as already established"
     ],
-    "manualReview": "Accepted against inspected active-source footage and earlier timed dialogue; requested facts covered without later plot.",
+    "manualReview": "Accepted against inspected active-source footage and earlier timed dialogue. Each requested fact and uncertainty reviewed.",
+    "responseLanguage": "en"
+  },
+  {
+    "title": "The Truman Show",
+    "type": "movie",
+    "season": null,
+    "episode": null,
+    "pauseSeconds": 1800,
+    "question": "Could that radio voice just be an ordinary traffic update? Why does it say extras?",
+    "answer": "It's not an ordinary traffic update. The voice is giving direct instructions to extras on a set, revealing the artificial nature of Truman's world.",
+    "firstUsefulMs": 14042,
+    "completeMs": 15019,
+    "requiredPoints": [
+      "The radio addresses actors/extras, not ordinary drivers",
+      "The instruction coordinates the staged environment rather than an ordinary traffic report"
+    ],
+    "manualReview": "Accepted against inspected active-source footage and earlier timed dialogue. Each requested fact and uncertainty reviewed.",
     "responseLanguage": "en",
-    "observerAvailable": false,
-    "framesSent": 6
+    "input": "owned English speech through microphone processing",
+    "recognizedQuestion": "Could that radio voice just be an ordinary traffic update? Why does it say extras?",
+    "timingOrigin": "start of 5.535-second speech fixture; includes speech and endpointing",
+    "sameConversation": true,
+    "spokenOutputDrained": {
+      "at": 6678811,
+      "phase": "Listening",
+      "written": 201120,
+      "rendered": 201120,
+      "queued": 0,
+      "writing": false,
+      "playing": false,
+      "speaking": false,
+      "end": true,
+      "primingFrom": 201120,
+      "awaitingInterrupt": false,
+      "remoteSpeechActive": false,
+      "recommendationLookup": false,
+      "pendingAnswerNeedsTitle": false,
+      "presentationDelivered": false,
+      "pendingTools": 0,
+      "awaitingToolAnswer": false,
+      "route": 2,
+      "communicationDevice": 2,
+      "outputUsage": 2,
+      "outputVolume": 3,
+      "outputEnergy": 0,
+      "audioMode": 3,
+      "recordSource": 7,
+      "aecEnabled": true,
+      "nsEnabled": true,
+      "echoProcessing": "platform",
+      "deadlinePending": false,
+      "generationOpen": false,
+      "recommendationPool": 0,
+      "epoch": 4,
+      "userTurn": 2,
+      "recommendationOwner": -1,
+      "leaseActive": true,
+      "underruns": 1,
+      "bridgeCandidate": "",
+      "bridgeTranscript": "",
+      "bridgeBoundary": "",
+      "bridgeAcceptedAt": 0,
+      "bridgeStreamingAt": 0,
+      "bridgeCompletedAt": 0
+    }
   }
 ]
