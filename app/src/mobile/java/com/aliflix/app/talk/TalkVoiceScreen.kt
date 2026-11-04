@@ -429,22 +429,18 @@ private class TalkParticleField(private val width: Int, private val height: Int,
     }
     var bounds by remember {mutableStateOf(IntSize.Zero)}
     val lights=remember(bounds){
-        if(bounds.width<=0||bounds.height<=0)null else{
-            val cx=bounds.width/2f;val cy=bounds.height/2f;val extent=min(bounds.width,bounds.height)*.475f
-            val sweep=android.graphics.SweepGradient(cx,cy,intArrayOf(
-                Color(0xFFA58BE4).toArgb(),Color(0xFFF1DEFF).toArgb(),Color(0xFF8E80CB).toArgb(),
-                Color(0xFFACCCDD).toArgb(),Color(0xFFA58BE4).toArgb()),floatArrayOf(0f,.19f,.48f,.78f,1f))
-            fun light(stops:FloatArray,colors:IntArray):ShaderBrush{
-                val mask=android.graphics.RadialGradient(cx,cy,extent,colors,stops,android.graphics.Shader.TileMode.CLAMP)
-                return ShaderBrush(android.graphics.ComposeShader(sweep,mask,android.graphics.PorterDuff.Mode.DST_IN))
-            }
-            val aura=light(floatArrayOf(0f,.52f,.64f,.77f,.9f,1f),intArrayOf(-1,-1,0xc0ffffff.toInt(),0x68ffffff,0x16ffffff,0))
-            val rim=light(floatArrayOf(0f,.58f,.64f,.69f,.76f,.88f,1f),intArrayOf(0,0,0xcaffffff.toInt(),0x88ffffff.toInt(),0x30ffffff,0x08ffffff,0))
-            aura to rim
+        val extent=min(bounds.width,bounds.height)*.475f
+        if(extent<=0f)null else {
+            val center=Offset(bounds.width/2f,bounds.height/2f)
+            Brush.radialGradient(0f to Color(0xFFDDCFFF).copy(alpha=.5f),
+                .52f to Color(0xFFA58BE4).copy(alpha=.4f),.76f to Color(0xFFA58BE4).copy(alpha=.12f),
+                1f to Color.Transparent,center=center,radius=extent) to
+                Brush.radialGradient(0f to Color.Transparent,.58f to Color.Transparent,
+                    .68f to Color(0xFFF1DEFF).copy(alpha=.3f),1f to Color.Transparent,center=center,radius=extent)
         }
     }
     Box(modifier.onSizeChanged{bounds=it}.semantics {contentDescription="Aliflix voice: ${appearance.label}";stateDescription=appearance.label},contentAlignment=Alignment.Center){
-        Canvas(Modifier.fillMaxSize()){
+        Canvas(Modifier.fillMaxSize().clip(androidx.compose.foundation.shape.CircleShape)){
             val extent=size.minDimension*.475f;val breath=1f+sin(seconds.value*.82f)*appearance.breath+energy*.02f
             lights?.let{(aura,rim)->
                 rotate(lightRotation){scale(breath){drawCircle(aura,extent,alpha=(glow.value+energy*.25f).coerceIn(0f,1f))}}

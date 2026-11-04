@@ -163,7 +163,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private val sceneObservations = linkedMapOf<String, JSONObject>()
     private var sceneObservationKey = ""
     private var sceneObservation: Deferred<JSONObject?>? = null
+    private var sceneUnavailableUntil=0L
+    internal var debugOfflineConnection=false
     private fun clearSceneObservations() {
+        sceneUnavailableUntil=0L
         sceneObservation?.cancel(); sceneObservation = null; sceneObservationKey = ""
         sceneObservations.clear(); sentSceneKey = ""
         debugSceneContext = null; debugSceneObservationIssue = ""
@@ -171,6 +174,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     internal var debugSceneObservationIssue = ""
         private set
     private fun observeScene(scene: TalkSceneContext): Deferred<JSONObject?> {
+        if(BuildConfig.DEBUG&&debugOfflineConnection)return CompletableDeferred(null)
+        if(SystemClock.elapsedRealtime()<sceneUnavailableUntil)return CompletableDeferred(null)
         sceneObservations[scene.key]?.let { return CompletableDeferred(it) }
         if (sceneObservationKey == scene.key && sceneObservation?.isActive == true) return sceneObservation!!
         sceneObservation?.cancel()
@@ -180,7 +185,13 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             val observation = try {
                 post("scene", JSONObject().put("session", session).put("scene", scene.observationRequest(if (conversationContext.optInt("companionVersion") >= 15) 8 else 4)), timeout = 23_000)
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { if (BuildConfig.DEBUG) debugSceneObservationIssue = error.message.orEmpty().take(160); null }
+            catch (error: Exception) {
+                // An unavailable auxiliary observer must not be hammered for every
+                // question. Direct timestamped images and story retrieval still work.
+                sceneUnavailableUntil=SystemClock.elapsedRealtime()+60_000
+                if (BuildConfig.DEBUG) debugSceneObservationIssue = error.message.orEmpty().take(160)
+                null
+            }
             // An independent observation belongs to the captured footage. A live
             // socket reconnect does not invalidate that same paused sequence.
             if (closed || TalkPlayerConnection.current()?.talkScene()?.key != scene.key) {
@@ -197,7 +208,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private suspend fun awaitSceneObservation(): TalkSceneContext? {
         val scene = TalkPlayerConnection.current()?.prepareTalkScene() ?: return null
         val pending = observeScene(scene)
-        val observation = withTimeoutOrNull(22_000) { pending.await() }
+        val observation = withTimeoutOrNull(4_000) { pending.await() }
         if (observation == null && pending.isActive && BuildConfig.DEBUG) debugSceneObservationIssue = "Observation deadline exceeded"
         if (TalkPlayerConnection.current()?.talkScene()?.key != scene.key) return null
         if (observation != null) scene.metadata.put("groundedObservation", observation).put("groundingState", "observed")
@@ -214,6 +225,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         private set
     internal var debugQuestionSentAt = 0L
         private set
+    internal suspend fun inspectPlayerScene() { awaitSceneObservation() }
     internal suspend fun debugInspectScene(): JSONObject? { check(BuildConfig.DEBUG); return awaitSceneObservation()?.metadata }
     private fun sendTurnContext(userOwned:Boolean=false) {
         if(!socketReady||!userOwned&&(speaking||generationOpen))return
@@ -241,8 +253,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     scene.copy(frames = sceneFrameSelection(scene.frames, scene.anchorSeconds).let { listOfNotNull(it.firstOrNull(), it.lastOrNull()).distinctBy { frame -> frame.seconds } })
                 else scene.copy(frames=listOfNotNull(scene.frames.firstOrNull(),scene.frames.getOrNull(scene.frames.size/3),scene.frames.getOrNull(scene.frames.size*2/3),scene.frames.lastOrNull()).distinctBy { it.seconds })
             else scene.copy(frames =
-                if (parseTalkRecallRequest(question, scene.anchorSeconds).mode == TalkRecallMode.TIMESTAMP) emptyList() else scene.frames.takeLast(1))
-            val key = "$epoch:$providerContext:${scene.key}"
+                if (parseTalkRecallRequest(question, scene.anchorSeconds).mode == TalkRecallMode.TIMESTAMP) emptyList() else listOfNotNull(scene.frames.firstOrNull(),scene.frames.getOrNull(scene.frames.size/3),scene.frames.getOrNull(scene.frames.size*2/3),scene.frames.lastOrNull()).distinctBy { it.seconds })
+            scene.metadata.put("attachedCurrentFrameSeconds",JSONArray(delivery.frames.map { it.seconds }))
+            val key = "$epoch:$providerContext:${scene.key}:${delivery.frames.joinToString { it.seconds.toString() }}"
             val includeFrames = key != sentSceneKey || SystemClock.elapsedRealtime() - sentSceneAt > 45_000
             emit(JSONObject().put("clientContent", JSONObject().put("turns", JSONArray().put(JSONObject().put("role", "user")
                 .put("parts", delivery.parts(includeFrames, recalledFrames)))).put("turnComplete", false)))
@@ -333,7 +346,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 sendTurnContext()
                 val parts = JSONArray()
                 if (TalkPlayerConnection.current() != null && (talkSceneQuestion(question) || talkEpisodeRecallQuestion(question))) {
-                    parts.put(JSONObject().put("text", "Native answer contract: answer every part of the viewer's actual question clearly and completely from the attached timed story and video. Explain the supported cause, relevant earlier setup or inference they ask about. A narration of the pause frame is never a substitute for that answer. Retrieve a specifically missing causal link with scene_recall before answering; observed footage alone does not mean the question is fully supported. When explaining a character reasoning, explicitly attribute the conclusion to that character and connect each clue to the inference. A confident character deduction is not objective proof. Cover each requested premise and exception separately. Earlier scenes through the pause are allowed. Caption windows are not cinematic scene boundaries. Participant names/faces have not been bound by the app: use roles/descriptions unless exact dialogue or grounded prior evidence establishes identity; never guess a name or spouse relationship from title familiarity. Respond in ${responseLanguage ?: "the viewer's question language"}."))
+                    parts.put(JSONObject().put("text", "Native answer contract: answer every part of the viewer's actual question clearly and completely from the attached timed story and video. Explain the supported cause, relevant earlier setup or inference they ask about. A narration of the pause frame is never a substitute for that answer. Resolve visual references (clothing colour, screen position, objects and gestures) against the attached images before connecting them to dialogue. A colour or role in the question may be wrong or ambiguous: correct a false premise or ask a short specific clarification; never invent an absent person, unseen action or physical cause. Distinguish visible action, earlier dialogue and supported inference. If an action occurred between sparse samples, retrieve surrounding video timestamps instead of filling the gap with an expected movement. Retrieve a specifically missing causal link with scene_recall before answering; observed footage alone does not mean the question is fully supported. When explaining a character reasoning, explicitly attribute the conclusion to that character and connect each clue to the inference. A confident character deduction is not objective proof. Cover each requested premise and exception separately. Earlier scenes through the pause are allowed. Caption windows are not cinematic scene boundaries. Participant names/faces have not been bound by the app: use roles/descriptions unless exact dialogue or grounded prior evidence establishes identity; never guess a name or spouse relationship from title familiarity. Respond in ${responseLanguage ?: "the viewer's question language"}."))
                 }
                 parts.put(JSONObject().put("text",question))
                 if (BuildConfig.DEBUG) debugQuestionSentAt = SystemClock.elapsedRealtime()
@@ -646,6 +659,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private fun event(type: String) = JSONObject().put("type", type)
 
     suspend fun connect() {
+        if(BuildConfig.DEBUG&&debugOfflineConnection) { update{it.copy(phase=if(it.textMode)"Muted" else "Listening")};return }
         if (closed || permitted || _state.value.phase == "Connecting") return
         update{it.copy(connectionDetail="")}
         val account=FirebaseAuth.getInstance().currentUser?.uid?:"guest"
@@ -1613,6 +1627,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 remoteSpeechActive=false;remoteSpeechEndedAt=SystemClock.elapsedRealtime()
                 update{it.copy(phase="Thinking")}
                 commitQuestion()
+                sendTurnContext(userOwned=true)
                 emit(JSONObject().put("realtimeInput",JSONObject().put("activityEnd",JSONObject())))
                 answerDeadline.awaiting(45000)
                 if(BuildConfig.DEBUG)debugActivityEvents.add(JSONObject().put("end",SystemClock.elapsedRealtime()))

@@ -1,0 +1,86 @@
+[
+  {
+    "title": "Parasite",
+    "type": "movie",
+    "season": null,
+    "episode": null,
+    "pauseSeconds": 1800,
+    "question": "Is the woman in black behind him actually driving? What exact reason does she give for refusing a ride all the way home, and can we verify that reason yet?",
+    "answer": "No, the woman in black is sitting in the backseat, not driving. She refuses a ride all the way home because she is supposed to meet her boyfriend at exit number three of the Hyehwa station. We cannot verify that reason at this moment.",
+    "firstUsefulMs": 5667,
+    "completeMs": 5871,
+    "requiredPoints": [
+      "She is a rear passenger, not the driver",
+      "Driver offers the whole trip home; she insists on Hyehwa station exit 3",
+      "She says she will meet a boyfriend there",
+      "The boyfriend claim is not independently confirmed; no later planted-evidence plot"
+    ],
+    "manualReview": "Accepted against inspected active-source footage and earlier timed dialogue; requested facts covered without later plot.",
+    "responseLanguage": "en",
+    "observerAvailable": false,
+    "framesSent": 6
+  },
+  {
+    "title": "The Truman Show",
+    "type": "movie",
+    "season": null,
+    "episode": null,
+    "pauseSeconds": 1800,
+    "question": "If this were an ordinary traffic report, why would the radio say Stand by, all extras? What earlier warning from Sylvia does that echo, and does this radio line alone prove her entire claim?",
+    "answer": "The broadcast says \"Stand by, all extras\" because Truman's world is a controlled production, not a real city. This echoes Sylvia's warning that everyone around him is just pretending and everything is a set. While this confirms coordinated actors, it doesn't fully prove her claim about the scale of the fake sky and sea.",
+    "firstUsefulMs": 3229,
+    "completeMs": 5311,
+    "requiredPoints": [
+      "The radio line addresses extras and coordinates action rather than merely reporting traffic",
+      "Sylvia earlier said people were pretending and the world around him was a set",
+      "The line supports her warning but does not alone prove every claim",
+      "No events after the current playhead"
+    ],
+    "manualReview": "Accepted against inspected active-source footage and earlier timed dialogue; requested facts covered without later plot.",
+    "responseLanguage": "en",
+    "observerAvailable": false,
+    "framesSent": 4
+  },
+  {
+    "title": "Severance",
+    "type": "tv",
+    "season": 1,
+    "episode": 1,
+    "pauseSeconds": 1200,
+    "question": "Could she really have forgotten everything if she could still name Delaware? Explain why the earlier survey was called a perfect score, and why the people watching her now do not simply let her out when she first asks.",
+    "answer": "She hasn't retained her personal life memories, but she's able to access basic semantic information, which is how she can name a state like Delaware even after forgetting her identity. The survey was called a perfect score because she correctly answered unknown to the personal identity questions. The observers don't let her out immediately because their protocol requires her to make that request three times.",
+    "firstUsefulMs": 3010,
+    "completeMs": 5667,
+    "requiredPoints": [
+      "Delaware demonstrates retained general knowledge, not total loss of all knowledge",
+      "Personal identity and mother-eye answers were unknown; the survey expected that contrast",
+      "The prior flowchart says trainee must ask to leave three times, with page 19 for agitation",
+      "Do not invent a medical diagnosis or later revelations"
+    ],
+    "manualReview": "Accepted against inspected active-source footage and earlier timed dialogue; requested facts covered without later plot.",
+    "responseLanguage": "en",
+    "observerAvailable": false,
+    "framesSent": 4
+  },
+  {
+    "title": "Better Call Saul",
+    "type": "tv",
+    "season": 1,
+    "episode": 1,
+    "pauseSeconds": 1200,
+    "question": "Is the man in orange definitely suffering a broken leg, or is that only what they claim? Who says he has video, and what is the suited man repeatedly trying to prevent? Separate visible evidence from allegations, without using anything after this moment.",
+    "answer": "The man in the orange shirt claims his leg is broken, but that is just an allegation between them; there is no visual proof yet. The person in the black shirt and helmet says he has the whole thing on video. Meanwhile, the man in the suit and tie is repeatedly pleading with them not to call the police.",
+    "firstUsefulMs": 6039,
+    "completeMs": 7301,
+    "requiredPoints": [
+      "The man in orange is down in the road; a fracture is alleged, not medically established",
+      "The other helmeted/dark-shirted man says he has video",
+      "Jimmy repeatedly tries to prevent a police call",
+      "Do not assert the later-revealed scam as already established"
+    ],
+    "manualReview": "Accepted against inspected active-source footage and earlier timed dialogue; requested facts covered without later plot.",
+    "responseLanguage": "en",
+    "observerAvailable": false,
+    "framesSent": 6
+  }
+]

@@ -4,6 +4,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkSceneContextTest {
+    @Test fun visualReferentsRequireImageEvidenceEvenInUnusualQuestionForms() {
+        for(question in listOf("Could the woman in red actually see the door?", "Is that cup empty?", "Which person on the left is holding the bag?")) {
+            assertTrue(question,talkSceneQuestion(question));assertTrue(question,talkNeedsCurrentSceneObservation(question))
+        }
+        assertFalse(talkSceneQuestion("Recommend a comedy"))
+    }
+
     @Test fun dialogueAndBeliefQuestionsUseStoryEvidenceWhilePhysicalCausesKeepTemporalObservation() {
         assertFalse(talkNeedsCurrentSceneObservation("What did Marta tell the detectives about the medication?"))
         assertFalse(talkNeedsCurrentSceneObservation("Has he agreed to keep her secret, and what is their conflict?"))

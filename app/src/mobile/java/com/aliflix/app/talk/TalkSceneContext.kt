@@ -68,12 +68,15 @@ internal fun sceneReplayStart(anchor: Double, dialogue: List<Pair<Double, Double
 
 internal fun talkSceneQuestion(question: String): Boolean = Regex(
     "(?i)\\b(scene|dialogue|dialog|understand|happened|what (?:did|does|is|was|are|were)|why (?:did|does|is|was|are|were)|who (?:is|was)|that (?:line|exchange)|said|meaning|translate|recap|catch me up|szene|passiert|versteh|gesagt|bedeutet|erkl[aä]r)\\b|المشهد|فهم|ماذا حدث|اشرح|قال|ترجم"
-).containsMatchIn(question)
+).containsMatchIn(question) || talkVisualReference(question)
+
+internal fun talkVisualReference(question:String):Boolean = Regex("(?i)\\b(?:red|blue|green|yellow|white|black|pink|purple|orange) (?:dress|shirt|coat|jacket|woman|man|one)|\\b(?:woman|man|girl|boy|person|one) (?:in|wearing|on the|beside|next to)|\\b(?:that|this|the) (?:cup|glass|watch|phone|bag|suitcase|shoe|hat|ring|photograph|photo|door|window)|\\b(?:left|right) (?:side|hand|corner)\\b").containsMatchIn(question)
 
 /** Narrative recall already has timed text and relevant footage. It must not wait for
  * a second observer of the unrelated paused still before answering an earlier event. */
 internal fun talkNeedsCurrentSceneObservation(question: String): Boolean {
     if (parseTalkRecallRequest(question, Double.MAX_VALUE).mode in setOf(TalkRecallMode.PREVIOUS, TalkRecallMode.TIMESTAMP, TalkRecallMode.RECAP)) return false
+    if(talkVisualReference(question))return true
     if (Regex("(?i)\\b(?:how did .{1,45}(?:know|learn|discover|find out|realize|realise)|what did .{1,45}(?:say|tell|admit|claim|report)|what (?:does|did) .{0,30}(?:mean|letter|message)|who (?:said|told))\\b").containsMatchIn(question)) return false
     if(Regex("(?i)\\b(?:what evidence|why (?:does|did) .{0,45}(?:think|believe|claim|say|promise))\\b").containsMatchIn(question))return false
     if (!Regex("(?i)\\b(fall|fell|push|pushed|hit|crash|shoot|shot|collapse|collapsed|drop|dropped)\\b").containsMatchIn(question) &&
