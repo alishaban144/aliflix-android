@@ -26,6 +26,7 @@ class Talk187SceneDeviceTest {
         return node.text.toString()+" "+node.contentDescription.toString()+" "+(0 until node.childCount).joinToString(" "){visibleText(node.getChild(it))}
     }
     private fun fixture(body:suspend (NativePlayerActivity)->Unit) {
+        i.uiAutomation.grantRuntimePermission(context.packageName,android.Manifest.permission.RECORD_AUDIO)
         grantNativeFixtureNetworkPermission()
         val bytes=i.context.assets.open("cast-test.mp4").use { it.readBytes() }
         NativeBackgroundPlaybackTest.FixtureServer(bytes).use { server ->
@@ -73,6 +74,21 @@ class Talk187SceneDeviceTest {
         val rewind=withContext(Dispatchers.Main) { player.prepareTalkScene()!! }
         assertTrue(rewind.frames.all { it.seconds<8 })
         assertFalse(rewind.key==after.key)
+    }
+    @Test fun underlyingCaptionsCannotStealTalkBubbleGestures()=fixture { player ->
+        withContext(Dispatchers.Main) {
+            player.playbackController!!.pause()
+            NativePlaybackService.updateSubtitles("WEBVTT\n\n00:00:00.000 --> 00:01:20.000\nCAPTIONS UNDER THE TALK BUBBLE\n\n", "en", "English")
+        }
+        withTimeout(10000) { while(withContext(Dispatchers.Main) { player.captionBounds()==null }) delay(40) }
+        withContext(Dispatchers.Main) {
+            assertNotNull("Caption dragging works before Talk",player.captionBounds())
+            player.openTalk()
+            assertFalse("The caption fixture must remain present",NativePlaybackService.currentCaptionCues().isEmpty())
+            assertNull("Underlying captions must not intercept Talk touches",player.captionBounds())
+            player.closeTalk()
+            assertNotNull("Caption dragging is restored after Talk closes",player.captionBounds())
+        }
     }
     @Test fun reopeningStartsAsSpeechAndKeepsEarlierHistoryOutOfTheNewExchange()=fixture { player ->
         withContext(Dispatchers.Main) { player.openTalk() }
@@ -122,6 +138,9 @@ class Talk187SceneDeviceTest {
             }
             screenshot("talk187-composer-$name.png")
             assertNotNull(input);assertTrue("$name input=$input minimum=$size",input!!.height>=size-2)
+            i.sendStringSync("$name draft")
+            delay(350)
+            assertTrue("$name composer lost focus during keyboard resize",visibleText(i.uiAutomation.rootInActiveWindow).contains("$name draft"))
             i.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);delay(250)
             i.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);delay(250)
             if(withContext(Dispatchers.Main) { player.talkVoice.debugCardBounds["player-type"]!=null }) { tap(bound(player,"player-orb"));delay(250) }

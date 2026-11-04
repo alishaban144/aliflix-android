@@ -34,8 +34,8 @@ These questions were written after inspecting the footage and earlier story, bef
 
 | Title / pause | Distinct reasoning checked | First useful / complete |
 |---|---|---|
-| Parasite / 30:00 | Driver versus rear passenger; stated station/exit/boyfriend reason versus corroboration. | 5.667 / 5.871 s |
-| The Truman Show / 30:00 | Production instruction versus traffic report; Sylvia callback and limits of what one radio line proves. | 3.229 / 5.311 s |
+| Parasite / 30:00 | Driver versus rear passenger; stated station/exit/boyfriend reason versus corroboration. | 4.568 / 6.212 s |
+| The Truman Show / 30:00 | Production instruction versus traffic report; Sylvia callback and limits of what one radio line proves. | 5.731 / 7.516 s |
 | Severance / 20:00 | General versus personal memory, expected survey result, and the three-request release protocol. | 3.010 / 5.667 s |
 | Better Call Saul / 20:00 | Alleged fracture versus established fact, video claimant, and attempted prevention of a police call. | 6.039 / 7.301 s |
 
@@ -54,3 +54,9 @@ The retained final Parasite answer includes the rear passenger, boyfriend claim,
 A separate **spoken** question on The Truman Show asked whether the radio could be a normal traffic update and why it said “extras.” Actual English ASR reproduced the question correctly; the answer explained that the voice was directing extras on a set. The test waited for the entire AudioTrack queue to drain: **201,120 written and rendered samples**, zero queued bytes, no writing/playing/speaking, final state Listening, same conversation, and no false barge-in. The raw receipt retains a recovered earlier session-expiry close; it is not presented as an uninterrupted network connection. Speech latency is measured from the start of the 5.535-second fixture, not compared directly with typed-question latency. All six reviewed question turns (four distinct titles, one contextual false-premise follow-up and one spoken scene question) are in the response record.
 
 Actual swipe-down/up gestures additionally verify history navigation, followed by programmatic access to the oldest and live-edge items. The final reduced-motion gaze test asserts static eyes when Android animations are disabled; the motion-enabled physical pass separately asserts directional pixel movement. Test settings are restored afterward. No production backend change or TV release is part of this update.
+
+### Keyboard, caption gestures and release-gate corrections
+
+The first complete CI device gate stopped at a system microphone-permission dialog: voice-first fixtures now explicitly grant the permission before injecting app-window gestures. The denied-permission initial state was reproduced on the physical phone, and all three affected native checks then passed.
+
+A final holistic pass found two further interaction defects. Caption dragging beneath Talk could intercept bubble touches; its gesture bounds are now disabled while Talk is visible and restored on close, with an actual rendered-caption regression. The landscape IME could consume the entire history viewport. Landscape typing now shares one row with the controls, keeps the same focused composer while layouts move, and preserves reading space. The regression enters real text in both orientations and uses the actual Send action after swiping through history. The original failed attempts are retained locally rather than counted as passes.

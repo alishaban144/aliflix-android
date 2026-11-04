@@ -92,13 +92,25 @@ import kotlin.math.roundToInt
         }
     }
     BackHandler(enabled = controls || typing) { if (typing) dismissComposer() else controls = false }
-    LaunchedEffect(typing) { if (typing) { withFrameNanos {}; composerFocus.requestFocus(); keyboard?.show() } }
     LaunchedEffect(state.sending,lastUser) { if(state.sending && lastUser>=openingLine) controls=true }
     LaunchedEffect(controls, typing) {
         listOf("player-microphone", "player-expand", "player-full-input", "player-full-close", "player-full-send").forEach(session.debugCardBounds::remove)
         if (!controls) listOf("player-palette", "player-type", "player-close", "player-send", "player-exchange").forEach(session.debugCardBounds::remove)
         if (!typing) session.debugCardBounds.remove("player-input")
     }
+    val composer = remember(state.conversationId, draft) { movableContentOf<Modifier, Boolean> { modifier, compact ->
+        LaunchedEffect(compact) { withFrameNanos {}; composerFocus.requestFocus(); keyboard?.show() }
+        Row(modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Color.Black.copy(alpha=.24f)).padding(start=14.dp,end=4.dp),verticalAlignment=Alignment.CenterVertically) {
+            BasicTextField(draft.value,{if(it.text.length<=1600)draft.value=it},Modifier.weight(1f).heightIn(min=48.dp)
+                .focusRequester(composerFocus).measured("player-input").testTag("talk-player-input").semantics { contentDescription="Message Aliflix" },
+                textStyle=TextStyle(color=Color(0xFFF4F0FF),fontSize=15.sp,lineHeight=21.sp),cursorBrush=SolidColor(AliflixAccentSecondary),
+                singleLine=compact,minLines=1,maxLines=if(compact)1 else 3,keyboardOptions=KeyboardOptions(imeAction=ImeAction.Send),keyboardActions=KeyboardActions(onSend={send()}),
+                decorationBox={inner->Box(Modifier.fillMaxWidth().padding(vertical=12.dp)) { inner() }})
+            IconButton(onClick=::send,enabled=draft.value.text.isNotBlank(),modifier=Modifier.size(48.dp).measured("player-send")) {
+                Icon(Icons.AutoMirrored.Rounded.Send,"Send",tint=AliflixAccentSecondary,modifier=Modifier.size(21.dp))
+            }
+        }
+    } }
     BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(12.dp).testTag("talk-player-bubble")) {
         val orbSize = 76.dp
         val maxX = with(density) { (maxWidth - orbSize).toPx().coerceAtLeast(0f) }
@@ -127,7 +139,10 @@ import kotlin.math.roundToInt
                 Surface(Modifier.width(paletteWidth).heightIn(max=panelLimit).animateContentSize(androidx.compose.animation.core.tween(if(motion)260 else 0)).onSizeChanged { panelHeight=it.height }.measured("player-palette").testTag("talk-inline-conversation"),
                     shape=RoundedCornerShape(28.dp),color=Color(0xFF151422),shadowElevation=14.dp) {
                     Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End) {
+                        // In a landscape IME viewport, share the controls/composer row so history retains a touchable reading area.
+                        val compactComposer=typing&&LocalConfiguration.current.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.End) {
+                            if(compactComposer)composer(Modifier.weight(1f),true)
                             if(state.textMode||state.muted)ScenePaletteButton(Icons.Rounded.GraphicEq,"Voice conversation") { dismissComposer();controls=false;session.setTextMode(false);onStart() }
                             ScenePaletteButton(Icons.Rounded.Keyboard,"Type",Modifier.measured("player-type").semantics { selected=typing },active=typing) {
                                 if(!typing) { session.setTextMode(true); onStart() }
@@ -142,7 +157,7 @@ import kotlin.math.roundToInt
                             textMeasurer.measure(line.text,bodyStyle,constraints=Constraints(maxWidth=textWidth)).size.height + with(density){20.dp.roundToPx()}
                         }
                         val readingHeight=with(density){currentHeight.toDp()}.coerceAtLeast(96.dp)
-                            .coerceAtMost((panelLimit-if(typing)132.dp else 80.dp).coerceAtLeast(64.dp))
+                            .coerceAtMost((panelLimit-if(typing&&!compactComposer)132.dp else 80.dp).coerceAtLeast(64.dp))
                         if(typing||currentLines.isNotEmpty())LazyColumn(Modifier.fillMaxWidth().height(readingHeight).weight(1f,fill=false)
                             .measured("player-exchange").testTag("talk-inline-exchange"),state=historyScroll) {
                             itemsIndexed(state.lines,key={index,_->"line-$index"}) { _,line ->
@@ -155,16 +170,7 @@ import kotlin.math.roundToInt
                                 (96.dp-with(density){currentHeight.toDp()}).coerceAtLeast(0.dp))) }
                         }
                         if(talkShowsResponseProgress(state.sending,state.answerComplete))TalkThinking(motion,Modifier.padding(horizontal=10.dp))
-                        if(typing)Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Color.Black.copy(alpha=.24f)).padding(start=14.dp,end=4.dp),verticalAlignment=Alignment.CenterVertically) {
-                            BasicTextField(draft.value,{if(it.text.length<=1600)draft.value=it},Modifier.weight(1f).heightIn(min=48.dp)
-                                .focusRequester(composerFocus).measured("player-input").testTag("talk-player-input").semantics { contentDescription="Message Aliflix" },
-                                textStyle=TextStyle(color=Color(0xFFF4F0FF),fontSize=15.sp,lineHeight=21.sp),cursorBrush=SolidColor(AliflixAccentSecondary),
-                                minLines=1,maxLines=3,keyboardOptions=KeyboardOptions(imeAction=ImeAction.Send),keyboardActions=KeyboardActions(onSend={send()}),
-                                decorationBox={inner->Box(Modifier.fillMaxWidth().padding(vertical=12.dp)) { inner() }})
-                            IconButton(onClick=::send,enabled=draft.value.text.isNotBlank(),modifier=Modifier.size(48.dp).measured("player-send")) {
-                                Icon(Icons.AutoMirrored.Rounded.Send,"Send",tint=AliflixAccentSecondary,modifier=Modifier.size(21.dp))
-                            }
-                        }
+                        if(typing&&!compactComposer)composer(Modifier,false)
                     }
                 }
             }

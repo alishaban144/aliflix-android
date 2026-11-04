@@ -774,7 +774,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     }
 
     internal fun captionBounds(): android.graphics.RectF? {
-        if (captionGestureBlocked || ui.external || renderedCaptions.isEmpty() || !subtitles.isShown) return null
+        if (talkVisible || captionGestureBlocked || ui.external || renderedCaptions.isEmpty() || !subtitles.isShown) return null
         val paint = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP,
                 settingsStore.settings.value.subtitleFontSizeSp, resources.displayMetrics)

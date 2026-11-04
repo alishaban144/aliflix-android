@@ -24,6 +24,7 @@ class Talk191UiDeviceTest {
  @Test fun earlierChatStartsAboveTheViewportAndRemainsScrollableInBothDirections(){
   val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
   val session=TalkVoiceSession(InstrumentationRegistry.getInstrumentation().targetContext,scope,restoreHistory=false)
+  session.debugOfflineConnection=true
   try{
    repeat(9){n->session.debugPreviewUserQuestion("Earlier question number $n about the dialogue.")
     session.debugReplayServerMessage(JSONObject().put("serverContent",JSONObject().put("outputTranscription",JSONObject().put("text","Earlier answer number $n preserves the evidence and the story."))))}
@@ -32,16 +33,21 @@ class Talk191UiDeviceTest {
    compose.onNodeWithTag("talk-player-input").assertDoesNotExist()
    compose.onNodeWithContentDescription("Type").performClick()
    compose.onNodeWithTag("talk-player-input").assertIsDisplayed()
+   // Android IME resize is outside Compose's test clock; settle its window before absolute gestures.
+   Thread.sleep(650);compose.waitForIdle()
    compose.onNodeWithText("Earlier question number 0 about the dialogue.").assertDoesNotExist()
    compose.onNodeWithTag("talk-inline-exchange").performTouchInput{swipeDown(durationMillis=800)}
    compose.onNodeWithText("Earlier answer number 8 preserves the evidence and the story.").assertIsDisplayed()
+   val instrumentation=InstrumentationRegistry.getInstrumentation()
+   instrumentation.uiAutomation.takeScreenshot()?.let{bitmap->java.io.File(instrumentation.targetContext.getExternalFilesDir(null),"talk191-history-swipe.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()}
    compose.onNodeWithTag("talk-inline-exchange").performTouchInput{swipeUp(durationMillis=800)}
    compose.onNodeWithText("Earlier answer number 8 preserves the evidence and the story.").assertIsNotDisplayed()
    compose.onNodeWithTag("talk-inline-exchange").performScrollToIndex(0)
    compose.onNodeWithText("Earlier question number 0 about the dialogue.").assertIsDisplayed()
    compose.onNodeWithTag("talk-inline-exchange").performScrollToIndex(session.state.value.lines.size)
    compose.onNodeWithText("Earlier question number 0 about the dialogue.").assertDoesNotExist()
-   compose.runOnIdle{session.debugPreviewUserQuestion("Could the woman in red see the doorway?")}
+   compose.onNodeWithTag("talk-player-input").performTextInput("Could the woman in red see the doorway?")
+   compose.onNodeWithContentDescription("Send").performClick()
    compose.runOnIdle{session.debugReplayServerMessage(JSONObject().put("serverContent",JSONObject().put("outputTranscription",JSONObject().put("text","She is facing away from the doorway, so the visible angle does not establish that she could see who entered."))))}
    compose.onNodeWithText("Could the woman in red see the doorway?").assertIsDisplayed()
    compose.onNodeWithContentDescription("Stop reply").assertDoesNotExist()
