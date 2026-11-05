@@ -93,7 +93,9 @@ export function playerStoryResearch(q:StoryRequest,sources:StorySources){
  const counts=new Map<string,number>();
  for(const token of sources.evidence.flatMap(e=>e.text.match(/\b[A-Z][A-Za-z]{3,}\b/g)||[]))
   if(!ignored.has(token)&&new RegExp('\\b'+token.toLowerCase()+'\\b').test(past))counts.set(token,(counts.get(token)||0)+1);
- return {status:'research_ready',anchorSeconds:q.anchorSeconds,mentionedCharacters:limitedStoryContext(q,sources).mentionedCharacters.map(c=>c.name),
+ return {status:'research_ready',completed:true,
+  instruction:'This independent source lookup is complete, not a pending scene analysis. Do not repeat scene_story for this same question and pause. Answer the pending question now by combining these sources with the already supplied temporal images, timed earlier dialogue and established conversation. A person already identified in this conversation does not become unknown on a follow-up. Resolve a specifically missing earlier passage with scene_recall only if needed; do not loop through the same lookup or return silence markers. Preserve the viewing boundary and qualify only a genuinely unresolved detail.',
+  anchorSeconds:q.anchorSeconds,mentionedCharacters:limitedStoryContext(q,sources).mentionedCharacters.map(c=>c.name),
   establishedSearchTerms:[...counts].sort((a,b)=>b[1]-a[1]).slice(0,6).map(([term])=>term),
   independentResearch:sources.evidence.map(e=>({...e,text:e.text.slice(0,9000)})).slice(0,3),
   creditsUrl:sources.creditsUrl,dialogueCount:q.dialogue.length,transcriptComplete:q.transcriptComplete,
