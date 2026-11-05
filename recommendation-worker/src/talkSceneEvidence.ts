@@ -1,4 +1,4 @@
-import { geminiSceneConfig } from './geminiSceneConfig';
+import { geminiSceneConfig, geminiSceneSchema } from './geminiSceneConfig';
 import { fetchGemini, hasGeminiCredentials } from './geminiKeys';
 import { z } from 'zod';
 import type { RecommendationEnv } from './types';
@@ -92,7 +92,7 @@ async function structuredSceneObservation(scene:ScenePacket,env:RecommendationEn
  const {model,thinkingLevel}=geminiSceneConfig(env);
  const response=await fetchGemini(env,`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
   method:'POST',headers:{'content-type':'application/json'},
-  body:JSON.stringify({...body,generationConfig:{maxOutputTokens:3072,thinkingConfig:{thinkingLevel},responseMimeType:'application/json',responseJsonSchema:schema}}),signal});
+  body:JSON.stringify({...body,generationConfig:{maxOutputTokens:3072,thinkingConfig:{thinkingLevel},responseMimeType:'application/json',responseJsonSchema:geminiSceneSchema(schema)}}),signal});
  if(!response.ok){console.warn('talk_structured_scene_failed',response.status);await response.body?.cancel();throw Error('SCENE_UNAVAILABLE');}
  const data=await boundedJson(response,32768) as {candidates?:Array<{content?:{parts?:Array<{text?:string;thought?:boolean}>}}>};
  const text=data.candidates?.[0]?.content?.parts?.filter(part=>!part.thought).map(part=>part.text||'').join('');

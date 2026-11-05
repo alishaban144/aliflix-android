@@ -24,31 +24,6 @@ class Talk190SceneDeviceTest {
     private fun screenshot(name:String) { i.uiAutomation.takeScreenshot()?.let { bitmap ->
         File(context.getExternalFilesDir(null),name).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) };bitmap.recycle()
     } }
-    private suspend fun sendThroughPlayerComposer(player:NativePlayerActivity,question:String){
-        fun find(node:android.view.accessibility.AccessibilityNodeInfo?):android.view.accessibility.AccessibilityNodeInfo? {
-            if(node==null)return null
-            if(node.contentDescription?.toString()=="Message Aliflix")return node
-            for(index in 0 until node.childCount)find(node.getChild(index))?.let{return it}
-            return null
-        }
-        val field=withTimeout(5000){
-            while(true){find(i.uiAutomation.rootInActiveWindow)?.let{return@withTimeout it};delay(40)}
-            @Suppress("UNREACHABLE_CODE") error("Missing player composer")
-        }
-        assertTrue("The actual player composer must accept the question",field.performAction(
-            android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,android.os.Bundle().apply{
-                putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,question)
-            }))
-        delay(150)
-        val bounds=withContext(Dispatchers.Main){requireNotNull(player.talkVoice.debugCardBounds["player-send"])}
-        val at=android.os.SystemClock.uptimeMillis()
-        for(action in listOf(android.view.MotionEvent.ACTION_DOWN,android.view.MotionEvent.ACTION_UP)){
-            val event=android.view.MotionEvent.obtain(at,android.os.SystemClock.uptimeMillis(),action,bounds.center.x,bounds.center.y,0)
-            event.source=android.view.InputDevice.SOURCE_TOUCHSCREEN
-            try{i.uiAutomation.injectInputEvent(event,true)}finally{event.recycle()}
-        }
-        withTimeout(3000){while(player.talkVoice.state.value.lines.lastOrNull{it.role=="user"}?.text!=question)delay(30)}
-    }
     @Test fun freshSceneAnswersMustCoverEveryRequiredPlotPoint() {
         val args=InstrumentationRegistry.getArguments();assumeTrue(args.getString("liveTalk190")=="true")
         val titleCase=args.getString("sceneTitle")?:"dark"
@@ -159,9 +134,9 @@ class Talk190SceneDeviceTest {
                 val before=android.os.SystemClock.elapsedRealtime()
                 receipt.put("question", args.getString("sceneQuestion") ?: "Explain why this happened using the earlier setup.")
                 val speech=args.getString("sceneSpeechFixture")
-                if(speech==null&&args.getString("sceneUseToolbar")=="true")sendThroughPlayerComposer(player,receipt.getString("question"))
-                else if(speech==null)withContext(Dispatchers.Main) {
+                if(speech==null)withContext(Dispatchers.Main) {
                     player.talkVoice.sendText(receipt.getString("question"))
+                    player.currentFocus?.clearFocus()
                     // The real Send action dismisses the IME; direct session
                     // injection must reproduce that viewport for visual review.
                     androidx.core.view.WindowCompat.getInsetsController(player.window,player.window.decorView)

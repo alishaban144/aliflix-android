@@ -6,6 +6,7 @@ import {budgetStoryEvidence} from '../src/storyBudget';
 import {TalkSession} from '../src/talk';
 import {TalkContextSchema} from '../src/talkEvidence';
 import type {RecommendationEnv} from '../src/types';
+import {issueLiveToken} from '../src/talkProviders';
 afterEach(()=>vi.restoreAllMocks());
 const q=()=>StoryRequestSchema.parse({id:10,kind:'movie',title:'Owned story',sourceKey:'cut-a:revision-2',anchorSeconds:1200,
  question:'Why does Jane keep this note?',dialogue:[[20,22,'Jane Avery keeps a written record.'],[80,82,'The note records the promise.'],[1195,1198,'Keep that note.']],
@@ -15,6 +16,16 @@ const sources:StorySources={id:10,kind:'movie',title:'Owned story',creditsUrl:'h
  evidence:[{id:'owned-source',title:'Owned source',text:'Jane keeps a written record. A quarantined future secret is not established.',url:'https://example.org/story',license:'Owned fixture'}]};
 const answer=()=>({characters:[{name:'Jane Avery',sceneRole:'The person keeping the note',cueIds:[0,1,2],frameIds:[0],sourceIds:['credits','owned-source'],basis:'story_and_scene',firstEstablishedSeconds:1198}],
  facts:[{text:'The note records an earlier promise.',kind:'established',cueIds:[1,2],frameIds:[0],sourceIds:['owned-source'],revealSeconds:1198}],explanation:'Jane keeps the note to retain the earlier promise.',unknowns:[]});
+
+it('requires question-directed scene understanding even when player context arrives after voice connection',async()=>{
+ const namespace={getByName:()=>({acquireGeminiBudget:async()=>({allowed:true,lease:'owned'}),releaseGeminiBudget:async()=>{}})};
+ const fetcher=vi.spyOn(globalThis,'fetch').mockResolvedValue(Response.json({name:'auth_tokens/owned-ephemeral'}));
+ await issueLiveToken({GEMINI_API_KEY:'owned-key-'+crypto.randomUUID(),GEMINI_FREE_TIER_MODE:'true',TALK_SESSIONS:namespace} as unknown as RecommendationEnv,
+  TalkContextSchema.parse({companionVersion:16}),Date.now()+120000);
+ const body=JSON.parse(String(fetcher.mock.calls[0][1]?.body));
+ expect(body.bidiGenerateContentSetup.systemInstruction.parts[0].text).toContain('public-source readiness is NOT compiled');
+ expect(body.bidiGenerateContentSetup.systemInstruction.parts[0].text).toContain('MUST call app_control(scene_story) once');
+});
 
 it('limits concurrent work and rolling request/token use without dropping the first valid large request',()=>{
  const state:GeminiBudgetState={recent:[]};const now=100000;

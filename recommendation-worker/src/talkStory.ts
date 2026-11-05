@@ -1,6 +1,6 @@
-import { geminiSceneConfig } from './geminiSceneConfig';
+import { geminiSceneConfig, geminiSceneSchema } from './geminiSceneConfig';
 import {budgetStoryEvidence} from './storyBudget';
-import { fetchGemini, hasGeminiCredentials } from './geminiKeys';
+import { fetchGemini, hasGeminiCredentials, redactGeminiKeys } from './geminiKeys';
 import {z} from 'zod';
 import {TmdbClient} from './tmdb';
 import {retrieveKnowledge, type Evidence, type TalkContext} from './talkEvidence';
@@ -62,13 +62,15 @@ For every binding/fact cite zero-based cueIds/frameIds and actual sourceIds. Cha
 The explanation must give WHO is involved, WHY this is happening and the relevant earlier causal setup, in clear connected sentences. 'They flee because they are scared / sped away / are being chased' merely repeats the image and is not the plot explanation. Trace what put them in danger and what the pursuer wants, if established. Correct false premises. Answer yes/no questions directly before explaining; distinguish a claimed moral score from proof of moral superiority. Do not substitute object descriptions, generic synopsis, a transcript dump or retrieval apologies. Explain all requested parts. Captions can be a different cut; corroborate timing against the actual images, and qualify only a specific remaining uncertainty.
 Write internal facts in English. Write explanation as a complete direct answer to the actual question in responseLanguage, including every requested part and natural character names. No introduction about sources or analysis. Keep at most three current-scene character bindings and five useful causal facts. Do not inventory the whole earlier story; select only the facts needed to answer this question. Include concrete earlier causes, relationships, beliefs and stakes relevant to this scene, without padding or invented certainty.`;
 
-export function validateStoryUnderstanding(raw:unknown,q:StoryRequest,sources:StorySources){
+export function validateStoryUnderstanding(raw:unknown,q:StoryRequest,sources:StorySources,partial=false){
  const result=StoryUnderstandingSchema.parse(raw),sourceIds=new Set(['credits',...sources.evidence.map(e=>e.id)]);
  function valid(cues:number[],frames:number[],ids:string[],at:number){
   if(at>q.anchorSeconds||(!cues.length&&!frames.length)||cues.some(i=>i>=q.dialogue.length)||frames.some(i=>i>=q.frames.length)||ids.some(id=>!sourceIds.has(id)))throw Error('SCENE_UNSUPPORTED');
-  if(cues.some(i=>q.dialogue[i][0]>at+.5)||frames.some(i=>q.frames[i].seconds>q.anchorSeconds))throw Error('SCENE_UNSUPPORTED');
+  if(!cues.some(i=>q.dialogue[i][0]<=at+.5)&&!frames.some(i=>q.frames[i].seconds<=at+.5))throw Error('SCENE_UNSUPPORTED');
  }
- for(const binding of result.characters){
+ let rejected=false;
+ const keep=(check:()=>void)=>{try{check();return true;}catch(error){if(!partial)throw error;rejected=true;return false;}};
+ result.characters=result.characters.filter(binding=>keep(()=>{
   const requested=roleName(binding.name);
   const exact=sources.characters.filter(c=>roleName(c.name)===requested);
   const matching=exact.length?exact:sources.characters.filter(c=>requested.length>=3&&!requested.includes(' ')&&roleName(c.name).split(' ')[0]===requested);
@@ -76,8 +78,10 @@ export function validateStoryUnderstanding(raw:unknown,q:StoryRequest,sources:St
   binding.name=matching[0].name;
   valid(binding.cueIds,binding.frameIds,binding.sourceIds,binding.firstEstablishedSeconds);
   if(!binding.frameIds.length||!binding.cueIds.length||binding.basis==='story_and_scene'&&!binding.sourceIds.some(id=>id!=='credits'))throw Error('SCENE_UNSUPPORTED');
- }
- result.facts.forEach(f=>valid(f.cueIds,f.frameIds,f.sourceIds,f.revealSeconds));
+ }));
+ result.facts=result.facts.filter(f=>keep(()=>valid(f.cueIds,f.frameIds,f.sourceIds,f.revealSeconds)));
+ if(partial&&!result.characters.length&&!result.facts.length)throw Error('SCENE_UNSUPPORTED');
+ if(rejected){result.explanation='';result.unknowns=['Unsupported evidence claims were omitted; use only the remaining linked facts.',...result.unknowns].slice(0,5);}
  return result;
 }
 /** Only already-mentioned names are exposed if the independent analysis is unavailable. */
@@ -129,16 +133,18 @@ export async function understandPlayerStory(q:StoryRequest,sources:StorySources,
   const response=await fetchGemini(env,`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
    method:'POST',headers:{'content-type':'application/json'},
    body:JSON.stringify({systemInstruction:{parts:[{text:STORY_ANALYSIS_INSTRUCTIONS}]},contents:[{role:'user',parts}],
-    generationConfig:{maxOutputTokens:4096,thinkingConfig:{thinkingLevel},responseMimeType:'application/json',responseJsonSchema:schema}}),signal:AbortSignal.timeout(15000)});
-  if(!response.ok){preferredStatus=response.status;await response.body?.cancel();throw Error('provider_unavailable');}
+    generationConfig:{maxOutputTokens:4096,thinkingConfig:{thinkingLevel},responseMimeType:'application/json',responseJsonSchema:geminiSceneSchema(schema)}}),signal:AbortSignal.timeout(15000)});
+  if(!response.ok){preferredStatus=response.status;
+   try{const failure=await boundedJson(response,8192) as {error?:{message?:string}};preferredMessage=redactGeminiKeys(env,failure.error?.message||'').slice(0,240);}catch{await response.body?.cancel().catch(()=>undefined);}
+   throw Error('provider_unavailable');}
   const body=await boundedJson(response,64000) as {candidates?:Array<{content?:{parts?:Array<{text?:string;thought?:boolean}>}}>};
   return JSON.parse(body.candidates?.[0]?.content?.parts?.filter(p=>!p.thought).map(p=>p.text||'').join('')||'');
  };
- let preferredStatus=0,preferredFailure='';
- try{raw=await gemini();validateStoryUnderstanding(raw,q,sources);}
+ let preferredStatus=0,preferredFailure='',preferredMessage='';
+ try{raw=validateStoryUnderstanding(await gemini(),q,sources,true);}
  catch(error){
   preferredFailure=error instanceof z.ZodError?'schema':error instanceof SyntaxError?'json':error instanceof Error&&error.message==='SCENE_UNSUPPORTED'?'evidence':error instanceof Error&&/timeout|abort/i.test(error.name)?'timeout':'request';
-  if(preferredStatus||!env.AI)return {...limitedStoryContext(q,sources),provider,preferredStatus,preferredFailure,issue:preferredStatus?'http_'+preferredStatus:'provider_or_evidence'};
+  if(preferredStatus||!env.AI)return {...limitedStoryContext(q,sources),provider,preferredStatus,preferredFailure,preferredMessage,issue:preferredStatus?'http_'+preferredStatus:'provider_or_evidence'};
   try{
    provider='cloudflare-qwen3.8';
    const output=await env.AI.run('@cf/qwen/qwen3.8-27b',{
@@ -146,10 +152,10 @@ export async function understandPlayerStory(q:StoryRequest,sources:StorySources,
     response_format:{type:'json_object'},reasoning_effort:'low',max_completion_tokens:3072,temperature:.1,store:false,
    }) as {choices?:Array<{message?:{content?:string}}>;response?:unknown};
    raw=typeof output.response==='object'&&output.response!==null?output.response:JSON.parse(output.choices?.[0]?.message?.content||String(output.response||''));
-  }catch{return {...limitedStoryContext(q,sources),provider,issue:'providers_unavailable',preferredStatus,preferredFailure};}
+  }catch{return {...limitedStoryContext(q,sources),provider,issue:'providers_unavailable',preferredStatus,preferredFailure,preferredMessage};}
  }
  try{
-  const understanding=validateStoryUnderstanding(raw,q,sources);
+  const understanding=validateStoryUnderstanding(raw,q,sources,true);
   return {status:'grounded',anchorSeconds:q.anchorSeconds,...understanding,
    provider,preferredStatus,analysedFrameSeconds:q.frames.map(f=>f.seconds),dialogueCount:q.dialogue.length,transcriptComplete:q.transcriptComplete,
    sources:[{id:'credits',url:sources.creditsUrl,title:'Canonical character credits',license:'TMDB metadata'},...sources.evidence.map(({id,url,title,license})=>({id,url,title,license}))],
