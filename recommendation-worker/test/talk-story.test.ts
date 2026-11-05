@@ -27,6 +27,7 @@ describe('named source-bound player story',()=>{
  });
  it('canonicalizes a unique first-name answer without inventing another credited person',()=>{
   const value=answer();value.characters[0].name='Daniel';expect(validateStoryUnderstanding(value,request(),sources).characters[0].name).toBe('Daniel Kellner');
+  value.characters[0].name='Kellner';expect(validateStoryUnderstanding(value,request(),sources).characters[0].name).toBe('Daniel Kellner');
   value.characters[0].name='Daniel Kellner';expect(()=>validateStoryUnderstanding(value,request(),{...sources,characters:[...sources.characters,{name:'Daniel Other',performer:'Other'}]})).not.toThrow();
   value.characters[0].name='Daniel';expect(()=>validateStoryUnderstanding(value,request(),{...sources,characters:[...sources.characters,{name:'Daniel Other',performer:'Other'}]})).toThrow();
   expect(validateStoryUnderstanding(value,request(),{...sources,characters:[{name:'Dr. Daniel Kellner',performer:'Credited'}]}).characters[0].name).toBe('Dr. Daniel Kellner');

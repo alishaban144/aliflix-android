@@ -83,7 +83,7 @@ export function validateStoryUnderstanding(raw:unknown,q:StoryRequest,sources:St
  result.characters=result.characters.filter(binding=>keep(()=>{
   const requested=roleName(binding.name);
   const exact=sources.characters.filter(c=>roleName(c.name)===requested);
-  const matching=exact.length?exact:sources.characters.filter(c=>requested.length>=3&&!requested.includes(' ')&&roleName(c.name).split(' ')[0]===requested);
+  const matching=exact.length?exact:sources.characters.filter(c=>requested.length>=3&&!requested.includes(' ')&&roleName(c.name).split(' ').includes(requested));
   if(matching.length!==1)throw Error('SCENE_UNSUPPORTED');
   binding.name=matching[0].name;
   valid(binding.cueIds,binding.frameIds,binding.sourceIds,binding.firstEstablishedSeconds);
