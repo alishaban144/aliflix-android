@@ -116,12 +116,12 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   if((state.context.companionVersion||0)<16||q.id!==(active?.id||state.context.id)||q.kind!==(active?.type||state.context.type)||
    q.kind==='tv'&&(q.season!==Number(active?.season??state.context.season)||q.episode!==Number(active?.episode??state.context.episode)))throw Error('SCENE_UNSUPPORTED');
   const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(q)));
-  const key='story:v1:'+session+':'+Array.from(new Uint8Array(bytes),n=>n.toString(16).padStart(2,'0')).join('');
+  const key='story:v2:'+session+':'+Array.from(new Uint8Array(bytes),n=>n.toString(16).padStart(2,'0')).join('');
   const cached=this.read<Record<string,unknown>>(key);if(cached)return {...cached,cached:true};
   const free=this.env.GEMINI_FREE_TIER_MODE==='true';
   const memoryHash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify({...q,question:'',responseLanguage:'en'})));
-  const memoryKey='story-base:v2:'+session+':'+Array.from(new Uint8Array(memoryHash),n=>n.toString(16).padStart(2,'0')).join('');
-  const reuse=(memory:Record<string,unknown>)=>({...memory,explanation:'',cached:true,reusedMemory:true,
+  const memoryKey='story-base:v3:'+session+':'+Array.from(new Uint8Array(memoryHash),n=>n.toString(16).padStart(2,'0')).join('');
+  const reuse=(memory:Record<string,unknown>)=>({...memory,explanation:'',premiseChecks:[],cached:true,reusedMemory:true,
    instruction:'Reuse these evidence-linked names and causal facts for the NEW question. The previous answer is omitted deliberately. Retrieve any specifically missing earlier passage with scene_recall; do not repeat unchanged scene analysis.'});
   if(free&&q.question.trim()){
    const memory=this.read<Record<string,unknown>>(memoryKey);if(memory?.status==='grounded')return reuse(memory);
@@ -140,7 +140,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   let result:Record<string,unknown>;
   try{result=await work;}finally{if(this.storyJobs.get(memoryKey)===work)this.storyJobs.delete(memoryKey);}
   this.put(key,result,Math.min(state.expires,Date.now()+(['grounded','research_ready'].includes(String(result.status))?20*MINUTE:30000)));
-  this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'story:v1:%' AND key NOT IN (SELECT key FROM memory WHERE key LIKE 'story:v1:%' ORDER BY expires DESC LIMIT 12)");
+  this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'story:v%' AND key NOT IN (SELECT key FROM memory WHERE key LIKE 'story:v%' ORDER BY expires DESC LIMIT 12)");
   return {...result,cached:false};
  }
  async chats(input:unknown) {
