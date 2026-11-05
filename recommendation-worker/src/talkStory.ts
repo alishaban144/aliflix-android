@@ -1,4 +1,5 @@
 import { geminiSceneConfig, geminiSceneSchema } from './geminiSceneConfig';
+import {geminiLiveStructured} from './geminiLiveStructured';
 import {budgetStoryEvidence} from './storyBudget';
 import { fetchGemini, hasGeminiCredentials, redactGeminiKeys } from './geminiKeys';
 import {z} from 'zod';
@@ -139,6 +140,10 @@ export async function understandPlayerStory(q:StoryRequest,sources:StorySources,
  const {model,thinkingLevel}=geminiSceneConfig(env);
  const gemini=async()=>{
   if(!hasGeminiCredentials(env))throw Error('provider_unavailable');
+  if(env.GEMINI_FREE_TIER_MODE==='true'){
+   provider='gemini-live-structured';
+   return geminiLiveStructured(env,STORY_ANALYSIS_INSTRUCTIONS,parts,geminiSceneSchema(schema));
+  }
   const response=await fetchGemini(env,`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
    method:'POST',headers:{'content-type':'application/json'},
    body:JSON.stringify({systemInstruction:{parts:[{text:STORY_ANALYSIS_INSTRUCTIONS}]},contents:[{role:'user',parts}],
@@ -152,8 +157,9 @@ export async function understandPlayerStory(q:StoryRequest,sources:StorySources,
  let preferredStatus=0,preferredFailure='',preferredMessage='';
  try{raw=validateStoryUnderstanding(await gemini(),q,sources,true);}
  catch(error){
+  if(error instanceof Error&&/^SCENE_HTTP_\d+$/.test(error.message))preferredStatus=Number(error.message.slice(11));
   preferredFailure=error instanceof z.ZodError?'schema':error instanceof SyntaxError?'json':error instanceof Error&&error.message==='SCENE_UNSUPPORTED'?'evidence':error instanceof Error&&/timeout|abort/i.test(error.name)?'timeout':'request';
-  if(preferredStatus||!env.AI)return {...limitedStoryContext(q,sources),provider,preferredStatus,preferredFailure,preferredMessage,issue:preferredStatus?'http_'+preferredStatus:'provider_or_evidence'};
+  if(preferredStatus||!env.AI||env.GEMINI_FREE_TIER_MODE==='true')return {...limitedStoryContext(q,sources),provider,preferredStatus,preferredFailure,preferredMessage,issue:preferredStatus?'http_'+preferredStatus:'provider_or_evidence'};
   try{
    provider='cloudflare-qwen3.8';
    const output=await env.AI.run('@cf/qwen/qwen3.8-27b',{

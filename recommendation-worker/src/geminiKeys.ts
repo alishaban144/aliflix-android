@@ -5,6 +5,7 @@ export type GeminiKeySlot = 'primary' | 'secondary';
 type GeminiCredentials = Pick<SecretBindings, 'GEMINI_API_KEY' | 'GEMINI_API_KEY_SECONDARY'> & Partial<Pick<RecommendationEnv,'TALK_SESSIONS'|'GEMINI_FREE_TIER_MODE'|'GEMINI_FREE_TIER_RPM'|'GEMINI_FREE_TIER_TPM'>>;
 type Key = { slot: GeminiKeySlot; value: string };
 type Cooling = { until: number; status: number };
+type GeminiRequestInit=RequestInit & {geminiInputTokens?:number};
 
 function keys(env: GeminiCredentials): Key[] {
  const result: Key[] = [];
@@ -43,12 +44,13 @@ async function cool(request: Request, response: Response) {
 
 /** Balance independent projects; at most one attempt per distinct key, within
  * the caller's original deadline. A minted Live session can pin its project. */
-export async function geminiProjectRequest(env: GeminiCredentials, url: string, init: RequestInit,
+export async function geminiProjectRequest(env: GeminiCredentials, url: string, init: GeminiRequestInit,
  pinned?: GeminiKeySlot): Promise<{ response: Response; keySlot?: GeminiKeySlot }> {
  const free=env.GEMINI_FREE_TIER_MODE==='true';
  if(free&&!env.TALK_SESSIONS)throw Error('GEMINI_BUDGET_UNAVAILABLE');
  const quota=free?env.TALK_SESSIONS!.getByName('gemini-project-budget-v1'):undefined;
- const cost=estimateGeminiInput(init.body),rpm=Math.max(1,Math.min(20,Number(env.GEMINI_FREE_TIER_RPM)||3)),tpm=Math.max(1024,Number(env.GEMINI_FREE_TIER_TPM)||32000);
+ const {geminiInputTokens,...requestInit}=init;
+ const cost=geminiInputTokens??estimateGeminiInput(init.body),rpm=Math.max(1,Math.min(20,Number(env.GEMINI_FREE_TIER_RPM)||3)),tpm=Math.max(1024,Number(env.GEMINI_FREE_TIER_TPM)||32000);
  const pool = keys(env), trackHealth = pool.length > 1||free;
  let candidates = pool;
  if (pinned) candidates = candidates.filter(key => key.slot === pinned);
@@ -63,13 +65,13 @@ export async function geminiProjectRequest(env: GeminiCredentials, url: string, 
   const pieces=health?.url.split('/'),owner=pieces?.at(-1)||'',scope=pieces?.at(-2)||'';
   let lease:string|undefined;
   if(quota){
-   const grant=await quota.acquireGeminiBudget(owner,scope,scope==='live-token'||scope==='live-stream'?0:cost,scope==='live-token'?rpm*2:rpm,tpm);
+   const grant=await quota.acquireGeminiBudget(owner,scope,scope==='live-token'?0:cost,scope==='live-token'?rpm*2:rpm,tpm);
    if(!grant.allowed){unavailable.push({until:grant.retryAt||Date.now()+1000,status:grant.status||429});continue;}
    lease=grant.lease;
   }
   const headers = new Headers(init.headers); headers.set('x-goog-api-key', key.value);
   let response: Response;
-  try { response = await fetch(url, { ...init, headers }); }
+  try { response = await fetch(url, { ...requestInit, headers }); }
   catch (error) {
    if (init.signal?.aborted || index === candidates.length - 1) throw error;
    continue;
@@ -89,6 +91,6 @@ export async function geminiProjectRequest(env: GeminiCredentials, url: string, 
   { status, headers: { 'retry-after': String(Math.max(1, Math.ceil((until - Date.now()) / 1000))) } }) };
 }
 
-export async function fetchGemini(env: GeminiCredentials, url: string, init: RequestInit) {
+export async function fetchGemini(env: GeminiCredentials, url: string, init: GeminiRequestInit) {
  return (await geminiProjectRequest(env, url, init)).response;
 }
