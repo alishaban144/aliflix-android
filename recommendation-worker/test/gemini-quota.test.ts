@@ -56,6 +56,11 @@ it('distinguishes daily exhaustion from a short RetryInfo delay',async()=>{
 it('counts image tokens without treating base64 bytes as transcript tokens',()=>{
  expect(estimateGeminiInput(JSON.stringify({contents:[{parts:[{text:'A'.repeat(100)},{inlineData:{mimeType:'image/jpeg',data:'A'.repeat(100000)}}]}]}))).toBe(1074);
 });
+it('cools an overloaded project instead of repeatedly spending free requests on server errors',async()=>{
+ const now=Date.parse('2026-11-05T12:00:00Z');
+ expect((await geminiCooldown(new Response('overloaded',{status:503}),now)).until).toBe(now+30000);
+ expect((await geminiCooldown(new Response('overloaded',{status:503,headers:{'retry-after':'45'}}),now)).until).toBe(now+45000);
+});
 it('spends no inference on opening and never sends a future plot paragraph in the deferred packet',async()=>{
  const fetcher=vi.spyOn(globalThis,'fetch');
  const result=await understandPlayerStory({...q(),question:''},sources,{GEMINI_FREE_TIER_MODE:'true'} as RecommendationEnv);

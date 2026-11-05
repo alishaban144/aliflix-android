@@ -44,6 +44,6 @@ export async function geminiCooldown(response:Response,now=Date.now()){
  const retry=response.headers.get('retry-after');
  const header=retry&&/^\d+(?:\.\d+)?$/.test(retry)?Number(retry):retry?(Date.parse(retry)-now)/1000:0;
  const info=Math.max(0,...(error?.details||[]).map(d=>Number(/^(\d+(?:\.\d+)?)s$/.exec(d.retryDelay||'')?.[1])||0));
- const fallback=response.status===429?60:[401,403].includes(response.status)?300:2;
+ const fallback=response.status===429?60:[401,403].includes(response.status)?300:response.status>=500?30:2;
  return {until:daily?nextPacificMidnight(now):now+Math.min(3600,Math.max(1,header||0,info||0,header||info?0:fallback))*1000,status:response.status};
 }
