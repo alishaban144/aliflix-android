@@ -31,3 +31,18 @@ it('rejects plain generation instead of accepting an unvalidated answer or loopi
  await expect(geminiLiveStructured({GEMINI_API_KEY:'owned'} as RecommendationEnv,'Evidence only.',[],{type:'object'})).rejects.toThrow('SCENE_UNAVAILABLE');
  expect(turns).toBe(1);
 });
+it('moves a late quota rejection to another project within the same bounded analysis',async()=>{
+ const primary='owned-first-'+crypto.randomUUID(),secondary='owned-next-'+crypto.randomUUID();
+ vi.spyOn(Math,'random').mockReturnValue(0);let calls=0;
+ const fetcher=vi.spyOn(globalThis,'fetch').mockImplementation(async()=>{
+  const pair=new WebSocketPair();pair[1].accept();const attempt=calls++;
+  pair[1].addEventListener('message',event=>{
+   const value=JSON.parse(String(event.data));
+   if(value.setup)pair[1].send(JSON.stringify(attempt===0?{error:{code:429,status:'RESOURCE_EXHAUSTED'}}:{setupComplete:{}}));
+   if(value.clientContent)pair[1].send(JSON.stringify({toolCall:{functionCalls:[{name:'compile_scene_memory',args:{facts:['Same evidence, remaining project']}}]}}));
+  });
+  return new Response(null,{status:101,webSocket:pair[0]});
+ });
+ expect(await geminiLiveStructured({GEMINI_API_KEY:primary,GEMINI_API_KEY_SECONDARY:secondary} as RecommendationEnv,'Evidence only.',[],{type:'object'})).toEqual({facts:['Same evidence, remaining project']});
+ expect(fetcher.mock.calls.map(call=>new Headers(call[1]?.headers).get('x-goog-api-key'))).toEqual([primary,secondary]);
+});

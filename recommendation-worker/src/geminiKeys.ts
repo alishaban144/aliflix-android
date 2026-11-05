@@ -98,3 +98,14 @@ export async function geminiProjectRequest(env: GeminiCredentials, url: string, 
 export async function fetchGemini(env: GeminiCredentials, url: string, init: GeminiRequestInit) {
  return (await geminiProjectRequest(env, url, init)).response;
 }
+
+/** Only server-observed provider errors may cool a shared project. Client
+ * rotation hints stay private to that conversation in TalkSession. */
+export async function markGeminiUnavailable(env:GeminiCredentials,slot:GeminiKeySlot,url:string,status:number){
+ const key=keys(env).find(key=>key.slot===slot);if(!key)return;
+ const request=await healthRequest(key,url),blocked=await cool(request,Response.json({error:{message:'Live provider capacity unavailable'}},{status}));
+ if(env.GEMINI_FREE_TIER_MODE==='true'&&env.TALK_SESSIONS){
+  const parts=request.url.split('/');
+  await env.TALK_SESSIONS.getByName('gemini-project-budget-v1').blockGeminiBudget(parts.at(-1)!,parts.at(-2)!,blocked.until,blocked.status);
+ }
+}

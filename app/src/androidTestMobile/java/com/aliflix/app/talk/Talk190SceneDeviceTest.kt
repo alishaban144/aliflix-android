@@ -156,6 +156,7 @@ class Talk190SceneDeviceTest {
                     @Suppress("UNREACHABLE_CODE") error("No answer")
                 }
                 receipt.put("answer",answer).put("firstResponseMs",first).put("completedMs",android.os.SystemClock.elapsedRealtime()-before)
+                    .put("sceneWireChars",withContext(Dispatchers.Main){player.talkScene()?.parts(false)?.optJSONObject(0)?.optString("text")?.length?:0})
                     .put("recallMs",player.talkVoice.debugSceneRecallMs).put("observationMs",player.talkVoice.debugSceneObservationMs)
                     .put("questionSentMs",player.talkVoice.debugQuestionSentAt-before)
                     .put("framesSent",player.talkVoice.debugSceneFrames).put("tools",JSONObject(player.talkVoice.debugToolCalls.toMap()))

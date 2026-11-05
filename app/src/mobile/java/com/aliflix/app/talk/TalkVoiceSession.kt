@@ -556,7 +556,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 emit(JSONObject().put("clientContent", JSONObject().put("turns", JSONArray().put(JSONObject().put("role", "user")
                     .put("parts", scene.parts(false, host.talkRecallFrames(query))))).put("turnComplete", false)))
             }
-            TalkNativeResult(result)
+            TalkNativeResult(compactTalkRecall(result))
         }
         "set_voice"->{val voice=requireNotNull(VOICES.firstOrNull{it.equals(args.optString("stringValue"),true)});TalkNativeResult(JSONObject().put("status","ready").put("voice",voice).put("instruction","Say briefly that you are switching voice. The native voice changes immediately after this reply.")){selectVoice(voice)}}
         "set_history"->{require(args.opt("enabled") is Boolean);setHistory(args.getBoolean("enabled"));TalkNativeResult(JSONObject().put("status","completed").put("keepHistory",state.value.keepHistory))}

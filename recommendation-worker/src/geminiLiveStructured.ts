@@ -1,4 +1,4 @@
-import {fetchGemini} from './geminiKeys';
+import {geminiProjectRequest,configuredGeminiSlots,markGeminiUnavailable,type GeminiKeySlot} from './geminiKeys';
 import {estimateGeminiInput} from './geminiQuota';
 import {TALK_MODEL} from './talkProviders';
 import type {RecommendationEnv} from './types';
@@ -8,12 +8,28 @@ import type {RecommendationEnv} from './types';
  * generation. No model-generated speech is forwarded to the viewer. */
 export async function geminiLiveStructured(env:RecommendationEnv,instruction:string,parts:unknown[],schema:unknown):Promise<unknown>{
  const deadline=AbortSignal.timeout(12000);
- const response=await fetchGemini(env,'https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent',{
-  headers:{Upgrade:'websocket'},signal:deadline,
-  geminiInputTokens:estimateGeminiInput(JSON.stringify({instruction,parts,schema})),
- });
- const socket=response.webSocket;
- if(!socket){await response.body?.cancel();throw Error('SCENE_HTTP_'+response.status);}
+ const url='https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
+ const excluded:GeminiKeySlot[]=[];let failure:unknown=Error('SCENE_UNAVAILABLE');
+ const tokens=estimateGeminiInput(JSON.stringify({instruction,parts,schema}));
+ for(let attempt=0;attempt<configuredGeminiSlots(env).length;attempt++){
+  const {response,keySlot}=await geminiProjectRequest(env,url,{headers:{Upgrade:'websocket'},signal:deadline,geminiInputTokens:tokens},undefined,excluded);
+  try{
+   const socket=response.webSocket;
+   if(!socket){await response.body?.cancel();throw Error('SCENE_HTTP_'+response.status);}
+   return await structuredSocket(socket,deadline,instruction,parts,schema);
+  }catch(error){
+   failure=error;
+   const status=error instanceof Error?Number(/^SCENE_HTTP_(429|503)$/.exec(error.message)?.[1]):0;
+   if(!keySlot||!status||deadline.aborted)throw error;
+   excluded.push(keySlot);
+   await markGeminiUnavailable(env,keySlot,url,status);
+   if(status===429)await markGeminiUnavailable(env,keySlot,'https://generativelanguage.googleapis.com/v1beta/auth_tokens',status);
+  }
+ }
+ throw failure;
+}
+
+async function structuredSocket(socket:WebSocket,deadline:AbortSignal,instruction:string,parts:unknown[],schema:unknown):Promise<unknown>{
  // Live tool schemas use the OpenAPI type names, not responseJsonSchema.
  const toolSchema=(value:unknown):unknown=>{
   if(Array.isArray(value))return value.map(toolSchema);
@@ -29,7 +45,11 @@ export async function geminiLiveStructured(env:RecommendationEnv,instruction:str
    if(error)reject(error);else resolve(value);
   };
   const aborted=()=>finish(undefined,deadline.reason);
-  const closed=()=>finish(undefined,Error('SCENE_UNAVAILABLE'));
+  const closed=(event?:Event)=>{
+   const close=event as CloseEvent|undefined;
+   const quota=close?.code===4429||/quota|RESOURCE_EXHAUSTED/i.test(close?.reason||'');
+   finish(undefined,Error(quota?'SCENE_HTTP_429':event?.type==='error'?'SCENE_HTTP_503':'SCENE_UNAVAILABLE'));
+  };
   const message=async(event:MessageEvent)=>{try{
    const raw=typeof event.data==='string'?event.data:event.data instanceof Blob?await event.data.text():new TextDecoder().decode(event.data as ArrayBuffer);
    if(settled)return;bytes+=raw.length;if(bytes>128000)throw Error('RESPONSE_LIMIT');
