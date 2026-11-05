@@ -512,7 +512,7 @@ internal fun NativePlayerScreen(
         AnimatedVisibility(visible = preparing, modifier = Modifier.align(Alignment.Center),
             enter = fadeIn(tween(160)) + androidx.compose.animation.scaleIn(tween(180), initialScale = .96f),
             exit = fadeOut(tween(220)) + androidx.compose.animation.scaleOut(tween(280), targetScale = .92f)) {
-            HmsLoadingIndicator(Modifier.size(104.dp))
+            RisingBallLoadingIndicator(Modifier.size(width=144.dp,height=216.dp))
         }
 
         // In-Player Failure / Error Card (Keeping user inside player)

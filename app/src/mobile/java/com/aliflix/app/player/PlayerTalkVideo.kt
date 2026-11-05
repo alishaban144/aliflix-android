@@ -37,7 +37,8 @@ internal class PlayerTalkVideo(private val context: Context) {
         ceiling: Double, stillCurrent: () -> Boolean): List<TalkSceneFrame> = withContext(Dispatchers.Main.immediate) {
         mutex.withLock {
             if (source != requestId) { source = requestId; cached.clear() }
-            val positions = seconds.filter { it.isFinite() && it in 0.0..ceiling }.distinct().sorted().take(8)
+            // Preserve caller priority: a timeout must not discard the nearby reverse shot.
+            val positions = seconds.filter { it.isFinite() && it in 0.0..ceiling }.distinct().take(8)
             if (!stillCurrent()) return@withLock emptyList()
             val retained=positions.mapNotNull{cachedTalkVideoFrame(cached,(it*1000).toLong(),ceiling)}
             if(retained.size==positions.size)return@withLock retained.distinctBy{it.seconds}
@@ -99,7 +100,7 @@ internal class PlayerTalkVideo(private val context: Context) {
                     }
                 }
             }
-            output.takeIf { stillCurrent() }.orEmpty().distinctBy { it.seconds }
+            output.takeIf { stillCurrent() }.orEmpty().distinctBy { it.seconds }.sortedBy { it.seconds }
         }
     }
 }

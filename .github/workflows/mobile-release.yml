@@ -32,7 +32,7 @@ on:
       validation_focus:
         description: "Phone checks to run"
         type: choice
-        options: [full, downloads, scene]
+        options: [full, downloads, scene, motion]
         default: full
       notes:
         description: "Release notes shown inside Aliflix"
@@ -43,8 +43,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "282"
-  RELEASE_VERSION_NAME: "3.1.192"
+  RELEASE_VERSION_CODE: "283"
+  RELEASE_VERSION_NAME: "3.1.193"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -91,7 +91,7 @@ jobs:
           chmod +x gradlew
       - name: Verify phone playback
         env:
-          ALIFLIX_TEST_CLASSES: ${{ (github.ref_name == 'release/v3.1.155' || github.ref_name == 'v3.1.155' || github.ref_name == 'release/v3.1.153' || github.ref_name == 'release/v3.1.154' || github.ref_name == 'v3.1.154' || github.ref_name == 'v3.1.153' || github.ref_name == 'release/v3.1.152' || github.ref_name == 'v3.1.152') && 'com.aliflix.app.downloads.DownloadBatchUiTest,com.aliflix.app.player.OfflineDownloadTest,com.aliflix.app.player.NativeSkipControlsTest,com.aliflix.app.player.NativeUpNextDeviceTest,com.aliflix.app.player.NativeResolverSilenceTest,com.aliflix.app.player.MobileResumeDeviceTest' || (github.ref_name == 'release/v3.1.151' || github.ref_name == 'v3.1.151') && 'com.aliflix.app.player.NativeSkipControlsTest' || (inputs.validation_focus == 'scene' && 'com.aliflix.app.talk.Talk187SceneDeviceTest,com.aliflix.app.talk.Talk188StoryDeviceTest,com.aliflix.app.talk.Talk189OrbDeviceTest,com.aliflix.app.talk.Talk190UiDeviceTest,com.aliflix.app.talk.Talk191UiDeviceTest,com.aliflix.app.talk.Talk192UiDeviceTest,com.aliflix.app.talk.TalkWireReplayDeviceTest,com.aliflix.app.talk.TalkOrbMotionDeviceTest' || (inputs.validation_focus == 'downloads' && 'com.aliflix.app.player.OfflineDownloadTest' || '')) }}
+          ALIFLIX_TEST_CLASSES: ${{ (github.ref_name == 'release/v3.1.155' || github.ref_name == 'v3.1.155' || github.ref_name == 'release/v3.1.153' || github.ref_name == 'release/v3.1.154' || github.ref_name == 'v3.1.154' || github.ref_name == 'v3.1.153' || github.ref_name == 'release/v3.1.152' || github.ref_name == 'v3.1.152') && 'com.aliflix.app.downloads.DownloadBatchUiTest,com.aliflix.app.player.OfflineDownloadTest,com.aliflix.app.player.NativeSkipControlsTest,com.aliflix.app.player.NativeUpNextDeviceTest,com.aliflix.app.player.NativeResolverSilenceTest,com.aliflix.app.player.MobileResumeDeviceTest' || (github.ref_name == 'release/v3.1.151' || github.ref_name == 'v3.1.151') && 'com.aliflix.app.player.NativeSkipControlsTest' || (inputs.validation_focus == 'motion' && 'com.aliflix.app.talk.Talk193MotionDeviceTest,com.aliflix.app.talk.Talk192UiDeviceTest' || (inputs.validation_focus == 'scene' && 'com.aliflix.app.talk.Talk187SceneDeviceTest,com.aliflix.app.talk.Talk188StoryDeviceTest,com.aliflix.app.talk.Talk189OrbDeviceTest,com.aliflix.app.talk.Talk190UiDeviceTest,com.aliflix.app.talk.Talk191UiDeviceTest,com.aliflix.app.talk.Talk192UiDeviceTest,com.aliflix.app.talk.TalkWireReplayDeviceTest,com.aliflix.app.talk.TalkOrbMotionDeviceTest' || (inputs.validation_focus == 'downloads' && 'com.aliflix.app.player.OfflineDownloadTest' || ''))) }}
         run: bash .github/scripts/test-phone-casting.sh '${{ matrix.api-level }}'
       - name: Upload playback test reports
         if: always()
@@ -129,7 +129,7 @@ jobs:
           set -euo pipefail
           npm ci
           npm run typecheck
-          if [ "${{ inputs.validation_focus }}" = "scene" ]; then
+          if [ "${{ inputs.validation_focus }}" = "scene" ] || [ "${{ inputs.validation_focus }}" = "motion" ]; then
             npm test
           else
             node --test ../.github/scripts/verify-ask-readiness.test.mjs
@@ -316,7 +316,7 @@ jobs:
             ./gradlew :app:testMobileDebugUnitTest --tests 'com.aliflix.app.player.AudioSubtitleAlignmentTest' --tests 'com.aliflix.app.player.PlaybackSpeechBufferTest' --tests 'com.aliflix.app.recommendation.TastePicksTest' --tests 'com.aliflix.app.account.AccountMergePolicyTest' --tests 'com.aliflix.app.player.SubtitleTimingMatchTest'
           else
           if [ "${{ inputs.skip_tests }}" != "true" ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.91' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.96' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.97' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.102' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.104' ] && [ "$GITHUB_REF_NAME" != 'v3.1.104' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.105' ] && [ "$GITHUB_REF_NAME" != 'v3.1.105' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.106' ] && [ "$GITHUB_REF_NAME" != 'v3.1.106' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.107' ] && [ "$GITHUB_REF_NAME" != 'v3.1.107' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.112' ] && [ "$GITHUB_REF_NAME" != 'v3.1.112' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.118' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.119' ] && [ "$GITHUB_REF_NAME" != 'v3.1.119' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.120' ] && [ "$GITHUB_REF_NAME" != 'v3.1.120' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.121' ] && [ "$GITHUB_REF_NAME" != 'v3.1.121' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.122' ] && [ "$GITHUB_REF_NAME" != 'v3.1.122' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.123' ] && [ "$GITHUB_REF_NAME" != 'v3.1.123' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.124' ] && [ "$GITHUB_REF_NAME" != 'v3.1.124' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.125' ] && [ "$GITHUB_REF_NAME" != 'v3.1.125' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.126' ] && [ "$GITHUB_REF_NAME" != 'v3.1.126' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.128' ] && [ "$GITHUB_REF_NAME" != 'v3.1.128' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.129' ] && [ "$GITHUB_REF_NAME" != 'v3.1.129' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.130' ] && [ "$GITHUB_REF_NAME" != 'v3.1.130' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.131' ] && [ "$GITHUB_REF_NAME" != 'v3.1.131' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.132' ]; then
-            if [ "${{ inputs.validation_focus }}" = "scene" ]; then
+            if [ "${{ inputs.validation_focus }}" = "scene" ] || [ "${{ inputs.validation_focus }}" = "motion" ]; then
               ./gradlew :app:testMobileDebugUnitTest --tests 'com.aliflix.app.talk.*' --tests 'com.aliflix.app.player.*Subtitle*' --tests 'com.aliflix.app.player.AutomaticCaptionSelectionTest' --tests 'com.aliflix.app.player.TalkCaptionEditionTest' --tests 'com.aliflix.app.player.CineJoyNativeCatalogTest' --tests 'com.aliflix.app.player.NativeStartupPolicyTest'
             else
               ./gradlew testMobileDebugUnitTest

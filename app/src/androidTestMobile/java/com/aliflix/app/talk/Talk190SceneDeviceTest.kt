@@ -209,6 +209,7 @@ class Talk190SceneDeviceTest {
                 .put("recallMs",nativePlayer!!.talkVoice.debugSceneRecallMs).put("observationMs",nativePlayer!!.talkVoice.debugSceneObservationMs)
                 .put("questionSentAt",nativePlayer!!.talkVoice.debugQuestionSentAt)
                 .put("finalAudio",nativePlayer!!.talkVoice.debugAudioSnapshot())
+                .put("finalConnectionIssue",nativePlayer!!.talkVoice.debugConnectionIssue)
                 .put("observationIssue",nativePlayer!!.talkVoice.debugSceneObservationIssue)
                 .put("storyIssue",nativePlayer!!.talkVoice.javaClass.methods.firstOrNull{it.name.startsWith("getDebugSceneStoryIssue")}?.invoke(nativePlayer!!.talkVoice))
                 .put("storyMs",nativePlayer!!.talkVoice.javaClass.methods.firstOrNull{it.name.startsWith("getDebugSceneStoryMs")}?.invoke(nativePlayer!!.talkVoice))

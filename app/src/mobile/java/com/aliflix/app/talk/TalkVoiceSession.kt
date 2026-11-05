@@ -238,7 +238,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         private set
     internal suspend fun inspectPlayerScene() { awaitSceneObservation() }
     internal suspend fun debugInspectScene(): JSONObject? { check(BuildConfig.DEBUG); return awaitSceneObservation()?.metadata }
-    private fun sendTurnContext(userOwned:Boolean=false) {
+    private fun sendTurnContext(userOwned:Boolean=false,sceneParts:JSONArray?=null) {
         if(!socketReady||!userOwned&&(speaking||generationOpen))return
         TalkPlayerConnection.current()?.talkSnapshot()?.let { current ->
             conversationContext.put("activePlayer",current)
@@ -269,9 +269,13 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if (parseTalkRecallRequest(question, scene.anchorSeconds).mode == TalkRecallMode.TIMESTAMP) emptyList() else listOfNotNull(scene.frames.firstOrNull(),scene.frames.getOrNull(scene.frames.size/3),scene.frames.getOrNull(scene.frames.size*2/3),scene.frames.lastOrNull()).distinctBy { it.seconds })
             scene.metadata.put("attachedCurrentFrameSeconds",JSONArray(delivery.frames.map { it.seconds }))
             val key = "$epoch:$providerContext:${scene.key}:${delivery.frames.joinToString { it.seconds.toString() }}"
-            val includeFrames = key != sentSceneKey || SystemClock.elapsedRealtime() - sentSceneAt > 45_000
-            emit(JSONObject().put("clientContent", JSONObject().put("turns", JSONArray().put(JSONObject().put("role", "user")
-                .put("parts", delivery.parts(includeFrames, recalledFrames)))).put("turnComplete", false)))
+            val includeFrames = sceneParts != null || key != sentSceneKey || SystemClock.elapsedRealtime() - sentSceneAt > 45_000
+            val evidence=delivery.parts(includeFrames,recalledFrames)
+            // Keep visual evidence in the same completed user turn as a typed
+            // question; history replay/compression must not separate its images.
+            if(sceneParts!=null)for(index in 0 until evidence.length())sceneParts.put(evidence.getJSONObject(index))
+            else emit(JSONObject().put("clientContent", JSONObject().put("turns", JSONArray().put(JSONObject().put("role", "user")
+                .put("parts", evidence))).put("turnComplete", false)))
             sentSceneKey = key
             if (includeFrames) sentSceneAt = SystemClock.elapsedRealtime()
             if (BuildConfig.DEBUG) { debugSceneContext = scene.metadata; debugSceneFrames += (if (includeFrames) delivery.frames.size else 0) + recalledFrames.size }
@@ -358,8 +362,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 answerDeadline.awaiting(45000)
                 if(conversationContext.optInt("companionVersion")>=16)
                     TalkPlayerConnection.current()?.let{host->host.talkScene()?.let{storyContext.await(it,host)}}
-                sendTurnContext()
                 val parts = JSONArray()
+                sendTurnContext(userOwned=true,sceneParts=parts)
                 if (TalkPlayerConnection.current() != null && (talkSceneQuestion(question) || talkEpisodeRecallQuestion(question))) {
                     parts.put(JSONObject().put("text", "Native answer contract: answer every part of the viewer's actual question clearly and completely from the attached timed story and video. Explain the supported cause, relevant earlier setup or inference they ask about. A narration of the pause frame is never a substitute for that answer. Resolve visual references (clothing colour, screen position, objects and gestures) against the attached images before connecting them to dialogue. A colour or role in the question may be wrong or ambiguous: correct a false premise or ask a short specific clarification; never invent an absent person, unseen action or physical cause. Distinguish visible action, earlier dialogue and supported inference. If an action occurred between sparse samples, retrieve surrounding video timestamps instead of filling the gap with an expected movement. Retrieve a specifically missing causal link with scene_recall before answering; observed footage alone does not mean the question is fully supported. When explaining a character reasoning, explicitly attribute the conclusion to that character and connect each clue to the inference. A confident character deduction is not objective proof. Cover each requested premise and exception separately. Preserve explicit qualifiers, negations, place names, numbers and conditions when the viewer asks for exact details. Before finishing, check every question clause against the answer, including what is merely claimed versus independently established. Earlier scenes through the pause are allowed. Caption windows are not cinematic scene boundaries. Use the character names and relationships established in storyUnderstanding, earlier dialogue and corroborated story/scene evidence; the name need not be spoken in this shot. Retrieve a missing identity or plot-level cause with scene_story before declaring it unknown. Name both people in an established relationship, including the girlfriend or parent relevant to the question. Begin certainty questions with a direct conclusion based on the evidence at this pause; do not substitute commentary about the show or its premise. A cast list alone is not a face binding. Explain what put them in danger and what the pursuer wants; fleeing because they are scared/being chased is circular, not the plot reason. Respond in ${responseLanguage ?: "the viewer's question language"}."))
                 }

@@ -20,6 +20,7 @@ class TalkSceneContextTest {
     @Test fun backfillIsNeededForFreshSeekStaleAndShortSequencesButNotObservedAction() {
         fun frames(vararg seconds: Double) = seconds.map { TalkSceneFrame(it, byteArrayOf(1)) }
         assertFalse(sceneNeedsVideoBackfill(frames(68.0,84.0,94.0,100.0),100.0))
+        assertFalse(sceneNeedsVideoBackfill(frames(92.0,98.0,100.0),100.0))
         assertTrue(sceneNeedsVideoBackfill(frames(100.0),100.0))
         assertTrue(sceneNeedsVideoBackfill(frames(94.0,95.0,96.0,97.0),100.0))
         assertTrue(sceneNeedsVideoBackfill(frames(97.0,98.0,99.0,100.0),100.0))
@@ -76,6 +77,19 @@ class TalkSceneContextTest {
             "But could he have known that already?")) assertTrue(question,talkSceneQuestion(question))
         assertFalse(talkNeedsCurrentSceneObservation("So does that mean she is definitely better, or is that an assumption?"))
         assertFalse(talkSceneQuestion("Recommend a comedy"))
+    }
+    @Test fun ordinaryWordPrefixesDoNotTriggerExpensiveVisualDecoding(){
+        assertFalse(talkVisualReference("Why did she visit this man instead of going home?"))
+        assertFalse(talkVisualReference("The woman insists that she remembers. Why?"))
+        assertFalse(talkNeedsCurrentSceneObservation("Why did she visit this man instead of going home?"))
+        assertTrue(talkVisualReference("What is the woman in red doing?"))
+        assertTrue(talkVisualReference("Why is the man beside her worried?"))
+    }
+    @Test fun deicticIdentityQuestionsRetrieveTheReverseShotInsteadOfTrustingTheQuestionPremise(){
+        assertTrue(talkNeedsCurrentSceneObservation("Who is this woman, and why has she come back to this man instead of going home sick?"))
+        assertTrue(talkNeedsCurrentSceneObservation("Who is that person comforting Jane?"))
+        assertTrue(talkNeedsCurrentSceneObservation("Who are these people?"))
+        assertFalse(talkNeedsCurrentSceneObservation("Who is Leonard?"))
     }
     @Test fun sceneAudioIsARealBoundedWaveAndExcludesDecodeAhead() {
         val frames = (0 until 800).map { index -> ShortArray(320) { index.toShort() } }

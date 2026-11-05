@@ -267,7 +267,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
             val panel=agentTasks||recent||privacy||voices
             val goal=if(panel)TalkOrbPose(screenSize.width-with(density){52.dp.toPx()},WindowInsets.systemBars.getTop(density)+with(density){104.dp.toPx()},with(density){42.dp.toPx()})else TalkOrbPose(x,y,diameter)
             TalkFloatingOrb(goal,if(panel)0f else roam,state.phase,{session.state.value.level},motion,tracker,if(compact)"talk-chat-orb" else "talk-orb",if(panel||compact)null else focusedBounds?.center,
-                activity=talkOrbActivity(state,keyboardOpen&&!state.sending),initialPose=initialOrbPose)
+                activity=talkOrbActivity(state,keyboardOpen&&!state.sending),initialPose=initialOrbPose,haloReady=talkVoiceHaloReady(state))
         }
         if(recent||privacy||voices) ModalBottomSheet(onDismissRequest={recent=false;privacy=false;voices=false},containerColor=AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated)) {
             Column(Modifier.fillMaxWidth().padding(horizontal=22.dp).navigationBarsPadding().padding(bottom=20.dp)) {
@@ -405,14 +405,14 @@ private class TalkParticleField(private val width: Int, private val height: Int,
  * A feathered radial alpha replaces CSS blur: no rings, clipped layers or resets
  * between listening/speaking. The uninterrupted clock and PCM envelope are separate. */
 @Composable internal fun TalkLiveOrb(phase:String,level:()->Float,motion:Boolean,modifier:Modifier=Modifier,tracker:DiscoverTouchTracker=remember{DiscoverTouchTracker()},attention:Offset?=null,
-    activity:TalkOrbActivity?=null) {
+    activity:TalkOrbActivity?=null,haloStyle:TalkHaloStyle=TalkHaloStyle.SOFT,haloReady:Boolean=true) {
     val appearance=remember(activity,phase) { talkOrbAppearance(activity ?: talkOrbPhaseActivity(phase)) }
     val animate=motion&&android.animation.ValueAnimator.areAnimatorsEnabled()
     val seconds=rememberMobileAnimationClock(animate)
     val currentLevel by rememberUpdatedState(level)
     var energy by remember{mutableFloatStateOf(0f)}
     var lightRotation by remember { mutableFloatStateOf(0f) }
-    val glow=animateFloatAsState(appearance.glow,tween(if(animate)240 else 0),label="orb-activity-light")
+    val glow=animateFloatAsState(if(haloStyle==TalkHaloStyle.LED){if(haloReady)1f else 0f}else appearance.glow,tween(if(animate)240 else 0),label="orb-activity-light")
     val flow=animateFloatAsState(appearance.flow,tween(if(animate)320 else 0),label="orb-activity-flow")
     val tilt=animateFloatAsState(appearance.tilt,if(animate)spring(dampingRatio=.9f,stiffness=240f)else tween(0),label="orb-attention-tilt")
     LaunchedEffect(animate){
@@ -449,10 +449,12 @@ private class TalkParticleField(private val width: Int, private val height: Int,
             Triple(aura,rim,lobes)
         }
     }
+    val led=remember(bounds,haloStyle){if(haloStyle==TalkHaloStyle.LED&&bounds.width>0)TalkLedHaloField(bounds.width.toFloat(),bounds.height.toFloat())else null}
     Box(modifier.onSizeChanged{bounds=it}.semantics {contentDescription="Aliflix voice: ${appearance.label}";stateDescription=appearance.label},contentAlignment=Alignment.Center){
         Canvas(Modifier.fillMaxSize().clip(androidx.compose.foundation.shape.CircleShape)){
             val extent=size.minDimension*.475f;val breath=1f+sin(seconds.value*.82f)*appearance.breath+energy*.02f
-            lights?.let{(aura,rim,lobes)->
+            if(haloStyle==TalkHaloStyle.LED)led?.draw(this,glow.value,if(animate)energy else currentLevel().coerceIn(0f,1f),seconds.value,animate)
+            else lights?.let{(aura,rim,lobes)->
                 rotate(lightRotation){scale(breath){drawCircle(aura,extent,alpha=(glow.value+energy*.25f).coerceIn(0f,1f))}}
                 // Off-centre feathered lights make rotation visibly travel around
                 // the face. A symmetric radial gradient alone cannot show motion.
