@@ -119,7 +119,7 @@ export async function understandPlayerStory(q:StoryRequest,sources:StorySources,
   const response=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_GENERATION_MODEL||'gemini-3.8-flash'}:generateContent`,{
    method:'POST',headers:{'x-goog-api-key':env.GEMINI_API_KEY,'content-type':'application/json'},
    body:JSON.stringify({systemInstruction:{parts:[{text:STORY_ANALYSIS_INSTRUCTIONS}]},contents:[{role:'user',parts}],
-    generationConfig:{maxOutputTokens:4096,thinkingConfig:{thinkingLevel:'minimal'},responseMimeType:'application/json',responseJsonSchema:schema}}),signal:AbortSignal.timeout(8000)});
+    generationConfig:{maxOutputTokens:4096,thinkingConfig:{thinkingLevel:'low'},responseMimeType:'application/json',responseJsonSchema:schema}}),signal:AbortSignal.timeout(8000)});
   if(!response.ok){preferredStatus=response.status;await response.body?.cancel();throw Error('provider_unavailable');}
   const body=await boundedJson(response,64000) as {candidates?:Array<{content?:{parts?:Array<{text?:string;thought?:boolean}>}}>};
   return JSON.parse(body.candidates?.[0]?.content?.parts?.filter(p=>!p.thought).map(p=>p.text||'').join('')||'');

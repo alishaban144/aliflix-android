@@ -90,7 +90,7 @@ async function structuredSceneObservation(scene:ScenePacket,env:RecommendationEn
  const model=env.GEMINI_GENERATION_MODEL || 'gemini-3.8-flash';
  const response=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
   method:'POST',headers:{'x-goog-api-key':env.GEMINI_API_KEY,'content-type':'application/json'},
-  body:JSON.stringify({...body,generationConfig:{maxOutputTokens:3072,thinkingConfig:{thinkingLevel:'minimal'},responseMimeType:'application/json',responseJsonSchema:schema}}),signal});
+  body:JSON.stringify({...body,generationConfig:{maxOutputTokens:3072,thinkingConfig:{thinkingLevel:'low'},responseMimeType:'application/json',responseJsonSchema:schema}}),signal});
  if(!response.ok){console.warn('talk_structured_scene_failed',response.status);await response.body?.cancel();throw Error('SCENE_UNAVAILABLE');}
  const data=await boundedJson(response,32768) as {candidates?:Array<{content?:{parts?:Array<{text?:string;thought?:boolean}>}}>};
  const text=data.candidates?.[0]?.content?.parts?.filter(part=>!part.thought).map(part=>part.text||'').join('');

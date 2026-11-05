@@ -135,8 +135,9 @@ describe('independent scene observation',()=>{
   expect(body).toContain('Bleib hier.');expect(body).not.toContain(packet.audio!.data);
  });
  it('uses structured observation without opening an unnecessary Live session',async()=>{
-  const fetch=vi.spyOn(globalThis,'fetch').mockImplementation(async(input)=>{
+  const fetch=vi.spyOn(globalThis,'fetch').mockImplementation(async(input,init)=>{
    expect(String(input)).toContain('gemini-3.8-flash:generateContent');
+   expect(JSON.parse(String(init!.body)).generationConfig.thinkingConfig.thinkingLevel).toBe('low');
    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(observation())}]}}]});
   });
   expect(await observePlayerScene(scene(),config)).toMatchObject({status:'observed',titleBlind:true});
