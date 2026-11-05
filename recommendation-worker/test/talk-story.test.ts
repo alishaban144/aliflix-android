@@ -69,6 +69,12 @@ describe('named source-bound player story',()=>{
   const result=await understandPlayerStory(request(),sources,{GEMINI_API_KEY:'test-only'} as RecommendationEnv);
   expect(result.status).toBe('limited');expect(result.characters).toEqual([]);
  });
+ it('reports a bounded provider failure without exposing future source text as scene knowledge',async()=>{
+  vi.spyOn(globalThis,'fetch').mockRejectedValue(new DOMException('deadline','TimeoutError'));
+  const result=await understandPlayerStory(request(),sources,{GEMINI_API_KEY:'test-only'} as RecommendationEnv);
+  expect(result).toMatchObject({status:'limited',preferredFailure:'timeout'});
+  expect(JSON.stringify(result)).not.toContain('quarantined background');
+ });
  it('uses current Cloudflare vision with the same evidence gates and bounded temporal images',async()=>{
   const run=vi.fn().mockResolvedValue({choices:[{message:{content:JSON.stringify(answer())}}]});
   const q=request();q.frames=Array.from({length:4},(_,i)=>({seconds:1190+i,data:'/9j/AA=='}));

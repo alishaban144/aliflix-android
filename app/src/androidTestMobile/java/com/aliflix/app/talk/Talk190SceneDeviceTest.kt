@@ -118,7 +118,13 @@ class Talk190SceneDeviceTest {
                 val before=android.os.SystemClock.elapsedRealtime()
                 receipt.put("question", args.getString("sceneQuestion") ?: "Explain why this happened using the earlier setup.")
                 val speech=args.getString("sceneSpeechFixture")
-                if(speech==null)withContext(Dispatchers.Main) { player.talkVoice.sendText(receipt.getString("question")) }
+                if(speech==null)withContext(Dispatchers.Main) {
+                    player.talkVoice.sendText(receipt.getString("question"))
+                    // The real Send action dismisses the IME; direct session
+                    // injection must reproduce that viewport for visual review.
+                    androidx.core.view.WindowCompat.getInsetsController(player.window,player.window.decorView)
+                        .hide(androidx.core.view.WindowInsetsCompat.Type.ime())
+                }
                 else launch(Dispatchers.Main){ player.talkVoice.debugInjectMicrophonePcm(talkValidationFixture(speech).readBytes()) }
                 var first=0L
                 val answer=withTimeout(65000) {
@@ -142,8 +148,15 @@ class Talk190SceneDeviceTest {
                 }
                 assertEquals("en",player.talkVoice.debugResponseLanguage)
                 assertTrue("No transcript recall supplied",player.talkVoice.debugSceneContext?.optJSONObject("episodeRecall")?.optJSONObject("storyThroughAnchor")?.optInt("includedCues",0)?.let { it > 0 } == true)
-                if(talkNeedsCurrentSceneObservation(receipt.getString("question")))
-                    assertTrue("Missing temporal image evidence; see talk190-live-$titleCase.json",(player.talkVoice.debugSceneContext?.optJSONArray("attachedCurrentFrameSeconds")?.length()?:0)>=3 || player.talkVoice.debugSceneContext?.optJSONObject("groundedObservation")?.optBoolean("titleBlind")==true)
+                if(talkNeedsCurrentSceneObservation(receipt.getString("question"))){
+                    val context=player.talkVoice.debugSceneContext
+                    val frames=context?.optJSONArray("attachedCurrentFrameSeconds")?.length()?:0
+                    val named=context?.optJSONObject("storyUnderstanding")
+                    val groundedIdentity=talkCurrentIdentityQuestion(receipt.getString("question"))&&frames>0&&
+                        named?.optString("status")=="grounded"&&(named.optJSONArray("characters")?.length()?:0)>0
+                    assertTrue("Missing temporal or independently bound identity evidence; see talk190-live-$titleCase.json",
+                        groundedIdentity||frames>=3||context?.optJSONObject("groundedObservation")?.optBoolean("titleBlind")==true)
+                }
                 assertTrue(answer,answer.length>100)
                 assertFalse(answer,Regex("(?i)trouble.{0,45}retriev|unable to (?:access|see)|cannot (?:access|see)|can't (?:access|see)|don't have.{0,20}(?:scene|details)").containsMatchIn(answer))
                 val timely=first in 1..if(speech==null)12000 else 25000

@@ -109,9 +109,11 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                 add((anchor-8).coerceAtLeast(0.0));add(anchor)
             } else listOf(32.0, 16.0, 8.0, 6.0, 4.0, 2.0, 1.0).map { (anchor - it).coerceAtLeast(0.0) }
             NativePlaybackService.activeRequest?.let { request ->
-                val decoded = try { talkVideo.frames(requestId, request, positions, anchor,
-                    { !isDestroyed && selection?.key == current.key && NativePlaybackService.activeRequestId == requestId &&
-                        kotlin.math.abs(talkSnapshot().optDouble("positionSeconds") - anchor) < .8 })
+                val decoded = try { withTimeoutOrNull(if(com.aliflix.app.talk.talkCurrentIdentityQuestion(query))3500L else 12000L) {
+                    talkVideo.frames(requestId, request, positions, anchor,
+                        { !isDestroyed && selection?.key == current.key && NativePlaybackService.activeRequestId == requestId &&
+                            kotlin.math.abs(talkSnapshot().optDouble("positionSeconds") - anchor) < .8 })
+                    }.orEmpty()
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { emptyList() }
                 sceneMemory.retrievedFrames(decoded)

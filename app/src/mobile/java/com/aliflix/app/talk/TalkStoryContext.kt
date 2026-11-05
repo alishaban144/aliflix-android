@@ -62,7 +62,7 @@ internal class TalkStoryContext(private val scope:CoroutineScope,
     }
     suspend fun await(scene:TalkSceneContext,host:TalkPlayerHost,question:String="",refresh:Boolean=false):JSONObject? {
         val work=prepare(scene,host,question,refresh)
-        val result=withTimeoutOrNull(if(refresh)20000 else 1500){work.await()}
+        val result=withTimeoutOrNull(if(refresh)20000 else 9500){work.await()}
         attach(scene);return result?:ready[memoryKey(scene)]
     }
 }
