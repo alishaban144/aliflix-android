@@ -84,6 +84,7 @@ it('uses research only to find an already-present earlier causal clue without en
  request.dialogue[999]=[999,999.5,'Where is the medical bag?'];
  const expanded=budgetStoryEvidence(request,{...sources,evidence:[{...sources.evidence[0],text:'Jane worries about the medical bag because of morphine. A later secret will be revealed.'}]});
  expect(expanded.request.dialogue.map(row=>row[2]).join(' ')).toContain('too much morphine');
+ expect(expanded.establishedSearchTerms).toContain('morphine');
  expect(expanded.request.dialogue.map(row=>row[2]).join(' ')).not.toContain('later secret');
  expect(expanded.request.dialogue.reduce((sum,row)=>sum+row[2].length,0)).toBeLessThanOrEqual(16000);
 });
