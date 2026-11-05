@@ -19,6 +19,11 @@ import kotlinx.coroutines.sync.withLock
 import java.io.ByteArrayOutputStream
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.math.abs
+
+internal fun cachedTalkVideoFrame(cache:Map<Long,TalkSceneFrame>,millis:Long,ceiling:Double):TalkSceneFrame? =
+    cache[millis]?.takeIf{it.seconds<=ceiling}?:cache.entries.filter{abs(it.key-millis)<=100&&it.value.seconds<=ceiling}
+        .minByOrNull{abs(it.key-millis)}?.value
 
 /** Independently decodes requested earlier moments. Never seeks or resumes the viewer's
  * player. Source credentials stay inside the native data source, never in model context. */
@@ -34,6 +39,8 @@ internal class PlayerTalkVideo(private val context: Context) {
             if (source != requestId) { source = requestId; cached.clear() }
             val positions = seconds.filter { it.isFinite() && it in 0.0..ceiling }.distinct().sorted().take(8)
             if (!stillCurrent()) return@withLock emptyList()
+            val retained=positions.mapNotNull{cachedTalkVideoFrame(cached,(it*1000).toLong(),ceiling)}
+            if(retained.size==positions.size)return@withLock retained.distinctBy{it.seconds}
             val output = mutableListOf<TalkSceneFrame>()
             withTimeoutOrNull(12_000) {
                 val http = DefaultHttpDataSource.Factory().setUserAgent(request.userAgent)
@@ -65,7 +72,7 @@ internal class PlayerTalkVideo(private val context: Context) {
                     for (position in positions) {
                         if (!stillCurrent()) break
                         val millis = (position * 1000).toLong()
-                        val frame = cached[millis] ?: try {
+                        val frame = cachedTalkVideoFrame(cached,millis,ceiling) ?: try {
                             val future = extractor.getFrame(millis)
                             val extracted = suspendCancellableCoroutine<FrameExtractor.Frame> { continuation ->
                                 continuation.invokeOnCancellation { future.cancel(true) }

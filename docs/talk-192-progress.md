@@ -63,3 +63,7 @@ The explicit Gemini retry returned Generate Content HTTP 429 and a separate Live
 - Research-source cache ownership does not depend on which newly decoded images are present: refreshing temporal frames at the same source/revision/pause can reuse independent research without certifying a face binding.
 
 The standard Gemini 3.8 Live model is retained. Google's current [Live thinking guidance](https://ai.google.dev/gemini-api/docs/live-api/thinking) says it must not receive thinkingConfig; the Extended Thinking model has a different interaction-status lifecycle and intermediate utterances. A rushed model switch would risk the interruption/continuity behavior this task is meant to protect.
+
+## Cold-seek performance correction
+
+The Disclosure Day reply now named Daniel/Jane and explained the Archive/artifact pursuit, but first text took 24.5 seconds. Two independent preparation paths decoded the same paused sequence, and tiny timestamp drift missed the millisecond-indexed cache. The player now tests the actual temporal journal even while its assembled scene cache is invalidated, reuses already-decoded images within 100 ms only when their real presentation time is at/before the current boundary, and requests three earlier temporal positions plus the actual pause capture. Dedicated tests cover pause drift, distant-cache rejection and a rewind's future-frame exclusion. Android host tests: 878 total, no failures/errors, three existing skips; final local lint and assembly pass.

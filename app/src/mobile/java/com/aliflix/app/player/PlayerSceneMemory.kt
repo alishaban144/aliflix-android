@@ -149,6 +149,10 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
         return cached?.takeIf { it.identity == identity && it.revision == revision && abs(it.anchorSeconds - position) < .8 &&
             it.metadata.optString("displayedSubtitleEdition", it.metadata.optString("subtitleEdition")) == state.optString("subtitleEdition") }
     }
+    fun temporalFrames():List<TalkSceneFrame> {
+        val position=observe(snapshot())
+        return sceneFrameSelection(frames.toList(),position)
+    }
 
     suspend fun capture(includeAudio: Boolean = false): TalkSceneContext? = captureMutex.withLock { captureOnce(includeAudio) }
 

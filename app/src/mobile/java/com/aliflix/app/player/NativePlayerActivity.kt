@@ -82,7 +82,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         }
         val packet = sceneMemory.recall(query, fullStory) ?: return null
         val needsCurrentVideo = com.aliflix.app.talk.talkNeedsCurrentSceneObservation(query) &&
-            com.aliflix.app.talk.sceneNeedsVideoBackfill(sceneMemory.current()?.frames.orEmpty(), packet.optDouble("anchorSeconds"))
+            com.aliflix.app.talk.sceneNeedsVideoBackfill(sceneMemory.temporalFrames(), packet.optDouble("anchorSeconds"))
         if (query != "current scene" && (packet.optString("mode") in setOf("previous", "timestamp") || needsCurrentVideo || packet.optString("mode")=="search" && com.aliflix.app.talk.talkNeedsCurrentSceneObservation(query) && Regex("(?i)earlier|previous|before|beginning|first|zuvor|vorher|سابق|قبل").containsMatchIn(query))) {
             val anchor = packet.optDouble("anchorSeconds")
             val windows = packet.optJSONArray("scenes") ?: JSONArray()
@@ -91,7 +91,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
             // Decode its temporal window first; older search hits must not consume
             // the eight-frame budget and leave only a paused still.
             val positions = if(needsCurrentVideo)
-                listOf(32.0,16.0,8.0,6.0,4.0,2.0,1.0,0.0).map{(anchor-it).coerceAtLeast(0.0)}
+                listOf(24.0,8.0,2.0).map{(anchor-it).coerceAtLeast(0.0)}
             else if (packet.optString("mode") == "timestamp" && target.isFinite())
                 listOf(target - 8.0, target - 3.0, target, target + 3.0).filter { it in 0.0..anchor }
             else if (packet.optString("mode") == "previous") buildList {

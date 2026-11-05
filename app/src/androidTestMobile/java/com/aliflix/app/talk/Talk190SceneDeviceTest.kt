@@ -53,7 +53,33 @@ class Talk190SceneDeviceTest {
                 withTimeout(90000) { while(withContext(Dispatchers.Main) { player.playbackController!!.currentPosition/1000.0 < position })delay(80) }
                 player.talkCommand(command("pause"))
                 val inspectOnly=args.getString("sceneInspectOnly")=="true"
-                if(!inspectOnly)withContext(Dispatchers.Main) { player.talkVoice.debugTraceInput=true;player.openTalk();assertFalse(player.talkVoice.state.value.textMode);if(args.getString("sceneSpeechFixture")==null){player.talkVoice.setTextMode(true);player.openTalk()} }
+                if(!inspectOnly){
+                    withContext(Dispatchers.Main){player.talkVoice.debugTraceInput=true}
+                    if(args.getString("sceneUseToolbar")=="true"){
+                        val automation=i.uiAutomation
+                        fun find(node:android.view.accessibility.AccessibilityNodeInfo?):android.view.accessibility.AccessibilityNodeInfo? {
+                            if(node==null)return null
+                            if(node.contentDescription?.toString()=="Talk")return node
+                            for(n in 0 until node.childCount)find(node.getChild(n))?.let{return it}
+                            return null
+                        }
+                        if(find(automation.rootInActiveWindow)==null){
+                            val display=context.resources.displayMetrics;val began=android.os.SystemClock.uptimeMillis()
+                            for(action in listOf(android.view.MotionEvent.ACTION_DOWN,android.view.MotionEvent.ACTION_UP)){
+                                val event=android.view.MotionEvent.obtain(began,android.os.SystemClock.uptimeMillis(),action,display.widthPixels/2f,display.heightPixels/2f,0)
+                                event.source=android.view.InputDevice.SOURCE_TOUCHSCREEN
+                                try{automation.injectInputEvent(event,true)}finally{event.recycle()}
+                            }
+                        }
+                        val deadline=android.os.SystemClock.elapsedRealtime()+4000
+                        var control=find(automation.rootInActiveWindow)
+                        while(control==null&&android.os.SystemClock.elapsedRealtime()<deadline){delay(50);control=find(automation.rootInActiveWindow)}
+                        assertNotNull("Talk must be available beside the player controls",control)
+                        screenshot("talk192-player-toolbar-$titleCase.png")
+                        assertTrue(requireNotNull(control).performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK))
+                    }else withContext(Dispatchers.Main){player.openTalk()}
+                    withContext(Dispatchers.Main){assertFalse(player.talkVoice.state.value.textMode);if(args.getString("sceneSpeechFixture")==null){player.talkVoice.setTextMode(true);player.openTalk()}}
+                }
                 val scene=withContext(Dispatchers.Main) { player.prepareTalkScene()!! }
                 val receipt=JSONObject().put("title",title.third).put("scene",scene.metadata)
                     .put("player",withContext(Dispatchers.Main) { player.talkSnapshot() });receipts.put(receipt)
@@ -111,7 +137,8 @@ class Talk190SceneDeviceTest {
                     assertTrue("Missing temporal image evidence; see talk190-live-$titleCase.json",(player.talkVoice.debugSceneContext?.optJSONArray("attachedCurrentFrameSeconds")?.length()?:0)>=3 || player.talkVoice.debugSceneContext?.optJSONObject("groundedObservation")?.optBoolean("titleBlind")==true)
                 assertTrue(answer,answer.length>100)
                 assertFalse(answer,Regex("(?i)trouble.{0,45}retriev|unable to (?:access|see)|cannot (?:access|see)|can't (?:access|see)|don't have.{0,20}(?:scene|details)").containsMatchIn(answer))
-                assertTrue("Scene answer took $first ms: $answer",first in 1..if(speech==null)12000 else 25000)
+                val timely=first in 1..if(speech==null)12000 else 25000
+                receipt.put("latencyWithinBudget",timely)
                 if(speech!=null){assertTrue("Missing rendered spoken scene answer",player.talkVoice.debugRenderedSamples>10000);receipt.put("speechInput",true).put("renderedSamples",player.talkVoice.debugRenderedSamples).put("recognizedQuestion",player.talkVoice.state.value.lines.lastOrNull{it.role=="user"}?.text)}
                 assertTrue(player.talkVoice.debugSceneFrames>0)
                 if(args.getString("sceneSubtitles")=="off") {
@@ -159,6 +186,10 @@ class Talk190SceneDeviceTest {
                     delay(600);screenshot("talk191-followup-$titleCase.png")
                 }
 
+                withContext(Dispatchers.Main){player.talkScene()}?.frames?.forEachIndexed{n,frame->
+                    File(context.getExternalFilesDir(null),"talk192-final-$titleCase-$index-$n.jpg").writeBytes(frame.jpeg)
+                }
+                assertTrue("Scene answer took $first ms: $answer",timely)
                 assertTrue("Missing required points $missing: $answer",missing.isEmpty())
             }
         } } finally {
