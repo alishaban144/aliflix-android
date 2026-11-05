@@ -96,7 +96,8 @@ export function liveSetup(context: TalkContext) {
   if(tool.name==='app_control'&&(context.companionVersion||0)>=12){
    const playerActions=[...((context.companionVersion||0)>=13?['replay_scene']:[]),'seek_relative','sync_subtitles','reset_subtitle_sync','skip_intro','next_episode','select_episode','playback_speed','quality','select_server','select_provider','retry_playback','volume','brightness','rotate','stop_playback','stop_cast','open_cast','watch_together','verify_provider'];
    const stepActions=['play','player_state','pause','resume','seek','audio_language','subtitle_language',...playerActions,'save','unsave','favorite','unfavorite','set_setting'];
-   upgraded.parameters.properties.action={type:'STRING',enum:[...tool.parameters.properties.action!.enum,...playerActions,...((context.companionVersion||0)>=13?['scene_context']:[]),...((context.companionVersion||0)>=14?['scene_recall']:[]),'execute_task','task_state','cancel_task']};
+   upgraded.parameters.properties.action={type:'STRING',enum:[...tool.parameters.properties.action!.enum,...playerActions,...((context.companionVersion||0)>=13?['scene_context']:[]),...((context.companionVersion||0)>=14?['scene_recall']:[]),...((context.companionVersion||0)>=16?['scene_story']:[]),'execute_task','task_state','cancel_task']};
+   if((context.companionVersion||0)>=16)upgraded.description+=' scene_story retrieves the active scene character and causal-story understanding from canonical credits, independent story evidence, the available full earlier transcript and actual images. Use query=the exact identity/why/relationship question. Wait for it rather than refusing a name because the current subtitle lacks a speaker label. It preserves the paused reveal boundary and is read-only.';
    upgraded.parameters.properties.taskId={type:'STRING',description:'Actual taskId returned by the native task. Never invent one.'};
    if((context.companionVersion||0)>=14){
     upgraded.parameters.properties.query={type:'STRING',description:'For scene_recall: the viewer\'s exact previous-scene, timestamp, recap or named-event question. For search: the catalogue query.'};
@@ -120,7 +121,7 @@ export function liveSetup(context: TalkContext) {
   return upgraded;
  });
  return { model: 'models/'+TALK_MODEL,
-  generationConfig: { responseModalities: ['AUDIO'], maxOutputTokens: (context.companionVersion||0)>=8?8192:2048,
+  generationConfig: { responseModalities: ['AUDIO'], maxOutputTokens: (context.companionVersion||0)>=16&&context.activePlayer?.id?4096:(context.companionVersion||0)>=8?8192:2048,
     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: context.voice || TALK_VOICE } } } },
   systemInstruction: { parts: [{ text: liveInstructions(context) }] },
   // Legacy installed clients cannot answer the new local topic/history tools.

@@ -71,9 +71,10 @@ internal fun MobilePlayerTopBar(
     modifier: Modifier = Modifier,
     detail: String = "",
     onQuality: (() -> Unit)? = null,
+    onTalk: (() -> Unit)? = null,
 ) {
     if (!com.aliflix.app.BuildConfig.IS_TV) {
-        MobilePlayerActionHeader(title, detail, isTv, onBack, onEpisodes, onSubtitles, onRotate, onMore, onQuality, modifier)
+        MobilePlayerActionHeader(title, detail, isTv, onBack, onEpisodes, onSubtitles, onRotate, onMore, onQuality, modifier, onTalk)
         return
     }
     androidx.compose.foundation.layout.BoxWithConstraints(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {

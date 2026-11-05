@@ -82,12 +82,17 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         }
         val packet = sceneMemory.recall(query, fullStory) ?: return null
         val needsCurrentVideo = com.aliflix.app.talk.talkNeedsCurrentSceneObservation(query) &&
-            com.aliflix.app.talk.sceneNeedsVideoBackfill(sceneMemory.current()?.frames.orEmpty(), packet.optDouble("anchorSeconds"))
+            com.aliflix.app.talk.sceneNeedsVideoBackfill(sceneMemory.temporalFrames(), packet.optDouble("anchorSeconds"))
         if (query != "current scene" && (packet.optString("mode") in setOf("previous", "timestamp") || needsCurrentVideo || packet.optString("mode")=="search" && com.aliflix.app.talk.talkNeedsCurrentSceneObservation(query) && Regex("(?i)earlier|previous|before|beginning|first|zuvor|vorher|سابق|قبل").containsMatchIn(query))) {
             val anchor = packet.optDouble("anchorSeconds")
             val windows = packet.optJSONArray("scenes") ?: JSONArray()
             val target = packet.optDouble("targetSeconds", Double.NaN)
-            val positions = if (packet.optString("mode") == "timestamp" && target.isFinite())
+            // A question can be both a name search and a current physical action.
+            // Decode its temporal window first; older search hits must not consume
+            // the eight-frame budget and leave only a paused still.
+            val positions = if(needsCurrentVideo)
+                listOf(24.0,8.0,2.0).map{(anchor-it).coerceAtLeast(0.0)}
+            else if (packet.optString("mode") == "timestamp" && target.isFinite())
                 listOf(target - 8.0, target - 3.0, target, target + 3.0).filter { it in 0.0..anchor }
             else if (packet.optString("mode") == "previous") buildList {
                 for (index in 0 until windows.length()) {
@@ -115,6 +120,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         return sceneMemory.recall(query, fullStory)
     }
     override fun talkRecallFrames(query: String) = sceneMemory.recallFrames(query)
+    override fun talkStoryEvidence() = sceneMemory.recall("current scene", fullStory=true, characterBudget=120_000)
     override suspend fun prepareTalkScene() = sceneMemory.current()?.takeIf { controller?.isPlaying != true && it.frames.isNotEmpty() && it.metadata.optBoolean("audioChecked") } ?: sceneMemory.capture(includeAudio = true)
     private var talkPreparationPaused = false
     private val talkPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
@@ -589,7 +595,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                     }, { showProviderVerification = false })
                 }
                 NativePlayerScreen(
-                    onTalk = ::openTalk,
+                    onTalk = { if(talkVisible)closeTalk()else openTalk() },
                     onWatchTogether = {
                         if (ui.external) ui = ui.copy(message = "Stop casting to start Watch Together")
                         else selection?.let { startActivity(Intent(this@NativePlayerActivity, com.aliflix.app.party.WatchPartyActivity::class.java).putExtra("selection", it.nativeJson())) }

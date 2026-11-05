@@ -5,6 +5,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkChatReplyTest {
+ @Test fun providerUiSidebandsNeverAppearEvenWhileTheirTagIsStreaming() {
+  val answer="That is an assumption, not proof."
+  for(suffix in listOf("<","<L","<LMDX","<LMDX>","<LMDX>### Internal<List><ListTile>State</ListTile></List></LMDX>"))
+   assertEquals(answer,talkVisibleAnswer(answer+suffix))
+  assertEquals("An ordinary comparison: x < y.",talkVisibleAnswer("An ordinary comparison: x < y."))
+ }
  private val cards=(1..12).map{TalkTitleCard(it,MediaType.TV,"Series $it","2020")}
  private val sources=listOf(TalkReference("Evidence","https://example.org/evidence","Publisher"))
  @Test fun aProviderGenerationResetCannotDuplicateCardsOrDetachSources() {

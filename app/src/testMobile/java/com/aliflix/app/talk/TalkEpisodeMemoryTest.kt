@@ -8,6 +8,42 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TalkEpisodeMemoryTest {
+    @Test fun vagueSceneQuestionRetrievesAnEarlierCauseUsingEstablishedStoryEntities() {
+        val research=org.json.JSONObject().put("mentionedCharacters",org.json.JSONArray().put("Jane Blankenship").put("Future Identity"))
+            .put("establishedSearchTerms",org.json.JSONArray().put("Wardex").put("Daniel"))
+        val query=expandedTalkStoryQuery("Why are they escaping?","Look, Jane, it wasn't you.",research)
+        assertTrue(query.contains("Jane"));assertTrue(query.contains("Wardex"));assertFalse(query.contains("Future"))
+        val prior=listOf(cue(100.0,103.0,"Wardex wants back the Archive Daniel stole."))+
+            (110..2000 step 3).map{cue(it.toDouble(),it+1.0,"Unrelated dialogue with enough words to fill the bounded context page.")}
+        val packet=buildTalkRecallPacket(query,parseTalkRecallRequest(query,2000.0),2000.0,prior,"timed_captions","same-cut",emptyList(),emptyList())
+        assertTrue(packet.getJSONObject("storyThroughAnchor").getJSONArray("dialogue").toString().contains("Archive Daniel stole"))
+    }
+    @Test fun compactLiveStoryPreservesEveryEarlierLineAndItsTimestamp() {
+        val packet=org.json.JSONObject().put("storyThroughAnchor",org.json.JSONObject()
+            .put("includedCues",2).put("complete",true).put("dialogue",org.json.JSONArray()
+                .put(org.json.JSONArray().put(12.345).put(14.56).put("Daniel took the files"))
+                .put(org.json.JSONArray().put(99.99).put(100.0).put("Look, Jane, it wasn't you."))))
+        val compact=compactTalkStoryForLive(packet).getJSONObject("storyThroughAnchor")
+        assertEquals(2,compact.getInt("includedCues"));assertTrue(compact.getBoolean("complete"))
+        assertFalse(compact.has("dialogue"))
+        assertEquals("12.35\tDaniel took the files\n99.99\tLook, Jane, it wasn't you.\n",compact.getString("timedTranscript"))
+    }
+    @Test fun escapingAndComfortingAreTemporalSceneQuestionsEvenWithoutTheWordScene() {
+        assertTrue(talkNeedsCurrentSceneObservation("Why are they escaping? They seem very scared."))
+        assertTrue(talkNeedsCurrentSceneObservation("Who is that someone comforting Jane?"))
+        assertFalse(talkNeedsCurrentSceneObservation("What did she say at 10:20?"))
+    }
+    @Test fun independentStoryAnalysisCanReadTheFullEarlierPrefixWithoutChangingLivePagingOrRevealingFutureCues(){
+        val long=(0..220).map{n->SubtitleCue(n*4.0,n*4.0+2,"Earlier exchange $n "+"causal evidence ".repeat(8))}
+        val request=parseTalkRecallRequest("current scene",800.0)
+        val live=buildTalkRecallPacket("current scene",request,800.0,long,"timed_captions","same-source",emptyList(),emptyList(),includeWholeStory=true)
+        val analysis=buildTalkRecallPacket("current scene",request,800.0,long,"timed_captions","same-source",emptyList(),emptyList(),includeWholeStory=true,characterBudget=120000)
+        assertFalse(live.getJSONObject("storyThroughAnchor").getBoolean("complete"))
+        val story=analysis.getJSONObject("storyThroughAnchor")
+        assertTrue(story.getBoolean("complete"));assertEquals(200,story.getJSONArray("dialogue").length())
+        assertTrue(story.getDouble("throughSeconds")<=800.0)
+        assertFalse(story.toString().contains("Earlier exchange 201 "))
+    }
     private fun cue(start: Double, end: Double, text: String) = SubtitleCue(start, end, text)
 
     private val cues = listOf(

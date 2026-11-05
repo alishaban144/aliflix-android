@@ -1,0 +1,68 @@
+{
+  "mobileSource": "0478f4dbd862b9bfb188e1d78b9d78d3a861761f",
+  "backendSource": "1b1451f4fb40a8e50bb05e32b562f4b6a7992a40",
+  "device": "Physical Pixel 7a",
+  "input": "Three typed cases and one controlled 7.59-second English microphone fixture",
+  "scope": "Six successful reviewed scene turns; earlier unsuccessful attempts are documented, not counted as successes. No exhaustive catalogue claim.",
+  "results": [
+    {
+      "title": "Disclosure Day",
+      "question": "Why are they escaping? They seem very scared. Who are these two people, what put them in danger, and what do the people chasing them want?",
+      "answer": "These two people are Dr. Daniel Kellner and his girlfriend, Jane Blankenship. They are fleeing from agents of the Wardex Corporation because Daniel stole classified data and an extraterrestrial device from his employer, which their pursuers want to recover.",
+      "firstResponseMs": 2515,
+      "completedMs": 4258,
+      "responseLanguage": "en",
+      "followUp": {
+        "question": "Who is that someone comforting Jane? What is his relationship to her? Please give his name, not just what he looks like.",
+        "answer": "That is Dr. Daniel Kellner, comforting Jane. He is her boyfriend.",
+        "completeMs": 2610,
+        "sameConversation": true
+      },
+      "latencyWithinBudget": true,
+      "key": "disclosure",
+      "review": "Reviewed complete reply against the selected source, earlier timed dialogue and available independent story evidence."
+    },
+    {
+      "title": "Get Out",
+      "question": "Is Chris here as a hired photographer or as a personal guest? Why would the earlier conversation with the woman holding a teacup make him uneasy now, and do we already know the whole reason behind what she did?",
+      "answer": "Chris is here as a personal guest of his girlfriend, Rose Armitage, to meet her parents for the weekend. The conversation with Missy makes him uneasy because she manipulated him into a hypnotic state using a teacup trigger, leaving him paralyzed in the \"sunken place\" and bringing up painful memories of his mother. At this point, the full reason behind her actions is not yet explained.",
+      "firstResponseMs": 1592,
+      "completedMs": 4008,
+      "responseLanguage": "en",
+      "latencyWithinBudget": true,
+      "key": "getout",
+      "review": "Reviewed complete reply against the selected source, earlier timed dialogue and available independent story evidence."
+    },
+    {
+      "title": "The Good Place",
+      "question": "If she never killed anybody, why is the man helping her still so uncomfortable? Name both of them, connect this to the earlier mix-up and his job, and explain why that suspiciously specific wallet story does not settle the issue in her favor.",
+      "answer": "Chidi Anagonye is deeply uncomfortable because Eleanor Shellstrop reveals she was a dishonest person who defrauded the sick and elderly, which completely contradicts the saintly lawyer she was mistaken for. Because Chidi was a professor of ethics and moral philosophy who values truth, he cannot help her hide this mistake. Her specific story about taking cash from a found wallet only confirms his suspicion that she is indeed selfish.",
+      "firstResponseMs": 1431,
+      "completedMs": 4571,
+      "responseLanguage": "en",
+      "followUp": {
+        "question": "So does that mean Tahani is definitely a morally better person, or is that only what this system and the characters currently assume?",
+        "answer": "It is only what the afterlife system and the characters assume, not objective proof. The system calculates moral worth based on a person's life actions, but as Eleanor's presence shows, its automated judgment can be fundamentally flawed.",
+        "completeMs": 3423,
+        "sameConversation": true
+      },
+      "latencyWithinBudget": true,
+      "key": "goodplace",
+      "review": "Reviewed complete reply against the selected source, earlier timed dialogue and available independent story evidence."
+    },
+    {
+      "title": "Get Out",
+      "question": "Who is the man with the camera? Is he working here, or visiting his girlfriend? Why is he uneasy about her mother?",
+      "answer": "The man with the camera is Chris Washington, and he is visiting his girlfriend, Rose Armitage, at her family's home. He is uneasy about Rose's mother, Missy, because she manipulated him into a hypnotherapy session, leaving him feeling paralyzed and trapped in a dark void.",
+      "firstResponseMs": 10758,
+      "completedMs": 12310,
+      "responseLanguage": "en",
+      "recognizedQuestion": "Who is the man with the camera? Is he working here or visiting his girlfriend? Why is he uneasy about her mother?",
+      "sameConversation": true,
+      "latencyWithinBudget": true,
+      "key": "getoutvoice",
+      "review": "Reviewed complete reply against the selected source, earlier timed dialogue and available independent story evidence.",
+      "renderedSamples": 325920
+    }
+  ]
+}

@@ -47,12 +47,48 @@ class Talk190SceneDeviceTest {
             if(args.getString("sceneSubtitles")=="off")player.talkCommand(command("subtitle_language").put("stringValue","off"))
             for((index,position) in positions.withIndex()) {
                 withContext(Dispatchers.Main) { player.closeTalk() }
-                player.talkCommand(command("seek",(position-36).coerceAtLeast(0.0)))
+                val warmup=args.getString("sceneWarmupSeconds")?.toDoubleOrNull()?:36.0
+                player.talkCommand(command("seek",(position-warmup.coerceIn(0.0,36.0)).coerceAtLeast(0.0)))
                 player.talkCommand(command("resume"))
                 withTimeout(90000) { while(withContext(Dispatchers.Main) { player.playbackController!!.currentPosition/1000.0 < position })delay(80) }
                 player.talkCommand(command("pause"))
                 val inspectOnly=args.getString("sceneInspectOnly")=="true"
-                if(!inspectOnly)withContext(Dispatchers.Main) { player.talkVoice.debugTraceInput=true;player.openTalk();assertFalse(player.talkVoice.state.value.textMode);if(args.getString("sceneSpeechFixture")==null){player.talkVoice.setTextMode(true);player.openTalk()} }
+                if(!inspectOnly){
+                    withContext(Dispatchers.Main){player.talkVoice.debugTraceInput=true}
+                    if(args.getString("sceneUseToolbar")=="true"){
+                        val automation=i.uiAutomation
+                        fun find(node:android.view.accessibility.AccessibilityNodeInfo?):android.view.accessibility.AccessibilityNodeInfo? {
+                            if(node==null)return null
+                            if(node.contentDescription?.toString()=="Talk")return node
+                            for(n in 0 until node.childCount)find(node.getChild(n))?.let{return it}
+                            return null
+                        }
+                        if(find(automation.rootInActiveWindow)==null){
+                            val display=context.resources.displayMetrics;val began=android.os.SystemClock.uptimeMillis()
+                            for(action in listOf(android.view.MotionEvent.ACTION_DOWN,android.view.MotionEvent.ACTION_UP)){
+                                val event=android.view.MotionEvent.obtain(began,android.os.SystemClock.uptimeMillis(),action,display.widthPixels/2f,display.heightPixels/2f,0)
+                                event.source=android.view.InputDevice.SOURCE_TOUCHSCREEN
+                                try{automation.injectInputEvent(event,true)}finally{event.recycle()}
+                            }
+                        }
+                        val deadline=android.os.SystemClock.elapsedRealtime()+4000
+                        var control=find(automation.rootInActiveWindow)
+                        while(control==null&&android.os.SystemClock.elapsedRealtime()<deadline){delay(50);control=find(automation.rootInActiveWindow)}
+                        assertNotNull("Talk must be available beside the player controls",control)
+                        screenshot("talk192-player-toolbar-$titleCase.png")
+                        val target=android.graphics.Rect();requireNotNull(control).getBoundsInScreen(target)
+                        assertFalse("Talk must have a visible touch target",target.isEmpty)
+                        val tapAt=android.os.SystemClock.uptimeMillis()
+                        for(action in listOf(android.view.MotionEvent.ACTION_DOWN,android.view.MotionEvent.ACTION_UP)){
+                            val event=android.view.MotionEvent.obtain(tapAt,android.os.SystemClock.uptimeMillis(),action,target.exactCenterX(),target.exactCenterY(),0)
+                            event.source=android.view.InputDevice.SOURCE_TOUCHSCREEN
+                            try{automation.injectInputEvent(event,true)}finally{event.recycle()}
+                        }
+                        delay(100)
+                        withContext(Dispatchers.Main){assertTrue("The real toolbar tap must open Talk",player.talkVisible)}
+                    }else withContext(Dispatchers.Main){player.openTalk()}
+                    withContext(Dispatchers.Main){assertFalse(player.talkVoice.state.value.textMode);if(args.getString("sceneSpeechFixture")==null){player.talkVoice.setTextMode(true);player.openTalk()}}
+                }
                 val scene=withContext(Dispatchers.Main) { player.prepareTalkScene()!! }
                 val receipt=JSONObject().put("title",title.third).put("scene",scene.metadata)
                     .put("player",withContext(Dispatchers.Main) { player.talkSnapshot() });receipts.put(receipt)
@@ -110,7 +146,8 @@ class Talk190SceneDeviceTest {
                     assertTrue("Missing temporal image evidence; see talk190-live-$titleCase.json",(player.talkVoice.debugSceneContext?.optJSONArray("attachedCurrentFrameSeconds")?.length()?:0)>=3 || player.talkVoice.debugSceneContext?.optJSONObject("groundedObservation")?.optBoolean("titleBlind")==true)
                 assertTrue(answer,answer.length>100)
                 assertFalse(answer,Regex("(?i)trouble.{0,45}retriev|unable to (?:access|see)|cannot (?:access|see)|can't (?:access|see)|don't have.{0,20}(?:scene|details)").containsMatchIn(answer))
-                assertTrue("Scene answer took $first ms: $answer",first in 1..if(speech==null)12000 else 25000)
+                val timely=first in 1..if(speech==null)12000 else 25000
+                receipt.put("latencyWithinBudget",timely)
                 if(speech!=null){assertTrue("Missing rendered spoken scene answer",player.talkVoice.debugRenderedSamples>10000);receipt.put("speechInput",true).put("renderedSamples",player.talkVoice.debugRenderedSamples).put("recognizedQuestion",player.talkVoice.state.value.lines.lastOrNull{it.role=="user"}?.text)}
                 assertTrue(player.talkVoice.debugSceneFrames>0)
                 if(args.getString("sceneSubtitles")=="off") {
@@ -158,6 +195,10 @@ class Talk190SceneDeviceTest {
                     delay(600);screenshot("talk191-followup-$titleCase.png")
                 }
 
+                withContext(Dispatchers.Main){player.talkScene()}?.frames?.forEachIndexed{n,frame->
+                    File(context.getExternalFilesDir(null),"talk192-final-$titleCase-$index-$n.jpg").writeBytes(frame.jpeg)
+                }
+                assertTrue("Scene answer took $first ms: $answer",timely)
                 assertTrue("Missing required points $missing: $answer",missing.isEmpty())
             }
         } } finally {
@@ -169,6 +210,8 @@ class Talk190SceneDeviceTest {
                 .put("questionSentAt",nativePlayer!!.talkVoice.debugQuestionSentAt)
                 .put("finalAudio",nativePlayer!!.talkVoice.debugAudioSnapshot())
                 .put("observationIssue",nativePlayer!!.talkVoice.debugSceneObservationIssue)
+                .put("storyIssue",nativePlayer!!.talkVoice.javaClass.methods.firstOrNull{it.name.startsWith("getDebugSceneStoryIssue")}?.invoke(nativePlayer!!.talkVoice))
+                .put("storyMs",nativePlayer!!.talkVoice.javaClass.methods.firstOrNull{it.name.startsWith("getDebugSceneStoryMs")}?.invoke(nativePlayer!!.talkVoice))
                 .put("inputTrace",JSONArray(nativePlayer!!.talkVoice.debugInputTrace.toList()))
                 .put("allLines",JSONArray(nativePlayer!!.talkVoice.state.value.lines.map { JSONObject().put("role",it.role).put("text",it.text) }))
             File(context.getExternalFilesDir(null),"talk190-live-$titleCase.json").writeText(receipts.toString(2))

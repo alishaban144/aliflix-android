@@ -178,6 +178,13 @@ export class TmdbClient {
         : 'keywords,credits,external_ids,reviews,videos,release_dates,recommendations,similar',
     });
   }
+  storyIdentity(type:MediaType,id:number):Promise<TmdbDetails>{
+    return this.request(`/${type}/${id}`,{language:'en-US',append_to_response:type==='movie'?'credits':'external_ids'},3600);
+  }
+  async episodeCast(id:number,season:number,episode:number){
+    const result=await this.request<{cast?:Array<{name:string;character?:string}>;guest_stars?:Array<{name:string;character?:string}>}>(`/tv/${id}/season/${season}/episode/${episode}/credits`,{language:'en-US'},3600);
+    return [...(result.cast||[]),...(result.guest_stars||[])];
+  }
   externalIds(type: MediaType, id: number): Promise<TmdbExternalIds> {
     return this.request(`/${type}/${id}/external_ids`);
   }

@@ -39,7 +39,7 @@ import com.aliflix.app.ui.common.rememberMobileMotionEnabled
 @Composable
 internal fun MobilePlayerActionHeader(title: String, detail: String, episodic: Boolean,
     onBack: () -> Unit, onEpisodes: () -> Unit, onSubtitles: () -> Unit,
-    onRotate: () -> Unit, onMore: () -> Unit, onQuality: (() -> Unit)?, modifier: Modifier) {
+    onRotate: () -> Unit, onMore: () -> Unit, onQuality: (() -> Unit)?, modifier: Modifier, onTalk: (() -> Unit)? = null) {
     BoxWithConstraints(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
         val compact = maxWidth < 640.dp
         val shortViewport = maxHeight < 400.dp
@@ -55,6 +55,7 @@ internal fun MobilePlayerActionHeader(title: String, detail: String, episodic: B
                 if (episodic) PlayerLineAction(PlayerActionGlyph.Episodes,"Episodes",onEpisodes)
                 PlayerLineAction(PlayerActionGlyph.Captions,"Subtitles",onSubtitles)
                 onQuality?.let { PlayerLineAction(PlayerActionGlyph.Quality,"Quality",it) }
+                onTalk?.let { PlayerLineAction(PlayerActionGlyph.Talk,"Talk",it) }
                 PlayerLineAction(PlayerActionGlyph.Rotate,"Rotate",onRotate)
                 PlayerLineAction(PlayerActionGlyph.More,"More",onMore)
             }
@@ -96,7 +97,7 @@ internal fun MobilePlayerActionHeader(title: String, detail: String, episodic: B
     }
 }
 
-private enum class PlayerActionGlyph { Episodes, Captions, Quality, Rotate, More }
+private enum class PlayerActionGlyph { Episodes, Captions, Quality, Talk, Rotate, More }
 
 @Composable
 private fun PlayerLineAction(glyph: PlayerActionGlyph, label: String, onClick: () -> Unit) {
@@ -144,6 +145,10 @@ private fun PlayerLineAction(glyph: PlayerActionGlyph, label: String, onClick: (
                         drawPath(p,ink,style = stroke)
                         path(Offset(13f,2.5f),Offset(18f,3f),Offset(21f,6f))
                         path(Offset(21f,2.5f),Offset(21f,6f),Offset(17.5f,6f))
+                    }
+                    PlayerActionGlyph.Talk -> {
+                        drawCircle(ink,9f,Offset(12f,12f),style=stroke)
+                        line(9f,10.2f,9f,13.8f);line(15f,10.2f,15f,13.8f)
                     }
                     PlayerActionGlyph.More -> listOf(5f,12f,19f).forEach { x -> drawCircle(ink,1.45f,Offset(x,12f)) }
                 }

@@ -45,7 +45,7 @@ internal fun talkAppContext(context:Context):JSONObject {
                 .put("progressAction","download_work").put("cancelAction","cancel_download_work").put("verification","native source verification when required").put("queuedIsCompleted",false))
             .put("voice",JSONObject().put("action","set_voice").put("choices",JSONArray(VOICES)).put("takesEffect","new_session_before_acknowledgement"))
             .put("library",JSONArray(listOf("title_state","library_state","save","unsave","favorite","unfavorite","dislike","undo_dislike","batch_library","undo")))
-            .put("player",JSONArray((talkPlayerCommands+setOf("play","execute_task","task_state","cancel_task","scene_context","scene_recall")).toList()))
+            .put("player",JSONArray((talkPlayerCommands+setOf("play","execute_task","task_state","cancel_task","scene_context","scene_recall","scene_story")).toList()))
             .put("scene",JSONObject().put("tool","scene_context").put("recallTool","scene_recall")
                 .put("evidence","Recent and independently retrieved earlier video frames, timed captions retrieved independently of subtitle display, played dialogue and chronological transcript through the current playhead; source-scoped, local and bounded")
                 .put("rememberedFrom","The whole episode from its beginning, including transcript sections skipped by a seek")

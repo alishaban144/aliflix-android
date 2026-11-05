@@ -17,6 +17,9 @@ internal interface TalkPlayerHost {
     fun talkRecall(query: String): JSONObject? = null
     suspend fun prepareTalkRecall(query: String, fullStory: Boolean = false): JSONObject? = talkRecall(query)
     fun talkRecallFrames(query: String): List<TalkSceneFrame> = emptyList()
+    /** Larger chronological prefix for the independent named-story analysis;
+     * never pasted wholesale into the latency-sensitive Live conversation. */
+    fun talkStoryEvidence(): JSONObject? = talkRecall("current scene")
 }
 
 internal object TalkPlayerConnection {

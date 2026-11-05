@@ -70,6 +70,13 @@ class TalkSceneContextTest {
         assertFalse(talkSceneQuestion("Lower the volume"))
         assertFalse(talkSceneQuestion("Seek to three minutes and resume"))
     }
+    @Test fun indirectPlayerFollowUpsRetainTheSceneEvidenceContract() {
+        for(question in listOf("So does that mean she is definitely better, or is that an assumption?",
+            "Is either claim actually proved?", "What about her reason for hiding it?",
+            "But could he have known that already?")) assertTrue(question,talkSceneQuestion(question))
+        assertFalse(talkNeedsCurrentSceneObservation("So does that mean she is definitely better, or is that an assumption?"))
+        assertFalse(talkSceneQuestion("Recommend a comedy"))
+    }
     @Test fun sceneAudioIsARealBoundedWaveAndExcludesDecodeAhead() {
         val frames = (0 until 800).map { index -> ShortArray(320) { index.toShort() } }
         val clip = playedSceneAudio(10.0, frames, 24.0)!!

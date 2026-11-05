@@ -1,5 +1,18 @@
 package com.aliflix.app.talk
 
+/** Provider UI sidebands are not part of the viewer's answer, including when
+ * their opening tag arrives across several transcription fragments. */
+internal fun talkVisibleAnswer(text:String):String {
+    if(talkOnlyStageDirections(text))return ""
+    val clean=Regex("(?is)<LMDX\\b[^>]*>.*?(?:</LMDX\\s*>|$)").replace(text,"")
+    val start=clean.lastIndexOf('<')
+    return (if(start>=0&&"<LMDX>".startsWith(clean.substring(start),ignoreCase=true))clean.substring(0,start)else clean).trimEnd()
+}
+
+/** A provider's silence marker is not an answer to the pending question. */
+internal fun talkOnlyStageDirections(text:String):Boolean =
+    Regex("(?is)^\\s*<no\\s+speech>\\s*(?:\\{pause\\}\\s*)*$").matches(text)
+
 /** One display reply belongs to a user turn, across provider/tool generations. */
 internal class TalkChatReply {
     private var prefix=""
@@ -23,7 +36,7 @@ internal class TalkChatReply {
             sources=(sources+evidence).distinctBy{it.url}.take(12)
         }
     }
-    fun line()=TalkLine("assistant",join(prefix,segment).takeLast(6000),sources,titles=titles)
+    fun line()=TalkLine("assistant",talkVisibleAnswer(join(prefix,segment)).takeLast(6000),sources,titles=titles)
     fun upsert(lines:List<TalkLine>):List<TalkLine> {
         val boundary=lines.indexOfLast{it.role=="user"}
         val index=(boundary+1 until lines.size).firstOrNull{lines[it].role=="assistant"}
