@@ -77,6 +77,16 @@ it('retains relevant early setup and the current exchange inside a bounded chron
  expect(result.request.dialogue.reduce((sum,row)=>sum+row[2].length,0)).toBeLessThanOrEqual(16000);
  expect(result.request.transcriptComplete).toBe(false);
 });
+it('uses research only to find an already-present earlier causal clue without enlarging the transcript budget',()=>{
+ const request=q();request.question='Why is Jane worried about her medical bag?';
+ request.dialogue=Array.from({length:1000},(_,i)=>[i,i+.5,('Jane Avery discusses ordinary work '+i+' ').repeat(3)]);
+ request.dialogue[650]=[650,650.5,'I may have given too much morphine.'];
+ request.dialogue[999]=[999,999.5,'Where is the medical bag?'];
+ const expanded=budgetStoryEvidence(request,{...sources,evidence:[{...sources.evidence[0],text:'Jane worries about the medical bag because of morphine. A later secret will be revealed.'}]});
+ expect(expanded.request.dialogue.map(row=>row[2]).join(' ')).toContain('too much morphine');
+ expect(expanded.request.dialogue.map(row=>row[2]).join(' ')).not.toContain('later secret');
+ expect(expanded.request.dialogue.reduce((sum,row)=>sum+row[2].length,0)).toBeLessThanOrEqual(16000);
+});
 it('reuses compiled same-cut memory across follow-ups without replaying an old answer or crossing a source revision',async()=>{
  await runInDurableObject(env.TALK_SESSIONS.getByName('free-story-cache-'+crypto.randomUUID()),async(_,state)=>{
   const namespace={getByName:()=>({storySources:async()=>sources,acquireGeminiBudget:async()=>({allowed:true,lease:'owned'}),releaseGeminiBudget:async()=>{},blockGeminiBudget:async()=>{}})};
