@@ -178,7 +178,9 @@ import kotlin.math.roundToInt
                 }
             }
         }
-        Box(Modifier.absoluteOffset { IntOffset(orbX.roundToInt(),orbY.roundToInt()) }.then(orbTransition).size(orbSize).measured("player-orb").semantics {
+        // Clip the interaction layer too: clipping only the halo Canvas leaves
+        // Compose's bounded pressed indication as a visible rectangular square.
+        Box(Modifier.absoluteOffset { IntOffset(orbX.roundToInt(),orbY.roundToInt()) }.then(orbTransition).size(orbSize).clip(CircleShape).testTag("talk-player-orb-container").measured("player-orb").semantics {
             contentDescription="Talk controls";stateDescription=appearance.label
             customActions=listOf(CustomAccessibilityAction("Move to other side") { dragX=if(orbX>maxX/2)-maxX else 0f;true })
         }.clickable(role=Role.Button,onClickLabel=if(controls)"Collapse conversation" else "Expand conversation") { controls=!controls;if(!controls)returnToVoice() }

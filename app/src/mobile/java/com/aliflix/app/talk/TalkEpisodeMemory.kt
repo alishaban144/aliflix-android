@@ -6,6 +6,22 @@ import org.json.JSONObject
 import java.util.Locale
 import kotlin.math.max
 
+/** All earlier lines, with compact source-relative timestamps. Precise cue ends
+ * remain available through scene_recall; repeated JSON numbers need not consume
+ * the Live conversation's token budget. */
+internal fun compactTalkStoryForLive(recall:JSONObject):JSONObject {
+    val story=recall.optJSONObject("storyThroughAnchor")?:return recall
+    val rows=story.optJSONArray("dialogue")?:return recall
+    val text=buildString { for(i in 0 until rows.length()) {
+        val row=rows.getJSONArray(i)
+        append(String.format(java.util.Locale.ROOT,"%.2f",row.getDouble(0))).append('\t')
+        append(row.getString(2).replace('\n',' ')).append('\n')
+    } }
+    story.remove("dialogue");story.put("timedTranscript",text)
+        .put("timingFormat","Each line begins with source-relative seconds. Every cue ends at/before this pause. Exact cue ends are available through scene_recall.")
+    return recall
+}
+
 /** The viewer's whole episode transcript is available locally; the live model gets only the
  * question-relevant slice, always clipped at the current playhead. */
 internal enum class TalkRecallMode { CONTEXT, PREVIOUS, TIMESTAMP, RECAP, SEARCH }
@@ -227,6 +243,7 @@ internal fun buildTalkRecallPacket(
     visualBeatSeconds: List<Double>,
     responseLanguage: String? = null,
     includeWholeStory: Boolean = false,
+    characterBudget: Int = 12_000,
 ): JSONObject {
     val scenes = buildTalkCueScenes(cues, anchorSeconds)
     val selected = selectScenes(scenes, request, anchorSeconds)
@@ -249,7 +266,7 @@ internal fun buildTalkRecallPacket(
     }, anchorSeconds)
         else if (focusedPrevious) buildTalkCueScenes(cues.filter { it.endSeconds >= anchorSeconds - 600 }, anchorSeconds)
         else if (storyCeiling == anchorSeconds) scenes else buildTalkCueScenes(cues, storyCeiling)
-    val story = talkStoryTranscript(storyScenes)
+    val story = talkStoryTranscript(storyScenes, characterBudget)
         .put("requestedThroughSeconds", storyCeiling).put("availableThroughSeconds", anchorSeconds)
         .put("coverage", if (focusedQuestion) "question_context" else if (focusedPrevious) "recent_context" else "chronological_prefix")
         .put("fullPrefixAvailable", captionSource !in setOf("none", "observed_captions"))
@@ -296,7 +313,7 @@ internal fun buildTalkRecallPacket(
         .put("currentScene", currentScene?.let { sceneJson(it, "current", request, watchedRanges, visualBeatSeconds, summaryOnly = supplied(it)) })
         .put("latestDialogue", latestDialogue?.let { sceneJson(it, "latest_exchange", request, watchedRanges, visualBeatSeconds, summaryOnly = supplied(it)) })
         .put("dialogueWindowsAreSceneBoundaries", false)
-        .put("participantIdentities", "Unverified: these captions do not attribute speakers or bind character names to faces. Use roles/descriptions unless exact dialogue or separately grounded evidence identifies the participant. Never assign a name or spouse relationship from remembered cast/plot familiarity.")
+        .put("participantIdentities", "Captions alone do not attribute speakers. Use independently corroborated storyUnderstanding character bindings and earlier dialogue/story evidence to identify participants; a name need not be spoken in this exact shot. Retrieve a missing identity with scene_story, rather than refusing because this subtitle is unlabelled. Never guess from cast order or an unrelated face.")
         .put("scenes", JSONArray(selected.map { sceneJson(it.scene, it.role, request, watchedRanges, visualBeatSeconds, summaryOnly = supplied(it.scene)) }))
         .put("evidenceGaps", JSONArray(gaps))
         .put("responseLanguage", responseLanguage ?: JSONObject.NULL)
@@ -358,4 +375,4 @@ private const val scopeInstruction =
         "storyThroughAnchor supplies chronological earlier dialogue even when the question uses different words or another language. Selected scenes are retrieval hints, not the limit of the available story. Connect supported earlier causes to current actions, and distinguish evidence from interpretation. " +
         "For a previous-scene or timestamp question, explain the supported action, who was involved, and its immediate significance. " +
         "Do not list objects or give a generic synopsis. If a visual detail was not observed, say the answer is based on the transcript. " +
-        "Answer in the viewer's latest question language and do not switch because the film audio or captions use another language."
+        "For voice retain the locked responseLanguage until explicitly changed; for typed questions use the intentional question language. Film audio and captions never select the response language."

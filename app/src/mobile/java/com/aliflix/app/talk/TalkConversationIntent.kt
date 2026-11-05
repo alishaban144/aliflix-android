@@ -56,7 +56,7 @@ internal fun talkExplicitComparisonTitles(question:String):List<String> {
 /** High-confidence speech-act boundaries, not an extra permission dialog.
  * Model-proposed actions cannot turn a quote, hypothetical or negation into a write. */
 internal fun talkActionRequested(action:String,question:String):Boolean {
-    if(action in setOf("show_card","title_state","player_state","scene_context","scene_recall","downloads_state","library_state","download_work"))return true
+    if(action in setOf("show_card","title_state","player_state","scene_context","scene_recall","scene_story","downloads_state","library_state","download_work"))return true
     val q=question.lowercase(Locale.ROOT).replace('’','\'').trim()
 
     if(Regex("^(?:what if|what would|how (?:do|can|would)|if i (?:ask|asked|say|said|were|wanted|told)|suppose|hypothetically|imagine that)\\b").containsMatchIn(q))return false

@@ -613,6 +613,7 @@ internal fun NativePlayerScreen(
                         sheet = "Quality"
                         interaction++
                     },
+                    onTalk = { player?.pause(); interaction++; onTalk() },
                     onRotate = {
                         onRotate()
                         interaction++
@@ -839,11 +840,6 @@ internal fun NativePlayerScreen(
         MobilePlayerMoreSheet(
             synchronizedPlayback = partyState.active,
             onWatchTogether = onWatchTogether,
-            onTalk = {
-                player?.pause()
-                moreVisible = false
-                onTalk()
-            },
             germanEdition = germanEdition,
             onGermanEdition = onGermanEdition,
             visible = moreVisible,

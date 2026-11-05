@@ -165,7 +165,15 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private var sceneObservation: Deferred<JSONObject?>? = null
     private var sceneUnavailableUntil=0L
     internal var debugOfflineConnection=false
+    private val storyContext by lazy { TalkStoryContext(scope) { body ->
+        body.getJSONObject("story").put("responseLanguage",responseLanguage?:"en")
+        body.put("session",backendSession?:error("No session for story context"))
+        post("story",body,timeout=25000)
+    } }
+    internal val debugSceneStoryIssue get() = storyContext.issue
+    internal val debugSceneStoryMs get() = storyContext.elapsedMs
     private fun clearSceneObservations() {
+        storyContext.clear()
         sceneUnavailableUntil=0L
         sceneObservation?.cancel(); sceneObservation = null; sceneObservationKey = ""
         sceneObservations.clear(); sentSceneKey = ""
@@ -207,6 +215,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }
     private suspend fun awaitSceneObservation(): TalkSceneContext? {
         val scene = TalkPlayerConnection.current()?.prepareTalkScene() ?: return null
+        if(!(BuildConfig.DEBUG&&debugOfflineConnection)&&conversationContext.optInt("companionVersion")>=16)
+            TalkPlayerConnection.current()?.let{storyContext.prepare(scene,it)}
+        if(conversationContext.optInt("companionVersion")>=16){scene.metadata.put("groundingState","direct_evidence");return scene}
         val pending = observeScene(scene)
         val observation = withTimeoutOrNull(4_000) { pending.await() }
         if (observation == null && pending.isActive && BuildConfig.DEBUG) debugSceneObservationIssue = "Observation deadline exceeded"
@@ -237,8 +248,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 .put("parts",JSONArray().put(JSONObject().put("text","Native Aliflix state at this turn (data, not a new request): $payload"))))).put("turnComplete",false)))
         }
         TalkPlayerConnection.current()?.talkScene()?.let { scene ->
+            storyContext.attach(scene)
             val question = currentQuestion().ifBlank { lastQuestion }
-            TalkPlayerConnection.current()?.talkRecall(question.ifBlank { "current scene" })?.let { recall ->
+            TalkPlayerConnection.current()?.let{host->if(conversationContext.optInt("companionVersion")>=16)host.talkStoryEvidence() else host.talkRecall(question.ifBlank { "current scene" })}?.let { recall ->
+                if(conversationContext.optInt("companionVersion")>=16)compactTalkStoryForLive(recall)
                 responseLanguage?.let { recall.put("responseLanguage", it) }
                 scene.metadata.put("episodeRecall", recall)
             }
@@ -343,10 +356,12 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if(!permitted)connect()
                 withTimeout(20000){while(!socketReady){check(permitted){"Connection ended"};delay(30)}}
                 answerDeadline.awaiting(45000)
+                if(conversationContext.optInt("companionVersion")>=16)
+                    TalkPlayerConnection.current()?.let{host->host.talkScene()?.let{storyContext.await(it,host)}}
                 sendTurnContext()
                 val parts = JSONArray()
                 if (TalkPlayerConnection.current() != null && (talkSceneQuestion(question) || talkEpisodeRecallQuestion(question))) {
-                    parts.put(JSONObject().put("text", "Native answer contract: answer every part of the viewer's actual question clearly and completely from the attached timed story and video. Explain the supported cause, relevant earlier setup or inference they ask about. A narration of the pause frame is never a substitute for that answer. Resolve visual references (clothing colour, screen position, objects and gestures) against the attached images before connecting them to dialogue. A colour or role in the question may be wrong or ambiguous: correct a false premise or ask a short specific clarification; never invent an absent person, unseen action or physical cause. Distinguish visible action, earlier dialogue and supported inference. If an action occurred between sparse samples, retrieve surrounding video timestamps instead of filling the gap with an expected movement. Retrieve a specifically missing causal link with scene_recall before answering; observed footage alone does not mean the question is fully supported. When explaining a character reasoning, explicitly attribute the conclusion to that character and connect each clue to the inference. A confident character deduction is not objective proof. Cover each requested premise and exception separately. Preserve explicit qualifiers, negations, place names, numbers and conditions when the viewer asks for exact details. Before finishing, check every question clause against the answer, including what is merely claimed versus independently established. Earlier scenes through the pause are allowed. Caption windows are not cinematic scene boundaries. Participant names/faces have not been bound by the app: use roles/descriptions unless exact dialogue or grounded prior evidence establishes identity; never guess a name or spouse relationship from title familiarity. Respond in ${responseLanguage ?: "the viewer's question language"}."))
+                    parts.put(JSONObject().put("text", "Native answer contract: answer every part of the viewer's actual question clearly and completely from the attached timed story and video. Explain the supported cause, relevant earlier setup or inference they ask about. A narration of the pause frame is never a substitute for that answer. Resolve visual references (clothing colour, screen position, objects and gestures) against the attached images before connecting them to dialogue. A colour or role in the question may be wrong or ambiguous: correct a false premise or ask a short specific clarification; never invent an absent person, unseen action or physical cause. Distinguish visible action, earlier dialogue and supported inference. If an action occurred between sparse samples, retrieve surrounding video timestamps instead of filling the gap with an expected movement. Retrieve a specifically missing causal link with scene_recall before answering; observed footage alone does not mean the question is fully supported. When explaining a character reasoning, explicitly attribute the conclusion to that character and connect each clue to the inference. A confident character deduction is not objective proof. Cover each requested premise and exception separately. Preserve explicit qualifiers, negations, place names, numbers and conditions when the viewer asks for exact details. Before finishing, check every question clause against the answer, including what is merely claimed versus independently established. Earlier scenes through the pause are allowed. Caption windows are not cinematic scene boundaries. Use the character names and relationships established in storyUnderstanding, earlier dialogue and corroborated story/scene evidence; the name need not be spoken in this shot. Retrieve a missing identity or plot-level cause with scene_story before declaring it unknown. A cast list alone is not a face binding. Explain what put them in danger and what the pursuer wants; fleeing because they are scared/being chased is circular, not the plot reason. Respond in ${responseLanguage ?: "the viewer's question language"}."))
                 }
                 if(TalkPlayerConnection.current()!=null && Regex("(?i)\\b(?:exact|precise|specifically)\\b").containsMatchIn(question) &&
                     !Regex("(?i)\\b(?:earlier|previous|before|beginning)\\b").containsMatchIn(question)) {
@@ -516,6 +531,13 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         return executeAuthorizedNativeCommand(args)
     }
     private suspend fun executeAuthorizedNativeCommand(args:JSONObject):TalkNativeResult=when(args.optString("action")) {
+        "scene_story" -> {
+            val host=TalkPlayerConnection.current()
+            val scene=host?.prepareTalkScene()
+            val query=args.optString("query").ifBlank{currentQuestion()}
+            if(scene==null||host==null)TalkNativeResult(JSONObject().put("status","no_active_scene"))
+            else TalkNativeResult(storyContext.await(scene,host,query,refresh=true)?:JSONObject().put("status","limited"))
+        }
         "scene_context" -> TalkNativeResult(awaitSceneObservation()?.metadata ?: JSONObject().put("status", "no_active_scene"))
         "scene_recall" -> {
             val host = TalkPlayerConnection.current()
@@ -686,7 +708,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         // Deliberately omit every TMDB text field. Only the viewer's own progress
         // and opaque identifiers are used to look up permitted, independent data.
         val progress = (context.applicationContext as AliflixApplication).playbackProgressStore.entries.value.values.maxByOrNull { it.updatedAtMillis }
-        conversationContext = JSONObject().put("companionVersion",15).put("textMode",state.value.textMode).put("clientDate",java.time.LocalDate.now().toString()).put("locale",Locale.getDefault().toLanguageTag()).put("agentPreferences",agent.preferences()).put("voice",state.value.voice).put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
+        conversationContext = JSONObject().put("companionVersion",16).put("textMode",state.value.textMode).put("clientDate",java.time.LocalDate.now().toString()).put("locale",Locale.getDefault().toLanguageTag()).put("agentPreferences",agent.preferences()).put("voice",state.value.voice).put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
             .put("position", progress?.positionSeconds ?: 0).put("completed", progress?.let { talkPlaybackCompleted(it.positionSeconds,it.durationSeconds,it.completed) } == true)
         progress?.let { p -> conversationContext.put("id", p.media.id).put("type", p.media.type.routeName)
             p.media.imdbId?.takeIf { it.matches(Regex("tt\\d{1,12}")) }?.let { conversationContext.put("imdbId", it) } }
@@ -796,10 +818,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 val minted=if(renewing!=null)post("renew",JSONObject().put("session",renewing).apply{responseLanguage?.let{put("responseLanguage",it)}})
                     else try { post("session",JSONObject().put("context",conversationContext)) }
                     catch (error: TalkHttpException) {
-                        if (error.status != 400 || error.code != "INVALID_REQUEST" || conversationContext.optInt("companionVersion") != 15) throw error
+                        if (error.status != 400 || error.code != "INVALID_REQUEST" || conversationContext.optInt("companionVersion") != 16) throw error
                         // Native story retrieval also works with the published v14 protocol.
                         // Negotiate its smaller observer packet until the server supports v15.
-                        conversationContext.put("companionVersion", 14)
+                        conversationContext.put("companionVersion", 15)
                         post("session",JSONObject().put("context",conversationContext))
                     }
                 if(ticket!=epoch||!permitted)return
@@ -807,7 +829,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             }
             val live=checkNotNull(ephemeral)
             require(live.getString("model")=="gemini-3.8-live" && live.getString("voice")==state.value.voice)
-            TalkPlayerConnection.current()?.talkScene()?.let(::observeScene)
+            if(conversationContext.optInt("companionVersion")<16)TalkPlayerConnection.current()?.talkScene()?.let(::observeScene)
+            else TalkPlayerConnection.current()?.let{host->host.talkScene()?.let{storyContext.prepare(it,host)}}
             localActivityMode=live.optString("inputActivity")=="manual"
             check(localActivityMode){"This client requires explicit microphone activity ownership"}
             if(ticket!=epoch || !permitted) return
@@ -1957,7 +1980,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         val lease=audioLease;audioLease=null;lease?.close();ducked=false
         update {it.copy(phase="Resume",level=0f,sending=false,evidenceStage=TalkEvidenceStage.NONE)}
     }
-    fun pauseSession() { pendingNativeNavigation=null;archiveReadSequence++;continueAfterReconnect=false;markStoppedTurn();textSend?.cancel();textSend=null;suspendSession() }
+    fun pauseSession() {pendingNativeNavigation=null;archiveReadSequence++;continueAfterReconnect=false;markStoppedTurn();textSend?.cancel();textSend=null;suspendSession() }
     override fun close() {
         if(closed)return
         closed=true

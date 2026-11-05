@@ -8,6 +8,7 @@ import { issueLiveToken, TALK_MODEL, TALK_VOICE, boundedJson } from './talkProvi
 import { talkRecommendationPolicy, cachedTalkDiscovery, canRetainTalkResearch, talkRecommendationQuery, talkRecommendationCount, talkChatRecommendationCount, talkSeriesStatus, refineTalkCollection } from './talkIntent';
 import { TalkChat, TalkChatsRequestSchema, talkChatAccountOwner } from './talkChats';
 import { ScenePacketSchema, observePlayerScene } from './talkSceneEvidence';
+import {StoryRequestSchema,retrieveStorySources,understandPlayerStory,playerStoryResearch,type StoryRequest,type StorySources} from './talkStory';
 const MINUTE=60000,DAY=86400000;
 // Starts include legitimate reconnects, chat/voice switches and fresh-turn
 // ownership boundaries, not minutes of generated audio. Forty starts shared
@@ -20,10 +21,10 @@ const requestSchema=z.object({session:z.string().uuid(),question:z.string().max(
 const TitlesRequest=z.object({titles:z.array(z.string().trim().min(1).max(180)).min(1).max(8),kind:z.enum(['movie','tv']).optional(),year:z.number().int().min(1870).max(2200).optional(),dismiss:z.boolean().optional()}).strict();
 export async function talkRoute(request:Request,env:RecommendationEnv):Promise<Response|null> {
  const path=new URL(request.url).pathname;if(!path.startsWith('/v1/talk'))return null;
- if(request.method!=='POST'||!['/v1/talk/session','/v1/talk/scene','/v1/talk/renew','/v1/talk/knowledge','/v1/talk/titles','/v1/talk/close','/v1/talk/viewing','/v1/talk/research','/v1/talk/recommendations','/v1/talk/cancel','/v1/talk/chats'].includes(path))return json({error:'UPDATE_REQUIRED'},426);
+ if(request.method!=='POST'||!['/v1/talk/session','/v1/talk/scene','/v1/talk/story','/v1/talk/renew','/v1/talk/knowledge','/v1/talk/titles','/v1/talk/close','/v1/talk/viewing','/v1/talk/research','/v1/talk/recommendations','/v1/talk/cancel','/v1/talk/chats'].includes(path))return json({error:'UPDATE_REQUIRED'},426);
  try {
   const owner=await verifyIdentity(request.headers.get('Authorization')?.replace(/^Bearer /,'')||'',env.CURSOR_SIGNING_SECRET);
-  const bodyLimit=path.endsWith('/scene')?2300000:24000;
+  const bodyLimit=path.endsWith('/scene')||path.endsWith('/story')?2300000:24000;
   if(Number(request.headers.get('Content-Length')||0)>bodyLimit)return json({error:'REQUEST_LIMIT'},413);
   const bodyRaw=await boundedJson(new Response(request.body),bodyLimit);
   if(path.endsWith('/chats')) {
@@ -36,6 +37,10 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
   }
   if(!(await env.RECOMMENDATION_RATE_LIMITER.limit({key:'talk-live:'+owner.sub})).success)return json({error:'TRY_LATER'},429);
   const user=env.TALK_SESSIONS.getByName('user:'+owner.sub);
+  if(path.endsWith('/story')){
+   const body=z.object({session:z.string().uuid(),story:StoryRequestSchema}).strict().parse(bodyRaw);
+   return json(await user.story(body.session,body.story));
+  }
   if(path.endsWith('/scene')) {
    const body=z.object({session:z.string().uuid(),scene:ScenePacketSchema}).strict().parse(bodyRaw);
    await user.authorizeScene(body.session);
@@ -80,6 +85,31 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
  constructor(ctx:DurableObjectState,env:RecommendationEnv){super(ctx,env);ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS memory (key TEXT PRIMARY KEY,value TEXT NOT NULL,expires INTEGER NOT NULL)');for(const ws of ctx.getWebSockets())ws.close(1012,'Update');}
  private read<T>(key:string):T|undefined {const r=this.ctx.storage.sql.exec<{value:string}>('SELECT value FROM memory WHERE key=? AND expires>?',key,Date.now()).toArray()[0];return r?JSON.parse(r.value):undefined;}
  private put(key:string,value:unknown,expires:number){this.ctx.storage.sql.exec('INSERT OR REPLACE INTO memory VALUES (?,?,?)',key,JSON.stringify(value),expires);}
+ async storySources(q:Pick<StoryRequest,'id'|'kind'|'title'|'season'|'episode'>):Promise<StorySources>{
+  const key='story-source:v2:'+JSON.stringify([q.id,q.kind,q.season,q.episode]);
+  const cached=this.read<StorySources>(key);if(cached)return cached;
+  const result=await retrieveStorySources(this.env,q);
+  this.put(key,result,Date.now()+(result.evidence.length?DAY:5*MINUTE));
+  this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'story-source:%' AND key NOT IN (SELECT key FROM memory WHERE key LIKE 'story-source:%' ORDER BY expires DESC LIMIT 64)");
+  await this.ctx.storage.setAlarm(Date.now()+DAY);return result;
+ }
+ async story(session:string,q:StoryRequest){
+  const state=this.read<Session>('live:'+session);if(!state)throw Error('SESSION_EXPIRED');
+  const active=state.context.activePlayer;
+  if((state.context.companionVersion||0)<16||q.id!==(active?.id||state.context.id)||q.kind!==(active?.type||state.context.type)||
+   q.kind==='tv'&&(q.season!==Number(active?.season??state.context.season)||q.episode!==Number(active?.episode??state.context.episode)))throw Error('SCENE_UNSUPPORTED');
+  const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(q)));
+  const key='story:v1:'+session+':'+Array.from(new Uint8Array(bytes),n=>n.toString(16).padStart(2,'0')).join('');
+  const cached=this.read<Record<string,unknown>>(key);if(cached)return {...cached,cached:true};
+  state.sceneCalls=(state.sceneCalls||0)+1;if(state.sceneCalls>60)throw Error('TOOL_LIMIT');
+  this.put('live:'+session,state,state.expires);
+  const sources=await this.env.TALK_SESSIONS.getByName('public-story-sources-v1').storySources(q);
+  const result=q.mode==='sources'?playerStoryResearch(q,sources):await understandPlayerStory(q,sources,this.env);
+  if(!this.read<Session>('live:'+session))throw Error('SESSION_EXPIRED');
+  this.put(key,result,Math.min(state.expires,Date.now()+(['grounded','research_ready'].includes(result.status)?20*MINUTE:30000)));
+  this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'story:v1:%' AND key NOT IN (SELECT key FROM memory WHERE key LIKE 'story:v1:%' ORDER BY expires DESC LIMIT 12)");
+  return {...result,cached:false};
+ }
  async chats(input:unknown) {
   const request=TalkChatsRequestSchema.parse(input), now=Date.now();
   if(request.action==='save') {

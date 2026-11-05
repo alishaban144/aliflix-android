@@ -115,6 +115,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         return sceneMemory.recall(query, fullStory)
     }
     override fun talkRecallFrames(query: String) = sceneMemory.recallFrames(query)
+    override fun talkStoryEvidence() = sceneMemory.recall("current scene", fullStory=true, characterBudget=120_000)
     override suspend fun prepareTalkScene() = sceneMemory.current()?.takeIf { controller?.isPlaying != true && it.frames.isNotEmpty() && it.metadata.optBoolean("audioChecked") } ?: sceneMemory.capture(includeAudio = true)
     private var talkPreparationPaused = false
     private val talkPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
@@ -589,7 +590,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                     }, { showProviderVerification = false })
                 }
                 NativePlayerScreen(
-                    onTalk = ::openTalk,
+                    onTalk = { if(talkVisible)closeTalk()else openTalk() },
                     onWatchTogether = {
                         if (ui.external) ui = ui.copy(message = "Stop casting to start Watch Together")
                         else selection?.let { startActivity(Intent(this@NativePlayerActivity, com.aliflix.app.party.WatchPartyActivity::class.java).putExtra("selection", it.nativeJson())) }

@@ -47,7 +47,8 @@ class Talk190SceneDeviceTest {
             if(args.getString("sceneSubtitles")=="off")player.talkCommand(command("subtitle_language").put("stringValue","off"))
             for((index,position) in positions.withIndex()) {
                 withContext(Dispatchers.Main) { player.closeTalk() }
-                player.talkCommand(command("seek",(position-36).coerceAtLeast(0.0)))
+                val warmup=args.getString("sceneWarmupSeconds")?.toDoubleOrNull()?:36.0
+                player.talkCommand(command("seek",(position-warmup.coerceIn(0.0,36.0)).coerceAtLeast(0.0)))
                 player.talkCommand(command("resume"))
                 withTimeout(90000) { while(withContext(Dispatchers.Main) { player.playbackController!!.currentPosition/1000.0 < position })delay(80) }
                 player.talkCommand(command("pause"))
@@ -169,6 +170,7 @@ class Talk190SceneDeviceTest {
                 .put("questionSentAt",nativePlayer!!.talkVoice.debugQuestionSentAt)
                 .put("finalAudio",nativePlayer!!.talkVoice.debugAudioSnapshot())
                 .put("observationIssue",nativePlayer!!.talkVoice.debugSceneObservationIssue)
+                .put("storyIssue",nativePlayer!!.talkVoice.debugSceneStoryIssue).put("storyMs",nativePlayer!!.talkVoice.debugSceneStoryMs)
                 .put("inputTrace",JSONArray(nativePlayer!!.talkVoice.debugInputTrace.toList()))
                 .put("allLines",JSONArray(nativePlayer!!.talkVoice.state.value.lines.map { JSONObject().put("role",it.role).put("text",it.text) }))
             File(context.getExternalFilesDir(null),"talk190-live-$titleCase.json").writeText(receipts.toString(2))
