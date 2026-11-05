@@ -170,6 +170,25 @@ class TalkWireReplayDeviceTest {
         }
     }
 
+    @Test fun aSilenceMarkerAfterLookupDoesNotCompleteOrReplaceTheQuestion() {
+        val session=compose.activity.voice
+        compose.runOnUiThread {
+            session.debugPreviewUserQuestion("Who is comforting her, and why?")
+            val conversation=session.state.value.conversationId
+            fun set(name:String,value:Any)=TalkVoiceSession::class.java.getDeclaredField(name).apply{isAccessible=true}.set(session,value)
+            set("permitted",true);set("socketReady",true);set("localAudioValidation",true)
+            set("awaitingToolAnswer",true);set("pendingToolReply",JSONObject().put("status","research_ready"));set("toolAnswerNudges",0)
+            session.debugReplayServerMessage(JSONObject("""{"serverContent":{"outputTranscription":{"text":"<no speech>{pause}"},"generationComplete":true,"turnComplete":true}}"""))
+            assertFalse(session.state.value.answerComplete)
+            assertEquals(1,session.debugToolCalls["empty_lookup_answer_retry"])
+            assertFalse(session.state.value.lines.any{it.role=="assistant"&&it.text.contains("<no speech>")})
+            session.debugReplayServerMessage(JSONObject("""{"serverContent":{"outputTranscription":{"text":"Daniel, her boyfriend, is reassuring her after the escape."},"generationComplete":true,"turnComplete":true}}"""))
+            assertTrue(session.state.value.answerComplete)
+            assertEquals(conversation,session.state.value.conversationId)
+            assertTrue(session.state.value.lines.last().text.startsWith("Daniel"))
+            assertEquals(1,session.debugToolCalls["empty_lookup_answer_retry"])
+        }
+    }
     @Test fun stoppingAPendingReplyClearsOnlyResponseOwnershipAndKeepsTheConversation() {
         val session=compose.activity.voice
         compose.runOnUiThread {

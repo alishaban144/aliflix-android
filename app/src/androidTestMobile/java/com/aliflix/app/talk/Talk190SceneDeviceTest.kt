@@ -76,7 +76,16 @@ class Talk190SceneDeviceTest {
                         while(control==null&&android.os.SystemClock.elapsedRealtime()<deadline){delay(50);control=find(automation.rootInActiveWindow)}
                         assertNotNull("Talk must be available beside the player controls",control)
                         screenshot("talk192-player-toolbar-$titleCase.png")
-                        assertTrue(requireNotNull(control).performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK))
+                        val target=android.graphics.Rect();requireNotNull(control).getBoundsInScreen(target)
+                        assertFalse("Talk must have a visible touch target",target.isEmpty)
+                        val tapAt=android.os.SystemClock.uptimeMillis()
+                        for(action in listOf(android.view.MotionEvent.ACTION_DOWN,android.view.MotionEvent.ACTION_UP)){
+                            val event=android.view.MotionEvent.obtain(tapAt,android.os.SystemClock.uptimeMillis(),action,target.exactCenterX(),target.exactCenterY(),0)
+                            event.source=android.view.InputDevice.SOURCE_TOUCHSCREEN
+                            try{automation.injectInputEvent(event,true)}finally{event.recycle()}
+                        }
+                        delay(100)
+                        withContext(Dispatchers.Main){assertTrue("The real toolbar tap must open Talk",player.talkVisible)}
                     }else withContext(Dispatchers.Main){player.openTalk()}
                     withContext(Dispatchers.Main){assertFalse(player.talkVoice.state.value.textMode);if(args.getString("sceneSpeechFixture")==null){player.talkVoice.setTextMode(true);player.openTalk()}}
                 }

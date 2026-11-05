@@ -68,7 +68,10 @@ internal fun sceneReplayStart(anchor: Double, dialogue: List<Pair<Double, Double
 
 internal fun talkSceneQuestion(question: String): Boolean = Regex(
     "(?i)\\b(scene|dialogue|dialog|understand|happened|what (?:did|does|is|was|are|were)|why (?:did|does|is|was|are|were)|who (?:is|was)|that (?:line|exchange)|said|meaning|translate|recap|catch me up|szene|passiert|versteh|gesagt|bedeutet|erkl[aä]r)\\b|المشهد|فهم|ماذا حدث|اشرح|قال|ترجم"
-).containsMatchIn(question) || talkVisualReference(question)
+).containsMatchIn(question) || talkVisualReference(question) ||
+    // Player follow-ups often omit "scene" and the character's name. Keep their
+    // evidence/answer contract instead of routing them as a catalogue overview.
+    Regex("(?i)^\\s*(?:(?:so|and|but|then)[, ]+)*(?:is|are|was|were|does|do|did|can|could|would|should|has|have|had|isn't|aren't|doesn't|didn't|what about|how about)\\b").containsMatchIn(question)
 
 internal fun talkVisualReference(question:String):Boolean = Regex("(?i)\\b(?:wearing|dressed in) (?:a |an |the )?(?:red|blue|green|yellow|white|black|pink|purple|orange)\\b|\\b(?:red|blue|green|yellow|white|black|pink|purple|orange) (?:dress|shirt|coat|jacket|woman|man|one)|\\b(?:woman|man|girl|boy|person|one) (?:in|wearing|on the|beside|next to)|\\b(?:that|this|the) (?:cup|glass|watch|phone|bag|suitcase|shoe|hat|ring|photograph|photo|door|window)|\\b(?:left|right) (?:side|hand|corner)\\b").containsMatchIn(question)
 
