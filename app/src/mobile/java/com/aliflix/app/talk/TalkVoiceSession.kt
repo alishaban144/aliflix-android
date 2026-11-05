@@ -250,7 +250,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         TalkPlayerConnection.current()?.talkScene()?.let { scene ->
             storyContext.attach(scene)
             val question = currentQuestion().ifBlank { lastQuestion }
-            TalkPlayerConnection.current()?.let{host->if(conversationContext.optInt("companionVersion")>=16)host.talkStoryEvidence() else host.talkRecall(question.ifBlank { "current scene" })}?.let { recall ->
+            TalkPlayerConnection.current()?.let{host->host.talkRecall(if(conversationContext.optInt("companionVersion")>=16)storyContext.recallQuery(scene,question.ifBlank{"current scene"})else question.ifBlank{"current scene"})}?.let { recall ->
                 if(conversationContext.optInt("companionVersion")>=16)compactTalkStoryForLive(recall)
                 responseLanguage?.let { recall.put("responseLanguage", it) }
                 scene.metadata.put("episodeRecall", recall)
@@ -326,7 +326,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         archiveReadSequence++
         textSend?.cancel()
         textSend=scope.launch {
-            val replacesPending=quietTurn||state.value.sending||speaking||tools.isNotEmpty()||state.value.phase in listOf("Connecting","Reconnecting")
+            val replacesPending=quietTurn||(state.value.sending&&!state.value.answerComplete)||speaking||tools.isNotEmpty()||state.value.phase in listOf("Connecting","Reconnecting")
             // Live responses have no client turn ID. A new socket gives typed
             // replacements a hard boundary, including queued tool calls and
             // completions that may arrive after the old generation ended.
@@ -1383,7 +1383,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         val line=chatReply.line();val lines=chatReply.upsert(v.lines);assistantLine=lines.indexOfLast{it.role=="assistant"}
                         return@update v.copy(lines=lines,cards=if(line.titles.isEmpty())v.cards else v.cards.show(line.titles,replaceGroup=chatCollectionCommittedTurn==userTurn.get(),limit=24))
                     }
-                    val lines=v.lines.toMutableList();val line=TalkLine("assistant",outputText,finalReferences,titles=pendingTitles)
+                    val lines=v.lines.toMutableList();val line=TalkLine("assistant",talkVisibleAnswer(outputText),finalReferences,titles=pendingTitles)
                     if(assistantLine in lines.indices)lines[assistantLine]=line else{lines.add(line);assistantLine=minOf(lines.lastIndex,63)}
                     v.copy(lines=lines.takeLast(64))
                 }

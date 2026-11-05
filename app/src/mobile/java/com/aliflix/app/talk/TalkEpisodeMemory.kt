@@ -19,6 +19,17 @@ internal fun compactTalkStoryForLive(recall:JSONObject):JSONObject {
     } }
     story.remove("dialogue");story.put("timedTranscript",text)
         .put("timingFormat","Each line begins with source-relative seconds. Every cue ends at/before this pause. Exact cue ends are available through scene_recall.")
+    fun compactWindow(window:JSONObject?) {
+        val lines=window?.optJSONArray("dialogue")?:return
+        val compact=buildString {for(i in 0 until lines.length()) {
+            val row=lines.getJSONObject(i)
+            append(String.format(java.util.Locale.ROOT,"%.2f",row.getDouble("startSeconds"))).append('\t')
+            append(row.getString("text").replace('\n',' ')).append('\n')
+        }}
+        window.remove("dialogue");window.put("timedTranscript",compact)
+    }
+    recall.optJSONArray("scenes")?.let{windows->for(i in 0 until windows.length())compactWindow(windows.getJSONObject(i))}
+    compactWindow(recall.optJSONObject("currentScene"));compactWindow(recall.optJSONObject("latestDialogue"))
     return recall
 }
 

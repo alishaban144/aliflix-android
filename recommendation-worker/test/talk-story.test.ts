@@ -18,7 +18,7 @@ describe('named source-bound player story',()=>{
   const fetcher=vi.spyOn(globalThis,'fetch');const result=playerStoryResearch(request(),sources);
   expect(result.status).toBe('research_ready');expect(fetcher).not.toHaveBeenCalled();
   expect(result.independentResearch[0].id).toBe('wiki-rev-1');expect(result.scope).toContain('FUTURE'.toLowerCase());
-  expect(result.mentionedCharacters.map(c=>c.name)).not.toContain('Future Identity');
+  expect(result.mentionedCharacters).not.toContain('Future Identity');
   expect(result.dialogueCount).toBe(3);expect(result.transcriptComplete).toBe(true);
  });
  it('supports a name established by earlier story even when the current caption has no speaker label',()=>{

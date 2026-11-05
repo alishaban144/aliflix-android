@@ -87,7 +87,12 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
             val anchor = packet.optDouble("anchorSeconds")
             val windows = packet.optJSONArray("scenes") ?: JSONArray()
             val target = packet.optDouble("targetSeconds", Double.NaN)
-            val positions = if (packet.optString("mode") == "timestamp" && target.isFinite())
+            // A question can be both a name search and a current physical action.
+            // Decode its temporal window first; older search hits must not consume
+            // the eight-frame budget and leave only a paused still.
+            val positions = if(needsCurrentVideo)
+                listOf(32.0,16.0,8.0,6.0,4.0,2.0,1.0,0.0).map{(anchor-it).coerceAtLeast(0.0)}
+            else if (packet.optString("mode") == "timestamp" && target.isFinite())
                 listOf(target - 8.0, target - 3.0, target, target + 3.0).filter { it in 0.0..anchor }
             else if (packet.optString("mode") == "previous") buildList {
                 for (index in 0 until windows.length()) {

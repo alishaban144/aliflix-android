@@ -9,6 +9,25 @@ import org.junit.Test
 /** Replays the provider ordering captured in the physical Annihilation failure. */
 class TalkWireReplayDeviceTest {
     @get:Rule val compose=freshTalkValidationRule(localAudio=true)
+    @Test fun aCompletedTypedAnswerKeepsItsSocketForTheFollowUpBeforeLateTurnComplete(){
+        val session=compose.activity.voice
+        compose.runOnUiThread{
+            session.setTextMode(true);session.debugPreviewUserQuestion("Why is Chidi uncomfortable?")
+            session.debugReplayServerMessage(JSONObject("""{"serverContent":{"outputTranscription":{"text":"Chidi is an ethics professor, and Eleanor is asking him to hide the mistake."},"generationComplete":true}}"""))
+            assertTrue(session.state.value.answerComplete);assertTrue(session.state.value.sending)
+            // The replay owns a successful in-memory wire, not an absent socket.
+            for(name in listOf("permitted","socketReady","localAudioValidation"))TalkVoiceSession::class.java.getDeclaredField(name).apply{isAccessible=true}.setBoolean(session,true)
+            val epoch=session.debugAudioSnapshot().getLong("epoch");val conversation=session.state.value.conversationId
+            session.sendText("Does that prove Tahani is morally better?")
+            assertEquals("A finished typed reply is not a pending replacement",epoch,session.debugAudioSnapshot().getLong("epoch"))
+            assertEquals(conversation,session.state.value.conversationId)
+            session.debugReplayServerMessage(JSONObject("""{"serverContent":{"turnComplete":true}}"""))
+            assertFalse("The older completion cannot finish the new question",session.state.value.answerComplete)
+            session.debugReplayServerMessage(JSONObject("""{"serverContent":{"outputTranscription":{"text":"No. Their system's score is an assumption here, not proof of moral superiority."},"generationComplete":true,"turnComplete":true}}"""))
+            assertTrue(session.state.value.answerComplete);assertFalse(session.state.value.sending)
+            assertEquals(2,session.state.value.lines.count{it.role=="assistant"})
+        }
+    }
     @Test fun idleScheduledControlReplyCannotRaceASyntheticUserTurn(){
         val session=compose.activity.voice
         compose.runOnUiThread{

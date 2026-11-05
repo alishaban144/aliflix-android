@@ -81,7 +81,7 @@ internal fun talkNeedsCurrentSceneObservation(question: String): Boolean {
     if(Regex("(?i)\\b(?:what evidence|why (?:does|did) .{0,45}(?:think|believe|claim|say|promise))\\b").containsMatchIn(question))return false
     if (!Regex("(?i)\\b(fall|fell|push|pushed|hit|crash|shoot|shot|collapse|collapsed|drop|dropped)\\b").containsMatchIn(question) &&
         Regex("(?i)\\b(agreed?|secret|disagreement|lying|lied|belief|believe|intention|promis(?:e|ed|es)|warned|warning|plan)\\b").containsMatchIn(question)) return false
-    val physical=Regex("(?i)\\b(fall|fell|push|pushed|hit|crash|shoot|shot|collapse|collapsed|drop|dropped|fight|fighting|attack|attacked|grab|grabbed|slip|slipped|chase|chased|running|jump|jumped)\\b|سقط|دفع|ضرب|انهار|gestürzt|gefallen|geschossen").containsMatchIn(question)
+    val physical=Regex("(?i)\\b(fall|fell|push|pushed|hit|crash|shoot|shot|collapse|collapsed|drop|dropped|fight|fighting|attack|attacked|grab|grabbed|slip|slipped|chase|chased|chasing|escape|escaped|escaping|flee|fled|fleeing|comfort|comforting|running|jump|jumped)\\b|سقط|دفع|ضرب|انهار|gestürzt|gefallen|geschossen").containsMatchIn(question)
     val currentAction=Regex("(?i)what(?:'s| is| was) (?:happening|going on)|what happened|what (?:are|were|is|was) .{0,35}doing|(?:explain|describe) (?:this|the current) scene|was passiert|ماذا يحدث").containsMatchIn(question)
     return physical||currentAction
 }

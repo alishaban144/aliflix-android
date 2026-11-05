@@ -15,18 +15,21 @@ internal class TalkStoryContext(private val scope:CoroutineScope,
     private val retryAfter=linkedMapOf<String,Long>()
     internal var issue="";private set
     internal var elapsedMs=0L;private set
+    private fun memoryKey(scene:TalkSceneContext)="${scene.identity}:${scene.revision}:${(scene.anchorSeconds*10).toLong()}:${scene.metadata.optString("subtitleEdition")}:${scene.metadata.optJSONArray("dialogue")?.toString()?.hashCode()}"
     fun clear(){jobs.values.forEach{it.cancel()};jobs.clear();ready.clear();retryAfter.clear()}
     fun attach(scene:TalkSceneContext){
-        ready[scene.key]?.let{scene.metadata.put(if(it.optString("status")=="research_ready")"storyResearch" else "storyUnderstanding",it)}
-        scene.metadata.put("storyState",if(ready[scene.key]?.optString("status") in setOf("grounded","research_ready"))ready[scene.key]!!.optString("status") else if(jobs.any{(key,job)->key.startsWith(scene.key+":")&&job.isActive})"preparing" else "limited")
+        ready[memoryKey(scene)]?.let{scene.metadata.put(if(it.optString("status")=="research_ready")"storyResearch" else "storyUnderstanding",it)}
+        scene.metadata.put("storyState",if(ready[memoryKey(scene)]?.optString("status") in setOf("grounded","research_ready"))ready[memoryKey(scene)]!!.optString("status") else if(jobs.any{(key,job)->key.startsWith(memoryKey(scene)+":")&&job.isActive})"preparing" else "limited")
     }
+    fun recallQuery(scene:TalkSceneContext,question:String):String = expandedTalkStoryQuery(question,
+        scene.metadata.optJSONArray("dialogue")?.toString().orEmpty(),ready[memoryKey(scene)])
     fun prepare(scene:TalkSceneContext,host:TalkPlayerHost,question:String="",refresh:Boolean=false):Deferred<JSONObject?> {
-        if(!refresh)ready[scene.key]?.takeIf{it.optString("status") in setOf("grounded","research_ready")}?.let{return CompletableDeferred(it)}
-        if(SystemClock.elapsedRealtime()<(retryAfter[scene.key]?:0L))return CompletableDeferred(ready[scene.key])
+        if(!refresh)ready[memoryKey(scene)]?.takeIf{it.optString("status") in setOf("grounded","research_ready")}?.let{return CompletableDeferred(it)}
+        if(SystemClock.elapsedRealtime()<(retryAfter[memoryKey(scene)]?:0L))return CompletableDeferred(ready[memoryKey(scene)])
         val recall=host.talkStoryEvidence()?:return CompletableDeferred(null)
         val prefix=recall.optJSONObject("storyThroughAnchor")?:return CompletableDeferred(null)
         val rows=prefix.optJSONArray("dialogue")?:JSONArray()
-        val key=scene.key+":"+rows.toString().hashCode()+":"+if(refresh)question else ""
+        val key=memoryKey(scene)+":"+rows.toString().hashCode()+":"+if(refresh)question else ""
         jobs[key]?.takeIf{it.isActive}?.let{return it}
         jobs.remove(key)
         val anchor=scene.anchorSeconds
@@ -44,13 +47,13 @@ internal class TalkStoryContext(private val scope:CoroutineScope,
         return scope.async {
             val result=try{post(JSONObject().put("story",packet))}
             catch(cancelled:CancellationException){throw cancelled}
-            catch(error:Exception){issue=error.message.orEmpty().take(180);retryAfter[scene.key]=SystemClock.elapsedRealtime()+45000;null}
+            catch(error:Exception){issue=error.message.orEmpty().take(180);retryAfter[memoryKey(scene)]=SystemClock.elapsedRealtime()+45000;null}
             elapsedMs=SystemClock.elapsedRealtime()-began
             if(result?.optString("status") in setOf("grounded","research_ready"))issue=""
-            if(TalkPlayerConnection.current()?.talkScene()?.key==scene.key&&result!=null){
-                ready[scene.key]=result
+            if(TalkPlayerConnection.current()?.talkScene()?.let{memoryKey(it)}==memoryKey(scene)&&result!=null){
+                ready[memoryKey(scene)]=result
                 while(ready.size>4)ready.remove(ready.keys.first())
-                if(result.optString("status") !in setOf("grounded","research_ready"))retryAfter[scene.key]=SystemClock.elapsedRealtime()+45000
+                if(result.optString("status") !in setOf("grounded","research_ready"))retryAfter[memoryKey(scene)]=SystemClock.elapsedRealtime()+45000
                 while(retryAfter.size>8)retryAfter.remove(retryAfter.keys.first())
                 attach(scene)
             }
@@ -60,6 +63,20 @@ internal class TalkStoryContext(private val scope:CoroutineScope,
     suspend fun await(scene:TalkSceneContext,host:TalkPlayerHost,question:String="",refresh:Boolean=false):JSONObject? {
         val work=prepare(scene,host,question,refresh)
         val result=withTimeoutOrNull(if(refresh)20000 else 1500){work.await()}
-        attach(scene);return result?:ready[scene.key]
+        attach(scene);return result?:ready[memoryKey(scene)]
     }
+}
+
+/** Research expands retrieval terms, not factual assertions. The full earlier
+ * transcript remains local and searchable rather than filling each Live turn. */
+internal fun expandedTalkStoryQuery(question:String,currentDialogue:String,research:JSONObject?):String {
+    val names=research?.optJSONArray("mentionedCharacters")?:JSONArray()
+    val current=buildList { for(i in 0 until names.length()) {
+        val name=if(names.opt(i) is String)names.getString(i)else names.optJSONObject(i)?.optString("name").orEmpty()
+        val terms=name.split(Regex("[^\\p{L}]+" )).filter{it.length>=3}
+        if(terms.any{Regex("(?iu)\\b"+Regex.escape(it)+"\\b").containsMatchIn(currentDialogue)})addAll(terms)
+    } }
+    val safe=research?.optJSONArray("establishedSearchTerms")?:JSONArray()
+    val entities=(0 until minOf(safe.length(),6)).map{safe.getString(it)}
+    return (question+" "+(current+entities).distinct().joinToString(" ")).trim().take(1600)
 }

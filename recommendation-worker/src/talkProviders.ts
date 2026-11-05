@@ -121,7 +121,7 @@ export function liveSetup(context: TalkContext) {
   return upgraded;
  });
  return { model: 'models/'+TALK_MODEL,
-  generationConfig: { responseModalities: ['AUDIO'], maxOutputTokens: (context.companionVersion||0)>=8?8192:2048,
+  generationConfig: { responseModalities: ['AUDIO'], maxOutputTokens: (context.companionVersion||0)>=16&&context.activePlayer?.id?4096:(context.companionVersion||0)>=8?8192:2048,
     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: context.voice || TALK_VOICE } } } },
   systemInstruction: { parts: [{ text: liveInstructions(context) }] },
   // Legacy installed clients cannot answer the new local topic/history tools.

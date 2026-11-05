@@ -88,7 +88,13 @@ export function limitedStoryContext(q:StoryRequest,sources:StorySources){
 /** Fast source retrieval for a single multimodal Live reasoning pass. Research
  * stays explicitly untimed; it is never relabelled as observed scene truth. */
 export function playerStoryResearch(q:StoryRequest,sources:StorySources){
- return {status:'research_ready',anchorSeconds:q.anchorSeconds,mentionedCharacters:limitedStoryContext(q,sources).mentionedCharacters,
+ const past=q.dialogue.map(row=>row[2]).join(' ').toLowerCase();
+ const ignored=new Set(['This','That','They','After','Before','While','When','Later','However','Their','There','With','From','During','Which','Then','The','Upon','Because','Eventually']);
+ const counts=new Map<string,number>();
+ for(const token of sources.evidence.flatMap(e=>e.text.match(/\b[A-Z][A-Za-z]{3,}\b/g)||[]))
+  if(!ignored.has(token)&&new RegExp('\\b'+token.toLowerCase()+'\\b').test(past))counts.set(token,(counts.get(token)||0)+1);
+ return {status:'research_ready',anchorSeconds:q.anchorSeconds,mentionedCharacters:limitedStoryContext(q,sources).mentionedCharacters.map(c=>c.name),
+  establishedSearchTerms:[...counts].sort((a,b)=>b[1]-a[1]).slice(0,6).map(([term])=>term),
   independentResearch:sources.evidence.map(e=>({...e,text:e.text.slice(0,9000)})).slice(0,3),
   creditsUrl:sources.creditsUrl,dialogueCount:q.dialogue.length,transcriptComplete:q.transcriptComplete,
   scope:'Independent untimed story research and credited fictional-character spellings, NOT a face binding or a timestamped scene observation. Research may contain future events and identities. Use it only to resolve already-established names, relationships and causal setup supported by the supplied full earlier transcript and current temporal images. A past event revealed later remains a future spoiler. Do not expose later aliases or motives. Never present cast order or a plot paragraph alone as proof of who is on screen. Answer with current scene plus earlier story, not frame narration.'};

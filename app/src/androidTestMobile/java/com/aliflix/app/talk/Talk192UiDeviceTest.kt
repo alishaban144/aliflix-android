@@ -28,6 +28,8 @@ class Talk192UiDeviceTest {
   val talk=bounds[3]
   assertEquals(bounds[2].width,talk.width,.1f);assertEquals(bounds[2].height,talk.height,.1f)
   for(i in bounds.indices)for(j in i+1 until bounds.size)assertFalse("Overlapping toolbar actions",bounds[i].overlaps(bounds[j]))
+  val instrumentation=InstrumentationRegistry.getInstrumentation()
+  instrumentation.uiAutomation.takeScreenshot()?.let{bitmap->java.io.File(instrumentation.targetContext.getExternalFilesDir(null),"talk192-toolbar.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()}
   compose.onNodeWithContentDescription("Talk").performClick();compose.runOnIdle{assertEquals(1,clicks)}
  }
  @Test fun pressingTheWholeOrbKeepsEveryOuterCornerTransparent(){
