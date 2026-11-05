@@ -118,7 +118,7 @@ export function playerStoryResearch(q:StoryRequest,sources:StorySources){
 }
 export async function understandPlayerStory(q:StoryRequest,sources:StorySources,env:RecommendationEnv){
  if(env.GEMINI_FREE_TIER_MODE==='true'){
-  if(!q.question.trim())return {...limitedStoryContext(q,sources),status:'research_ready',deferred:true,completed:true,unknowns:[],
+  if(!q.question.trim()||/^(?:hi|hello|hey|thanks|thank you|ok|okay)[.! ,]*$/i.test(q.question.trim()))return {...limitedStoryContext(q,sources),status:'research_ready',deferred:true,completed:true,unknowns:[],
    creditsUrl:sources.creditsUrl,
    instruction:'Public character and plot sources are cached. No scene inference was spent on opening. When the viewer asks an actual identity or causal scene question, call scene_story once with that exact question unless existing storyUnderstanding already covers it. Reuse existing compiled memory on follow-ups; retrieve a missing earlier passage with scene_recall. These names alone are not face bindings. No raw future plot is supplied.'};
   const budget=budgetStoryEvidence(q,sources);q=budget.request;sources=budget.sources;

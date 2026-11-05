@@ -64,6 +64,7 @@ it('cools an overloaded project instead of repeatedly spending free requests on 
 it('spends no inference on opening and never sends a future plot paragraph in the deferred packet',async()=>{
  const fetcher=vi.spyOn(globalThis,'fetch');
  const result=await understandPlayerStory({...q(),question:''},sources,{GEMINI_FREE_TIER_MODE:'true'} as RecommendationEnv);
+ await understandPlayerStory({...q(),question:'Hi!'},sources,{GEMINI_FREE_TIER_MODE:'true'} as RecommendationEnv);
  expect(result).toMatchObject({status:'research_ready',deferred:true});expect(fetcher).not.toHaveBeenCalled();
  expect(JSON.stringify(result)).not.toContain('quarantined');expect(JSON.stringify(result)).not.toContain('Future Identity');
 });

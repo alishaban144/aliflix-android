@@ -75,13 +75,14 @@ describe('named source-bound player story',()=>{
   expect(data.independentResearch[0].id).toBe('wiki-rev-1');expect(body.contents[0].parts[2].inlineData.mimeType).toBe('image/jpeg');
   expect(JSON.stringify(result)).not.toContain('quarantined background');expect(body.systemInstruction.parts[0].text).toContain('past event revealed later');
  });
- it('retains Flash 3.8 reasoning by default and a compatible optional fast-model override',async()=>{
+ it('separates focused fast extraction from the Flash 3.8 conversation and supports either configured model',async()=>{
   const fetcher=vi.spyOn(globalThis,'fetch').mockResolvedValue(Response.json({candidates:[{content:{parts:[{text:JSON.stringify(answer())}]}}]}));
   expect((await understandPlayerStory(request(),sources,{GEMINI_API_KEY:'test-only',GEMINI_GENERATION_MODEL:'gemini-3.8-flash'} as RecommendationEnv)).status).toBe('grounded');
-  expect(String(fetcher.mock.calls[0][0])).toContain('gemini-3.8-flash:generateContent');
+  expect(String(fetcher.mock.calls[0][0])).toContain('gemini-3.6-flash:generateContent');
   expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).generationConfig.thinkingConfig.thinkingLevel).toBe('low');
-  await understandPlayerStory(request(),sources,{GEMINI_API_KEY:'test-only',GEMINI_SCENE_MODEL:'gemini-3.6-flash'} as RecommendationEnv);
-  expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body)).generationConfig.thinkingConfig.thinkingLevel).toBe('minimal');
+  await understandPlayerStory(request(),sources,{GEMINI_API_KEY:'test-only',GEMINI_SCENE_MODEL:'gemini-3.8-flash'} as RecommendationEnv);
+  expect(String(fetcher.mock.calls[1][0])).toContain('gemini-3.8-flash:generateContent');
+  expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body)).generationConfig.thinkingConfig.thinkingLevel).toBe('low');
  });
  it('requires evidence for a premise correction and retains a specifically unresolved premise',()=>{
   const value={...answer(),premiseChecks:[{claim:'Jane is responsible',verdict:'contradicted',correction:'The reassurance denies her responsibility.',cueIds:[2],frameIds:[]}]};
