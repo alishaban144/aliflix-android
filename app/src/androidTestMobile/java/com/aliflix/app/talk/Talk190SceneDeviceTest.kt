@@ -205,6 +205,13 @@ class Talk190SceneDeviceTest {
                 screenshot("talk190-live-$titleCase-$index.png")
                 args.getString("sceneFollowUp")?.let { follow ->
                     val id=player.talkVoice.state.value.conversationId
+                    if(args.getString("sceneForceQuotaRotate")=="true") {
+                        withContext(Dispatchers.Main){player.talkVoice.debugQuotaRecovery()}
+                        withTimeout(20000){while(player.talkVoice.state.value.phase !in setOf("Listening","Muted"))delay(40)}
+                        assertEquals(id,player.talkVoice.state.value.conversationId)
+                        assertEquals("en",player.talkVoice.debugResponseLanguage)
+                        receipt.put("forcedQuotaRecovery",true)
+                    }
                     val from=player.talkVoice.state.value.lines.size
                     val started=android.os.SystemClock.elapsedRealtime()
                     withContext(Dispatchers.Main){player.talkVoice.sendText(follow)}

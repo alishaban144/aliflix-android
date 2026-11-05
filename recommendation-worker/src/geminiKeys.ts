@@ -14,6 +14,7 @@ function keys(env: GeminiCredentials): Key[] {
  return result;
 }
 export const hasGeminiCredentials = (env: GeminiCredentials) => keys(env).length > 0;
+export const configuredGeminiSlots = (env:GeminiCredentials)=>keys(env).map(key=>key.slot);
 export function redactGeminiKeys(env: GeminiCredentials, text: string) {
  for (const key of keys(env)) text = text.replaceAll(key.value, '[key]');
  return text;
@@ -45,14 +46,14 @@ async function cool(request: Request, response: Response) {
 /** Balance independent projects; at most one attempt per distinct key, within
  * the caller's original deadline. A minted Live session can pin its project. */
 export async function geminiProjectRequest(env: GeminiCredentials, url: string, init: GeminiRequestInit,
- pinned?: GeminiKeySlot): Promise<{ response: Response; keySlot?: GeminiKeySlot }> {
+ pinned?: GeminiKeySlot,excluded:GeminiKeySlot[]=[]): Promise<{ response: Response; keySlot?: GeminiKeySlot }> {
  const free=env.GEMINI_FREE_TIER_MODE==='true';
  if(free&&!env.TALK_SESSIONS)throw Error('GEMINI_BUDGET_UNAVAILABLE');
  const quota=free?env.TALK_SESSIONS!.getByName('gemini-project-budget-v1'):undefined;
  const {geminiInputTokens,...requestInit}=init;
  const cost=geminiInputTokens??estimateGeminiInput(init.body),rpm=Math.max(1,Math.min(20,Number(env.GEMINI_FREE_TIER_RPM)||3)),tpm=Math.max(1024,Number(env.GEMINI_FREE_TIER_TPM)||32000);
  const pool = keys(env), trackHealth = pool.length > 1||free;
- let candidates = pool;
+ let candidates = pool.filter(key=>!excluded.includes(key.slot));
  if (pinned) candidates = candidates.filter(key => key.slot === pinned);
  else if (candidates.length > 1) {
   const start=Math.floor(Math.random()*candidates.length);

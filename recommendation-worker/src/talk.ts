@@ -1,4 +1,4 @@
-import type { GeminiKeySlot } from './geminiKeys';
+import {configuredGeminiSlots,type GeminiKeySlot} from './geminiKeys';
 import {reserveGeminiBudget,type GeminiBudgetState,type GeminiBudgetGrant} from './geminiQuota';
 import { DurableObject } from 'cloudflare:workers';
 import { z } from 'zod';
@@ -56,8 +56,8 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
    return json(await user.open(body.context));
   }
   if(path.endsWith('/renew')){
-   const b=z.object({session:z.string().uuid(),responseLanguage:z.string().regex(/^[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}$/).optional()}).strict().parse(bodyRaw);
-   return json(await user.renew(b.session,b.responseLanguage));
+   const b=z.object({session:z.string().uuid(),responseLanguage:z.string().regex(/^[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}$/).optional(),rotateProject:z.boolean().optional()}).strict().parse(bodyRaw);
+   return json(await user.renew(b.session,b.responseLanguage,b.rotateProject));
   }
   if(path.endsWith('/research')||path.endsWith('/recommendations')||path.endsWith('/cancel')) {
    const b=z.object({session:z.string().uuid(),requestId:z.string().uuid(),question:z.string().max(1600).optional(),request:z.unknown().optional()}).strict().parse(bodyRaw);
@@ -82,7 +82,7 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
  }
 }
 type TalkSelection={tmdbId:number;mediaType:'movie'|'tv';title:string;originalTitle?:string;year?:string;posterPath?:string};
-type Session={keySlot?:GeminiKeySlot;context:TalkContext;expires:number;calls:number;searches:number;grants:string[];renewals?:number;sceneCalls?:number;selection?:TalkSelection[];recommendationRequest?:string;recommendationCollection?:RecommendationResult[];recommendationQuery?:string;recommendationAnchors?:Array<{tmdbId:number;mediaType:"movie"|"tv";title:string}>};
+type Session={keySlot?:GeminiKeySlot;keyFailures?:GeminiKeySlot[];context:TalkContext;expires:number;calls:number;searches:number;grants:string[];renewals?:number;sceneCalls?:number;selection?:TalkSelection[];recommendationRequest?:string;recommendationCollection?:RecommendationResult[];recommendationQuery?:string;recommendationAnchors?:Array<{tmdbId:number;mediaType:"movie"|"tv";title:string}>};
 export class TalkSession extends DurableObject<RecommendationEnv> {
  private storyJobs=new Map<string,Promise<Record<string,unknown>>>();
  constructor(ctx:DurableObjectState,env:RecommendationEnv){super(ctx,env);ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS memory (key TEXT PRIMARY KEY,value TEXT NOT NULL,expires INTEGER NOT NULL)');for(const ws of ctx.getWebSockets())ws.close(1012,'Update');}
@@ -182,13 +182,16 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   // A new player/text connection must not invalidate another in-flight session.
   this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'live:%' AND key NOT IN (SELECT key FROM memory WHERE key LIKE 'live:%' ORDER BY expires DESC, rowid DESC LIMIT 8)");
   await this.ctx.storage.setAlarm(expires);return {...token,session};}
- async renew(session:string,responseLanguage?:string){
+ async renew(session:string,responseLanguage?:string,rotateProject=false){
   const state=this.read<Session>('live:'+session);if(!state||state.expires<Date.now()+10000)throw Error('SESSION_EXPIRED');
   if((state.renewals||0)>=6)throw Error('TOOL_LIMIT');
   state.renewals=(state.renewals||0)+1;if(responseLanguage)state.context.responseLanguage=responseLanguage;
   this.put('live:'+session,state,state.expires);
-  const {keySlot:_slot,...token}=await issueLiveToken(this.env,state.context,state.expires,state.keySlot||'primary');
-  if(!this.read<Session>('live:'+session))throw Error('SESSION_EXPIRED');
+  const failed=rotateProject?[...new Set([...(state.keyFailures||[]),state.keySlot||'primary'])]:[];
+  if(rotateProject&&!configuredGeminiSlots(this.env).some(slot=>!failed.includes(slot)))throw Error('LIVE_UNAVAILABLE');
+  const {keySlot,...token}=await issueLiveToken(this.env,state.context,state.expires,rotateProject?undefined:state.keySlot||'primary',failed);
+  const latest=this.read<Session>('live:'+session);if(!latest)throw Error('SESSION_EXPIRED');
+  latest.keySlot=keySlot;latest.keyFailures=failed;this.put('live:'+session,latest,latest.expires);
   // No expiry extension, new voice/model or reset of knowledge/search budgets.
   return {...token,session};
  }

@@ -126,6 +126,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         update { it.copy(phase=if(limited)"Try again later" else "Reconnect",sending=false) }
     }
     private fun beginUserTurn() {
+        projectFailovers=0
         if(inputText.isNotBlank())commitQuestion()
         speechToolJobs.values.toList().forEach{it.cancel()};speechToolJobs.clear()
         speechInputTurn=-1L;microphoneTurn=-1L;speechInputText="";lastSpeechInputAt=0L;remoteSpeechActive=false;joinSpeechInput=false
@@ -238,6 +239,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         private set
     internal suspend fun inspectPlayerScene() { awaitSceneObservation() }
     internal suspend fun debugInspectScene(): JSONObject? { check(BuildConfig.DEBUG); return awaitSceneObservation()?.metadata }
+    internal suspend fun debugQuotaRecovery(){check(BuildConfig.DEBUG);disconnected(epoch,true)}
     private fun sendTurnContext(userOwned:Boolean=false,sceneParts:JSONArray?=null) {
         if(!socketReady||!userOwned&&(speaking||generationOpen))return
         TalkPlayerConnection.current()?.talkSnapshot()?.let { current ->
@@ -450,6 +452,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     @Volatile private var epoch = 0L
     @Volatile private var sequence = 0L
     private var reconnects = 0
+    private var projectFailovers = 0
     private var reconnectJob: Job? = null
     private var readyWatchdog: Job? = null
     private val answerDeadline:TalkResponseDeadline=TalkResponseDeadline(scope) {
@@ -708,7 +711,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         catch(cancelled:CancellationException){if(attempt==connectAttempt&&!permitted)update{it.copy(phase="Ready")};throw cancelled}
         if(!state.value.textMode)TalkAudioLease.awaitOwnRelease(context)
         if(closed||sessionOwner!=account||attempt!=connectAttempt)return
-        reconnects = 0; permitted = true; startedAt = SystemClock.elapsedRealtime()
+        reconnects = 0; projectFailovers=0; permitted = true; startedAt = SystemClock.elapsedRealtime()
         // Deliberately omit every TMDB text field. Only the viewer's own progress
         // and opaque identifiers are used to look up permitted, independent data.
         val progress = (context.applicationContext as AliflixApplication).playbackProgressStore.entries.value.values.maxByOrNull { it.updatedAtMillis }
@@ -885,11 +888,26 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }
     private suspend fun disconnected(ticket:Long,limited:Boolean) {
         if(ticket!=epoch||!permitted)return
-        if(state.value.sending||tools.isNotEmpty()||awaitingToolAnswer)continueAfterReconnect=true
+        if(textSend?.isActive==true)continueAfterReconnect=false
+        else if(state.value.sending||tools.isNotEmpty()||awaitingToolAnswer)continueAfterReconnect=true
         commitQuestion()
         update{it.copy(phase="Reconnecting",level=0f)}
         socketReady=false
         readyWatchdog?.cancel();stopAudio(cancelTools=false);cancelSocket(ws);ws=null;inputText="";outputText="";assistantLine=-1;finalReferences=emptyList()
+        if(talkCanRotateQuotaProject(limited,projectFailovers,backendSession!=null)) {
+            projectFailovers++
+            val rotationTicket=++epoch // Stale close callbacks cannot mint another token.
+            val session=checkNotNull(backendSession)
+            try {
+                val minted=post("renew",JSONObject().put("session",session).put("rotateProject",true)
+                    .apply{responseLanguage?.let{put("responseLanguage",it)}})
+                if(rotationTicket!=epoch||!permitted)return
+                ephemeral=minted;backendSession=minted.getString("session");resumeHandle=null
+                reconnectJob?.cancel();reconnectJob=scope.launch{openSocket(rotationTicket)}
+                return
+            }catch(cancelled:CancellationException){throw cancelled}
+            catch(_:Exception){if(rotationTicket!=epoch||!permitted)return}
+        }
         if(limited||++reconnects>3||SystemClock.elapsedRealtime()-startedAt>1200000) {
             suspendSession();update {it.copy(phase=if(limited) "Try again later" else "Reconnect")};return
         }

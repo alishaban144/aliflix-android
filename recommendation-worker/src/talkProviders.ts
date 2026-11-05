@@ -148,7 +148,7 @@ export async function boundedJson(response: Response, limit = 256000): Promise<u
  const bytes=new Uint8Array(length);let at=0;for(const c of chunks){bytes.set(c,at);at+=c.length;}
  return JSON.parse(new TextDecoder().decode(bytes));
 }
-export async function issueLiveToken(env: RecommendationEnv, context: TalkContext, expires: number, pinned?:GeminiKeySlot) {
+export async function issueLiveToken(env: RecommendationEnv, context: TalkContext, expires: number, pinned?:GeminiKeySlot,excluded:GeminiKeySlot[]=[]) {
  if(!hasGeminiCredentials(env))throw Error('LIVE_UNAVAILABLE');
  const setup=liveSetup(context);
  if(env.GEMINI_FREE_TIER_MODE==='true'&&(context.companionVersion||0)>=16)setup.systemInstruction.parts[0].text+='\nFree-tier scene memory: public-source readiness is NOT compiled scene understanding. When player evidence has storyResearch.deferred=true and the viewer asks a scene question about identity, causes, relationships, motives or earlier setup, you MUST call app_control(scene_story) once with the actual complete question BEFORE answering, unless storyUnderstanding for this pause already covers that question. A list of names or completed=true on the public lookup is not compiled understanding. Reuse evidence-linked facts on follow-ups. Use scene_recall for any specifically missing earlier passage; do not repeatedly compile unchanged evidence. Greetings, ordinary catalogue questions and playback commands need no scene-analysis call. This rule applies if player context arrives after the connection opened.';
@@ -159,7 +159,7 @@ export async function issueLiveToken(env: RecommendationEnv, context: TalkContex
  const {response,keySlot}=await geminiProjectRequest(env,'https://generativelanguage.googleapis.com/v1beta/auth_tokens',{
   method:'POST',headers:{'content-type':'application/json'},
   body:JSON.stringify({uses:1,expireTime:new Date(expires).toISOString(),newSessionExpireTime:new Date(Math.min(expires-1000,Date.now()+60000)).toISOString(),
-    bidiGenerateContentSetup:lockedSetup,fieldMask:mask}),signal:AbortSignal.timeout(8000) },pinned);
+    bidiGenerateContentSetup:lockedSetup,fieldMask:mask}),signal:AbortSignal.timeout(8000) },pinned,excluded);
  if(!response.ok){await response.body?.cancel();console.warn('talk_live_token_status',response.status);throw Error('LIVE_UNAVAILABLE');}
  const result=z.object({name:z.string().min(8).max(4096)}).parse(await boundedJson(response,16384));
  return {keySlot,token:result.name,model:TALK_MODEL,voice:context.voice||TALK_VOICE,expires,inputActivity:(context.companionVersion||0)>=9?'manual':'automatic',setup:{model:setup.model,generationConfig:setup.generationConfig,sessionResumption:{}}};

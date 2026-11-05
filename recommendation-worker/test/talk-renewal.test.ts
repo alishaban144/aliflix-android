@@ -4,6 +4,23 @@ import {TalkSession} from '../src/talk';
 import {TalkContextSchema} from '../src/talkEvidence';
 import type {RecommendationEnv} from '../src/types';
 afterEach(()=>vi.restoreAllMocks());
+it('rotates late-quota sessions across remaining projects without replacing conversation or budgets',async()=>{
+ await runInDurableObject(env.TALK_SESSIONS.getByName('late-quota-'+crypto.randomUUID()),async(_,state)=>{
+  const keys=['primary-','secondary-','tertiary-'].map(prefix=>prefix+crypto.randomUUID());
+  const service=new TalkSession(state,{...env,CURSOR_SIGNING_SECRET:'test-only-quota-rotation',GEMINI_API_KEY:keys[0],GEMINI_API_KEY_SECONDARY:keys[1],GEMINI_API_KEY_TERTIARY:keys[2]} as RecommendationEnv);
+  const id=crypto.randomUUID(),expires=Date.now()+120000;
+  state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)','live:'+id,JSON.stringify({keySlot:'primary',context:TalkContextSchema.parse({voice:'Aoede',responseLanguage:'en'}),expires,calls:7,searches:1,grants:['retained-proof']}),expires);
+  vi.spyOn(Math,'random').mockReturnValue(0);
+  const fetcher=vi.spyOn(globalThis,'fetch').mockImplementation(async()=>Response.json({name:'auth_tokens/owned-ephemeral'}));
+  const first=await service.renew(id,'en',true),second=await service.renew(id,'en',true);
+  expect(first.session).toBe(id);expect(second.session).toBe(id);expect(second).not.toHaveProperty('keySlot');
+  expect(fetcher.mock.calls.map(call=>new Headers(call[1]?.headers).get('x-goog-api-key'))).toEqual([keys[1],keys[2]]);
+  await expect(service.renew(id,'en',true)).rejects.toThrow('LIVE_UNAVAILABLE');expect(fetcher).toHaveBeenCalledTimes(2);
+  const raw=state.storage.sql.exec<{value:string}>('SELECT value FROM memory WHERE key=?','live:'+id).one().value;
+  expect(JSON.parse(raw)).toMatchObject({keySlot:'tertiary',expires,calls:7,searches:1,grants:['retained-proof'],context:{voice:'Aoede',responseLanguage:'en'}});
+  for(const key of keys)expect(raw).not.toContain(key);
+ });
+});
 it('keeps the successful failover project private and pinned across voice renewal',async()=>{
  await runInDurableObject(env.TALK_SESSIONS.getByName('renew-key-affinity-'+crypto.randomUUID()),async(_,state)=>{
   const primary='primary-test-'+crypto.randomUUID(),secondary='secondary-test-'+crypto.randomUUID();
