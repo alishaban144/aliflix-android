@@ -128,6 +128,15 @@ export async function understandPlayerStory(q:StoryRequest,sources:StorySources,
  // Three temporal images keep visual input bounded while retaining the pause.
  if(q.frames.length>3)q={...q,frames:[q.frames[0],q.frames[Math.floor(q.frames.length/2)],q.frames[q.frames.length-1]]};
  const schema=z.toJSONSchema(StoryUnderstandingSchema);delete schema.$schema;
+ const providerSchema=geminiSceneSchema(schema) as {properties:Record<string,{items:{properties:Record<string,Record<string,unknown>>}}>};
+ for(const group of ['characters','facts','premiseChecks']){
+  const properties=providerSchema.properties[group].items.properties;
+  properties.cueIds.items={type:'integer',minimum:0,maximum:Math.max(0,q.dialogue.length-1)};
+  properties.frameIds.items={type:'integer',minimum:0,maximum:Math.max(0,q.frames.length-1)};
+  const clock=properties.firstEstablishedSeconds||properties.revealSeconds;
+  if(clock)clock.maximum=q.anchorSeconds;
+ }
+ if(sources.characters.length)providerSchema.properties.characters.items.properties.name.enum=sources.characters.map(c=>c.name);
  const parts:Array<Record<string,unknown>>=[{text:JSON.stringify({title:sources.title,kind:q.kind,season:q.season,episode:q.episode,
   pauseSeconds:q.anchorSeconds,responseLanguage:q.responseLanguage,
   captionAlignment:q.captionAlignment,transcriptComplete:q.transcriptComplete,
@@ -143,12 +152,12 @@ export async function understandPlayerStory(q:StoryRequest,sources:StorySources,
   if(!hasGeminiCredentials(env))throw Error('provider_unavailable');
   if(env.GEMINI_FREE_TIER_MODE==='true'){
    provider='gemini-live-structured';
-   return geminiLiveStructured(env,STORY_ANALYSIS_INSTRUCTIONS,parts,geminiSceneSchema(schema));
+   return geminiLiveStructured(env,STORY_ANALYSIS_INSTRUCTIONS,parts,providerSchema);
   }
   const response=await fetchGemini(env,`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
    method:'POST',headers:{'content-type':'application/json'},
    body:JSON.stringify({systemInstruction:{parts:[{text:STORY_ANALYSIS_INSTRUCTIONS}]},contents:[{role:'user',parts}],
-    generationConfig:{maxOutputTokens:4096,thinkingConfig:{thinkingLevel},responseMimeType:'application/json',responseJsonSchema:geminiSceneSchema(schema)}}),signal:AbortSignal.timeout(15000)});
+    generationConfig:{maxOutputTokens:4096,thinkingConfig:{thinkingLevel},responseMimeType:'application/json',responseJsonSchema:providerSchema}}),signal:AbortSignal.timeout(15000)});
   if(!response.ok){preferredStatus=response.status;
    try{const failure=await boundedJson(response,8192) as {error?:{message?:string}};preferredMessage=redactGeminiKeys(env,failure.error?.message||'').slice(0,240);}catch{await response.body?.cancel().catch(()=>undefined);}
    throw Error('provider_unavailable');}

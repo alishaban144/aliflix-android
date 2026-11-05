@@ -74,6 +74,9 @@ describe('named source-bound player story',()=>{
   const body=JSON.parse(String(fetcher.mock.calls[0][1]?.body));expect(body.generationConfig.thinkingConfig.thinkingLevel).toBe('low');const data=JSON.parse(body.contents[0].parts[0].text);
   expect(JSON.stringify(body.generationConfig.responseJsonSchema)).not.toContain('maxItems');expect(data.dialogue).toHaveLength(200);expect(JSON.stringify(data.dialogue).length).toBeGreaterThan(12000);
   expect(data.independentResearch[0].id).toBe('wiki-rev-1');expect(body.contents[0].parts[2].inlineData.mimeType).toBe('image/jpeg');
+  const properties=body.generationConfig.responseJsonSchema.properties.characters.items.properties;
+  expect(properties.name.enum).toContain('Daniel Kellner');expect(properties.frameIds.items.maximum).toBe(0);
+  expect(properties.cueIds.items.maximum).toBe(199);expect(properties.firstEstablishedSeconds.maximum).toBe(q.anchorSeconds);
   expect(JSON.stringify(result)).not.toContain('quarantined background');expect(body.systemInstruction.parts[0].text).toContain('past event revealed later');
  });
  it('separates focused fast extraction from the Flash 3.8 conversation and supports either configured model',async()=>{
