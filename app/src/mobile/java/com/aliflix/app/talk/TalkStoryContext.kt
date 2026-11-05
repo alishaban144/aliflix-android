@@ -37,7 +37,7 @@ internal class TalkStoryContext(private val scope:CoroutineScope,
             scene.frames.getOrNull(scene.frames.size*2/3),scene.frames.lastOrNull()).distinctBy{it.seconds}.filter{it.seconds<=anchor}
         val packet=JSONObject().put("id",scene.metadata.optInt("id")).put("kind",scene.metadata.optString("type"))
             .put("title",scene.metadata.optString("title").take(180)).put("sourceKey",scene.key.take(600))
-            .put("anchorSeconds",anchor).put("mode","sources").put("question",question.take(1600)).put("dialogue",JSONArray((0 until minOf(rows.length(),5000)).map{rows.getJSONArray(it)}))
+            .put("anchorSeconds",anchor).put("mode","analysis").put("question",question.take(1600)).put("dialogue",JSONArray((0 until minOf(rows.length(),5000)).map{rows.getJSONArray(it)}))
             .put("transcriptComplete",prefix.optBoolean("complete")&&rows.length()<=5000)
             .put("captionAlignment",recall.optJSONObject("playbackEvidence")?.optString("captionAlignment").orEmpty().take(80))
             .put("frames",JSONArray(chosen.map{JSONObject().put("seconds",it.seconds).put("data",Base64.encodeToString(it.jpeg,Base64.NO_WRAP))}))

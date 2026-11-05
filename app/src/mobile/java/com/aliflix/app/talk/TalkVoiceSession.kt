@@ -361,7 +361,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 withTimeout(20000){while(!socketReady){check(permitted){"Connection ended"};delay(30)}}
                 answerDeadline.awaiting(45000)
                 if(conversationContext.optInt("companionVersion")>=16)
-                    TalkPlayerConnection.current()?.let{host->host.talkScene()?.let{storyContext.await(it,host)}}
+                    TalkPlayerConnection.current()?.let{host->host.prepareTalkScene()?.let{storyContext.await(it,host,question,refresh=talkCurrentIdentityQuestion(question))}}
                 val parts = JSONArray()
                 sendTurnContext(userOwned=true,sceneParts=parts)
                 if (TalkPlayerConnection.current() != null && (talkSceneQuestion(question) || talkEpisodeRecallQuestion(question))) {
