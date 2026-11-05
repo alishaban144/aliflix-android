@@ -20,6 +20,26 @@ it('balances successful requests without duplicating them',async()=>{
  await fetchGemini(env,url,{});await fetchGemini(env,url,{});
  expect(fetcher.mock.calls.map(call=>used(call[1]))).toEqual([env.GEMINI_API_KEY,env.GEMINI_API_KEY_SECONDARY]);
 });
+it('balances all three projects and uses the third after both other projects refuse quota',async()=>{
+ const env={...credentials(),GEMINI_API_KEY_TERTIARY:'test-tertiary-'+crypto.randomUUID()};
+ const random=vi.spyOn(Math,'random').mockReturnValueOnce(0).mockReturnValueOnce(.4).mockReturnValueOnce(.9);
+ const fetcher=vi.spyOn(globalThis,'fetch').mockImplementation(async()=>Response.json({ok:true}));
+ for(let n=0;n<3;n++)await fetchGemini(env,url,{});
+ expect(fetcher.mock.calls.map(call=>used(call[1]))).toEqual([env.GEMINI_API_KEY,env.GEMINI_API_KEY_SECONDARY,env.GEMINI_API_KEY_TERTIARY]);
+ random.mockReturnValue(0);fetcher.mockClear();
+ fetcher.mockResolvedValueOnce(new Response(null,{status:429})).mockResolvedValueOnce(new Response(null,{status:429})).mockResolvedValue(Response.json({ok:true}));
+ expect((await fetchGemini(env,url,{})).ok).toBe(true);
+ expect(fetcher.mock.calls.map(call=>used(call[1]))).toEqual([env.GEMINI_API_KEY,env.GEMINI_API_KEY_SECONDARY,env.GEMINI_API_KEY_TERTIARY]);
+});
+it('pins the tertiary project and redacts its key without requiring either older key',async()=>{
+ const env={GEMINI_API_KEY_TERTIARY:'owned-third-'+crypto.randomUUID()};
+ const fetcher=vi.spyOn(globalThis,'fetch').mockResolvedValue(Response.json({ok:true}));
+ expect(hasGeminiCredentials(env)).toBe(true);
+ const result=await geminiProjectRequest(env,url,{},'tertiary');expect(result.keySlot).toBe('tertiary');
+ expect(used(fetcher.mock.calls[0][1])).toBe(env.GEMINI_API_KEY_TERTIARY);
+ expect(redactGeminiKeys(env,env.GEMINI_API_KEY_TERTIARY)).toBe('[key]');
+ expect(String(fetcher.mock.calls[0][0])).not.toContain(env.GEMINI_API_KEY_TERTIARY);
+});
 it('does not rotate credentials for invalid model/request parameters',async()=>{
  vi.spyOn(Math,'random').mockReturnValue(0);
  const fetcher=vi.spyOn(globalThis,'fetch').mockResolvedValue(Response.json({error:{code:400}},{status:400}));

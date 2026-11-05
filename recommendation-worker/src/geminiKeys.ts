@@ -1,15 +1,15 @@
 import {estimateGeminiInput,geminiCooldown} from './geminiQuota';
 import type { RecommendationEnv, SecretBindings } from './types';
 
-export type GeminiKeySlot = 'primary' | 'secondary';
-type GeminiCredentials = Pick<SecretBindings, 'GEMINI_API_KEY' | 'GEMINI_API_KEY_SECONDARY'> & Partial<Pick<RecommendationEnv,'TALK_SESSIONS'|'GEMINI_FREE_TIER_MODE'|'GEMINI_FREE_TIER_RPM'|'GEMINI_FREE_TIER_TPM'>>;
+export type GeminiKeySlot = 'primary' | 'secondary' | 'tertiary';
+type GeminiCredentials = Pick<SecretBindings, 'GEMINI_API_KEY' | 'GEMINI_API_KEY_SECONDARY' | 'GEMINI_API_KEY_TERTIARY'> & Partial<Pick<RecommendationEnv,'TALK_SESSIONS'|'GEMINI_FREE_TIER_MODE'|'GEMINI_FREE_TIER_RPM'|'GEMINI_FREE_TIER_TPM'>>;
 type Key = { slot: GeminiKeySlot; value: string };
 type Cooling = { until: number; status: number };
 type GeminiRequestInit=RequestInit & {geminiInputTokens?:number};
 
 function keys(env: GeminiCredentials): Key[] {
  const result: Key[] = [];
- for (const [slot, value] of [['primary', env.GEMINI_API_KEY], ['secondary', env.GEMINI_API_KEY_SECONDARY]] as const)
+ for (const [slot, value] of [['primary', env.GEMINI_API_KEY], ['secondary', env.GEMINI_API_KEY_SECONDARY], ['tertiary',env.GEMINI_API_KEY_TERTIARY]] as const)
   if (value?.trim() && !result.some(key => key.value === value.trim())) result.push({ slot, value: value.trim() });
  return result;
 }
@@ -54,7 +54,10 @@ export async function geminiProjectRequest(env: GeminiCredentials, url: string, 
  const pool = keys(env), trackHealth = pool.length > 1||free;
  let candidates = pool;
  if (pinned) candidates = candidates.filter(key => key.slot === pinned);
- else if (candidates.length > 1 && Math.random() >= .5) candidates.reverse();
+ else if (candidates.length > 1) {
+  const start=Math.floor(Math.random()*candidates.length);
+  candidates=[...candidates.slice(start),...candidates.slice(0,start)];
+ }
  if (!candidates.length) throw Error('GEMINI_NOT_CONFIGURED');
  const unavailable: Cooling[] = [];
  for (let index = 0; index < candidates.length; index++) {
