@@ -204,6 +204,7 @@ export interface RecommendationResponse {
 
 export interface SecretBindings {
   GEMINI_API_KEY?: string;
+  GEMINI_API_KEY_SECONDARY?: string;
   GROQ_API_KEY?: string;
   FISH_AUDIO_API_KEY?: string;
   TAVILY_API_KEY?: string;

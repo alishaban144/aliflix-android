@@ -2,7 +2,22 @@ import {env,runInDurableObject} from 'cloudflare:test';
 import {afterEach,expect,it,vi} from 'vitest';
 import {TalkSession} from '../src/talk';
 import {TalkContextSchema} from '../src/talkEvidence';
+import type {RecommendationEnv} from '../src/types';
 afterEach(()=>vi.restoreAllMocks());
+it('keeps the successful failover project private and pinned across voice renewal',async()=>{
+ await runInDurableObject(env.TALK_SESSIONS.getByName('renew-key-affinity-'+crypto.randomUUID()),async(_,state)=>{
+  const primary='primary-test-'+crypto.randomUUID(),secondary='secondary-test-'+crypto.randomUUID();
+  const service=new TalkSession(state,{...env,CURSOR_SIGNING_SECRET:'test-only-signing-secret-not-production',GEMINI_API_KEY:primary,GEMINI_API_KEY_SECONDARY:secondary} as RecommendationEnv);
+  vi.spyOn(Math,'random').mockReturnValue(0);
+  const fetcher=vi.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response(null,{status:429}))
+   .mockImplementation(async()=>Response.json({name:'auth_tokens/test-ephemeral'}));
+  const opened=await service.open(TalkContextSchema.parse({voice:'Aoede',responseLanguage:'en'}));
+  expect(opened).not.toHaveProperty('keySlot');await service.renew(opened.session);
+  expect(fetcher.mock.calls.map(call=>new Headers(call[1]?.headers).get('x-goog-api-key'))).toEqual([primary,secondary,secondary]);
+  const stored=state.storage.sql.exec<{value:string}>('SELECT value FROM memory WHERE key=?','live:'+opened.session).one().value;
+  expect(JSON.parse(stored).keySlot).toBe('secondary');expect(stored).not.toContain(primary);expect(stored).not.toContain(secondary);
+ });
+});
 it('renews the same owner session with pinned voice, original expiry and unchanged spoiler/search budgets',async()=>{
  await runInDurableObject(env.TALK_SESSIONS.getByName('renew-identity-test'),async(instance,state)=>{
   const service=instance as unknown as TalkSession,e=(instance as any).env,old=e.GEMINI_API_KEY;e.GEMINI_API_KEY='test-only';

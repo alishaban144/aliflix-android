@@ -1,3 +1,4 @@
+import { fetchGemini, hasGeminiCredentials } from './geminiKeys';
 import {z} from 'zod';
 import {TmdbClient} from './tmdb';
 import {retrieveKnowledge, type Evidence, type TalkContext} from './talkEvidence';
@@ -115,9 +116,9 @@ export async function understandPlayerStory(q:StoryRequest,sources:StorySources,
  let provider='gemini';
  let raw:unknown;
  const gemini=async()=>{
-  if(!env.GEMINI_API_KEY)throw Error('provider_unavailable');
-  const response=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_GENERATION_MODEL||'gemini-3.8-flash'}:generateContent`,{
-   method:'POST',headers:{'x-goog-api-key':env.GEMINI_API_KEY,'content-type':'application/json'},
+  if(!hasGeminiCredentials(env))throw Error('provider_unavailable');
+  const response=await fetchGemini(env,`https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_GENERATION_MODEL||'gemini-3.8-flash'}:generateContent`,{
+   method:'POST',headers:{'content-type':'application/json'},
    body:JSON.stringify({systemInstruction:{parts:[{text:STORY_ANALYSIS_INSTRUCTIONS}]},contents:[{role:'user',parts}],
     generationConfig:{maxOutputTokens:4096,thinkingConfig:{thinkingLevel:'low'},responseMimeType:'application/json',responseJsonSchema:schema}}),signal:AbortSignal.timeout(15000)});
   if(!response.ok){preferredStatus=response.status;await response.body?.cancel();throw Error('provider_unavailable');}

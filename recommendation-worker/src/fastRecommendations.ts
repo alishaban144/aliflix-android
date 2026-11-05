@@ -1,3 +1,4 @@
+import { fetchGemini, hasGeminiCredentials } from './geminiKeys';
 import { z } from 'zod';
 import type { RecommendationEnv } from './types';
 import { ServiceError } from './types';
@@ -39,10 +40,10 @@ export function tavilyCandidatePicks(answer:string,findings:Array<{title:string;
  * text request in one tool call. No speech is requested or retained here. */
 export async function liveRecommendationPicks(env:RecommendationEnv,input:unknown,signal:AbortSignal,
  onPick?:(pick:z.infer<typeof Pick>,index:number)=>void) {
- if(!env.GEMINI_API_KEY)throw new ServiceError('GEMINI_UNAVAILABLE','Recommendations unavailable',503,true);
+ if(!hasGeminiCredentials(env))throw new ServiceError('GEMINI_UNAVAILABLE','Recommendations unavailable',503,true);
  const deadline=AbortSignal.any([signal,AbortSignal.timeout(20000)]);
- const response=await fetch('https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent',{
-  headers:{Upgrade:'websocket','x-goog-api-key':env.GEMINI_API_KEY},signal:deadline,
+ const response=await fetchGemini(env,'https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent',{
+  headers:{Upgrade:'websocket'},signal:deadline,
  });
  const socket=response.webSocket;
  if(!socket)throw new ServiceError(response.status===429?'AI_QUOTA':'GEMINI_UNAVAILABLE','Recommendations unavailable',response.status===429?429:503,true);

@@ -1,3 +1,4 @@
+import type { GeminiKeySlot } from './geminiKeys';
 import { DurableObject } from 'cloudflare:workers';
 import { z } from 'zod';
 import { verifyIdentity } from './watchParty';
@@ -80,7 +81,7 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
  }
 }
 type TalkSelection={tmdbId:number;mediaType:'movie'|'tv';title:string;originalTitle?:string;year?:string;posterPath?:string};
-type Session={context:TalkContext;expires:number;calls:number;searches:number;grants:string[];renewals?:number;sceneCalls?:number;selection?:TalkSelection[];recommendationRequest?:string;recommendationCollection?:RecommendationResult[];recommendationQuery?:string;recommendationAnchors?:Array<{tmdbId:number;mediaType:"movie"|"tv";title:string}>};
+type Session={keySlot?:GeminiKeySlot;context:TalkContext;expires:number;calls:number;searches:number;grants:string[];renewals?:number;sceneCalls?:number;selection?:TalkSelection[];recommendationRequest?:string;recommendationCollection?:RecommendationResult[];recommendationQuery?:string;recommendationAnchors?:Array<{tmdbId:number;mediaType:"movie"|"tv";title:string}>};
 export class TalkSession extends DurableObject<RecommendationEnv> {
  constructor(ctx:DurableObjectState,env:RecommendationEnv){super(ctx,env);ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS memory (key TEXT PRIMARY KEY,value TEXT NOT NULL,expires INTEGER NOT NULL)');for(const ws of ctx.getWebSockets())ws.close(1012,'Update');}
  private read<T>(key:string):T|undefined {const r=this.ctx.storage.sql.exec<{value:string}>('SELECT value FROM memory WHERE key=? AND expires>?',key,Date.now()).toArray()[0];return r?JSON.parse(r.value):undefined;}
@@ -143,9 +144,9 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
  async reserve(amount:number,limit:number):Promise<boolean>{const day=Math.floor(Date.now()/DAY),key='quota:'+day;this.ctx.storage.sql.exec('DELETE FROM memory WHERE expires<?',Date.now());
   const r=this.ctx.storage.sql.exec<{value:string}>('SELECT value FROM memory WHERE key=?',key).toArray()[0];const n=Number(r?.value||0);if(n+amount>limit)return false;
   this.ctx.storage.sql.exec('INSERT OR REPLACE INTO memory VALUES(?,?,?)',key,String(n+amount),(day+2)*DAY);await this.ctx.storage.setAlarm((day+2)*DAY);return true;}
- async open(context:TalkContext) {const expires=Date.now()+20*MINUTE,session=crypto.randomUUID();const token=await issueLiveToken(this.env,context,expires);
+ async open(context:TalkContext) {const expires=Date.now()+20*MINUTE,session=crypto.randomUUID();const {keySlot,...token}=await issueLiveToken(this.env,context,expires);
   this.ctx.storage.sql.exec('DELETE FROM memory WHERE expires<?',Date.now());
-  this.put('live:'+session,{context,expires,calls:0,searches:0,grants:[]} satisfies Session,expires);
+  this.put('live:'+session,{keySlot,context,expires,calls:0,searches:0,grants:[]} satisfies Session,expires);
   // A new player/text connection must not invalidate another in-flight session.
   this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'live:%' AND key NOT IN (SELECT key FROM memory WHERE key LIKE 'live:%' ORDER BY expires DESC, rowid DESC LIMIT 8)");
   await this.ctx.storage.setAlarm(expires);return {...token,session};}
@@ -154,7 +155,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   if((state.renewals||0)>=6)throw Error('TOOL_LIMIT');
   state.renewals=(state.renewals||0)+1;if(responseLanguage)state.context.responseLanguage=responseLanguage;
   this.put('live:'+session,state,state.expires);
-  const token=await issueLiveToken(this.env,state.context,state.expires);
+  const {keySlot:_slot,...token}=await issueLiveToken(this.env,state.context,state.expires,state.keySlot||'primary');
   if(!this.read<Session>('live:'+session))throw Error('SESSION_EXPIRED');
   // No expiry extension, new voice/model or reset of knowledge/search budgets.
   return {...token,session};
