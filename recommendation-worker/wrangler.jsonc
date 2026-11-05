@@ -23,6 +23,9 @@
     "AI_GENERATION_MODEL": "cloudflare-gpt-oss-120b",
     "GEMINI_GENERATION_MODEL": "gemini-3.8-flash",
     "GEMINI_SCENE_MODEL": "gemini-3.6-flash",
+    "GEMINI_FREE_TIER_MODE": "true",
+    "GEMINI_FREE_TIER_RPM": "3",
+    "GEMINI_FREE_TIER_TPM": "32000",
     "GEMINI_EMBEDDING_MODEL": "gemini-embedding-2"
   },
   "durable_objects": {

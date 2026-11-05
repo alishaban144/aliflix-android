@@ -1,7 +1,8 @@
-import type { SecretBindings } from './types';
+import {estimateGeminiInput,geminiCooldown} from './geminiQuota';
+import type { RecommendationEnv, SecretBindings } from './types';
 
 export type GeminiKeySlot = 'primary' | 'secondary';
-type GeminiCredentials = Pick<SecretBindings, 'GEMINI_API_KEY' | 'GEMINI_API_KEY_SECONDARY'>;
+type GeminiCredentials = Pick<SecretBindings, 'GEMINI_API_KEY' | 'GEMINI_API_KEY_SECONDARY'> & Partial<Pick<RecommendationEnv,'TALK_SESSIONS'|'GEMINI_FREE_TIER_MODE'|'GEMINI_FREE_TIER_RPM'|'GEMINI_FREE_TIER_TPM'>>;
 type Key = { slot: GeminiKeySlot; value: string };
 type Cooling = { until: number; status: number };
 
@@ -34,19 +35,21 @@ async function cooling(request: Request): Promise<Cooling | undefined> {
  } catch { return undefined; }
 }
 async function cool(request: Request, response: Response) {
- const retry = response.headers.get('retry-after');
- const seconds = retry && /^\d+(?:\.\d+)?$/.test(retry) ? Number(retry) : retry ? (Date.parse(retry) - Date.now()) / 1000 : NaN;
- const fallback = response.status === 429 ? 30 : [401, 403].includes(response.status) ? 300 : 2;
- const duration = Math.min(300, Math.max(1, Number.isFinite(seconds) ? seconds : fallback));
- try { await caches.default.put(request, Response.json({ until: Date.now() + duration * 1000, status: response.status },
-  { headers: { 'cache-control': `max-age=${Math.ceil(duration)}` } })); } catch { /* Cache availability never blocks a request. */ }
+ const value=await geminiCooldown(response),duration=Math.max(1,Math.ceil((value.until-Date.now())/1000));
+ try { await caches.default.put(request, Response.json(value,
+  { headers: { 'cache-control': `max-age=${duration}` } })); } catch {}
+ return value;
 }
 
 /** Balance independent projects; at most one attempt per distinct key, within
  * the caller's original deadline. A minted Live session can pin its project. */
 export async function geminiProjectRequest(env: GeminiCredentials, url: string, init: RequestInit,
  pinned?: GeminiKeySlot): Promise<{ response: Response; keySlot?: GeminiKeySlot }> {
- const pool = keys(env), trackHealth = pool.length > 1;
+ const free=env.GEMINI_FREE_TIER_MODE==='true';
+ if(free&&!env.TALK_SESSIONS)throw Error('GEMINI_BUDGET_UNAVAILABLE');
+ const quota=free?env.TALK_SESSIONS!.getByName('gemini-project-budget-v1'):undefined;
+ const cost=estimateGeminiInput(init.body),rpm=Math.max(1,Math.min(20,Number(env.GEMINI_FREE_TIER_RPM)||3)),tpm=Math.max(1024,Number(env.GEMINI_FREE_TIER_TPM)||32000);
+ const pool = keys(env), trackHealth = pool.length > 1||free;
  let candidates = pool;
  if (pinned) candidates = candidates.filter(key => key.slot === pinned);
  else if (candidates.length > 1 && Math.random() >= .5) candidates.reverse();
@@ -57,19 +60,27 @@ export async function geminiProjectRequest(env: GeminiCredentials, url: string, 
   const key = candidates[index], health = trackHealth ? await healthRequest(key, url) : undefined;
   const state = health ? await cooling(health) : undefined;
   if (state) { unavailable.push(state); continue; }
+  const pieces=health?.url.split('/'),owner=pieces?.at(-1)||'',scope=pieces?.at(-2)||'';
+  let lease:string|undefined;
+  if(quota){
+   const grant=await quota.acquireGeminiBudget(owner,scope,scope==='live-token'||scope==='live-stream'?0:cost,scope==='live-token'?rpm*2:rpm,tpm);
+   if(!grant.allowed){unavailable.push({until:grant.retryAt||Date.now()+1000,status:grant.status||429});continue;}
+   lease=grant.lease;
+  }
   const headers = new Headers(init.headers); headers.set('x-goog-api-key', key.value);
   let response: Response;
   try { response = await fetch(url, { ...init, headers }); }
   catch (error) {
    if (init.signal?.aborted || index === candidates.length - 1) throw error;
    continue;
-  }
+  }finally{if(quota&&lease)await quota.releaseGeminiBudget(owner,scope,lease).catch(()=>undefined);}
   const retryable = [401, 403, 408, 429].includes(response.status) || response.status >= 500;
   if (!retryable) return { response, keySlot: key.slot };
-  if (health) await cool(health, response);
+  const blocked=health?await cool(health,response):undefined;
+  if(quota&&blocked)await quota.blockGeminiBudget(owner,scope,blocked.until,blocked.status);
   if (index === candidates.length - 1) return { response, keySlot: key.slot };
   await response.body?.cancel().catch(() => undefined);
-  unavailable.push({ until: Date.now() + 1000, status: response.status });
+  unavailable.push(blocked||{ until: Date.now() + 2000, status: response.status });
  }
  const until = Math.min(...unavailable.map(value => value.until));
  const status = unavailable.every(value => value.status === 429) ? 429 : 503;

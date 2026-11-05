@@ -151,6 +151,7 @@ export async function boundedJson(response: Response, limit = 256000): Promise<u
 export async function issueLiveToken(env: RecommendationEnv, context: TalkContext, expires: number, pinned?:GeminiKeySlot) {
  if(!hasGeminiCredentials(env))throw Error('LIVE_UNAVAILABLE');
  const setup=liveSetup(context);
+ if(env.GEMINI_FREE_TIER_MODE==='true'&&context.activePlayer?.id)setup.systemInstruction.parts[0].text+='\nFree-tier scene memory: opening caches public sources without inference. If storyResearch.deferred is true and the viewer asks an identity or causal scene question, call app_control(scene_story) once with the actual question before answering unless existing storyUnderstanding already covers it. Reuse named facts on follow-ups. Use scene_recall for a missing earlier passage; do not repeatedly compile an unchanged scene. Greetings and playback commands need no scene-analysis call.';
  // Lock model, voice, prompt, tools and budgets, while permitting ONLY the
  // session-resumption handle to change on a same-model reconnect.
  const {sessionResumption: _resumption, ...lockedSetup}=setup;

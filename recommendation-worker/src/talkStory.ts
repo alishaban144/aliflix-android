@@ -1,4 +1,5 @@
 import { geminiSceneConfig } from './geminiSceneConfig';
+import {budgetStoryEvidence} from './storyBudget';
 import { fetchGemini, hasGeminiCredentials } from './geminiKeys';
 import {z} from 'zod';
 import {TmdbClient} from './tmdb';
@@ -85,7 +86,7 @@ export function limitedStoryContext(q:StoryRequest,sources:StorySources){
  const names=sources.characters.filter(c=>norm(c.name).split(' ').filter(t=>t.length>2&&!['doctor','dr','mrs','miss','mr','young','older'].includes(t)).some(t=>new RegExp(`(?:^| )${t}(?: |$)`,'u').test(dialogue)))
   .map(c=>({name:c.name,scope:'Canonical spelling for an already-mentioned character; no face/scene binding is certified.'}));
  return {status:'limited',anchorSeconds:q.anchorSeconds,characters:[],mentionedCharacters:names,facts:[],explanation:'',
-  unknowns:['Independent named-story analysis is currently unavailable. Use actual earlier dialogue and images; retrieve a specifically missing identity or causal link instead of making up a name.']};
+  unknowns:['Independent named-story analysis is currently unavailable. Use actual earlier dialogue and images; retrieve a specifically missing identity or causal link instead of making up a name. Never put a named person in this room from the question wording alone. If the current counterpart is unresolved, ask a short named clarification about the distinct visits instead of guessing.']};
 }
 /** Fast source retrieval for a single multimodal Live reasoning pass. Research
  * stays explicitly untimed; it is never relabelled as observed scene truth. */
@@ -104,6 +105,12 @@ export function playerStoryResearch(q:StoryRequest,sources:StorySources){
   scope:'Independent untimed story research and credited fictional-character spellings, NOT a face binding or a timestamped scene observation. Research may contain future events and identities. Use it only to resolve already-established names, relationships and causal setup supported by the supplied full earlier transcript and current temporal images. A past event revealed later remains a future spoiler. Do not expose later aliases or motives. Never present cast order or a plot paragraph alone as proof of who is on screen. Answer with current scene plus earlier story, not frame narration.'};
 }
 export async function understandPlayerStory(q:StoryRequest,sources:StorySources,env:RecommendationEnv){
+ if(env.GEMINI_FREE_TIER_MODE==='true'){
+  if(!q.question.trim())return {...limitedStoryContext(q,sources),status:'research_ready',deferred:true,completed:true,unknowns:[],
+   creditsUrl:sources.creditsUrl,
+   instruction:'Public character and plot sources are cached. No scene inference was spent on opening. When the viewer asks an actual identity or causal scene question, call scene_story once with that exact question unless existing storyUnderstanding already covers it. Reuse existing compiled memory on follow-ups; retrieve a missing earlier passage with scene_recall. These names alone are not face bindings. No raw future plot is supplied.'};
+  const budget=budgetStoryEvidence(q,sources);q=budget.request;sources=budget.sources;
+ }
  // Three temporal images keep visual input bounded while retaining the pause.
  if(q.frames.length>3)q={...q,frames:[q.frames[0],q.frames[Math.floor(q.frames.length/2)],q.frames[q.frames.length-1]]};
  const schema=z.toJSONSchema(StoryUnderstandingSchema);delete schema.$schema;

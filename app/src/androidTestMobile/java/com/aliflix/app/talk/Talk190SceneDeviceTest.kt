@@ -112,7 +112,23 @@ class Talk190SceneDeviceTest {
                         delay(100)
                         withContext(Dispatchers.Main){assertTrue("The real toolbar tap must open Talk",player.talkVisible)}
                     }else withContext(Dispatchers.Main){player.openTalk()}
-                    withContext(Dispatchers.Main){assertFalse(player.talkVoice.state.value.textMode);if(args.getString("sceneSpeechFixture")==null){player.talkVoice.setTextMode(true);player.openTalk()}}
+                    withContext(Dispatchers.Main){assertFalse(player.talkVoice.state.value.textMode)}
+                    if(args.getString("sceneSpeechFixture")==null){
+                        if(args.getString("sceneUseToolbar")=="true"){
+                            delay(750)
+                            suspend fun tap(key:String){
+                                val bounds=withTimeout(5000){while(true){withContext(Dispatchers.Main){player.talkVoice.debugCardBounds[key]}?.let{return@withTimeout it};delay(30)};@Suppress("UNREACHABLE_CODE")error("Missing $key")}
+                                val at=android.os.SystemClock.uptimeMillis()
+                                for(action in listOf(android.view.MotionEvent.ACTION_DOWN,android.view.MotionEvent.ACTION_UP)){
+                                    val event=android.view.MotionEvent.obtain(at,android.os.SystemClock.uptimeMillis(),action,bounds.center.x,bounds.center.y,0)
+                                    event.source=android.view.InputDevice.SOURCE_TOUCHSCREEN
+                                    try{i.uiAutomation.injectInputEvent(event,true)}finally{event.recycle()}
+                                }
+                            }
+                            tap("player-orb");tap("player-type")
+                            withTimeout(5000){while(!player.talkVoice.state.value.textMode)delay(30)}
+                        }else withContext(Dispatchers.Main){player.talkVoice.setTextMode(true);player.openTalk()}
+                    }
                 }
                 val scene=withContext(Dispatchers.Main) { player.prepareTalkScene()!! }
                 val receipt=JSONObject().put("title",title.third).put("scene",scene.metadata)

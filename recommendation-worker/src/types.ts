@@ -218,10 +218,13 @@ export interface WorkersAiBinding {
   run(model: string, input: Record<string, unknown>): Promise<unknown>;
 }
 
-export type RecommendationEnv = Omit<Env, 'GEMINI_GENERATION_MODEL' | 'GEMINI_SCENE_MODEL' | 'AI_GENERATION_MODEL' | 'AI'> & {
+export type RecommendationEnv = Omit<Env, 'GEMINI_GENERATION_MODEL' | 'GEMINI_SCENE_MODEL' | 'GEMINI_FREE_TIER_MODE' | 'GEMINI_FREE_TIER_RPM' | 'GEMINI_FREE_TIER_TPM' | 'AI_GENERATION_MODEL' | 'AI'> & {
   AI?: WorkersAiBinding;
   GEMINI_GENERATION_MODEL?: GeminiAiModel;
   GEMINI_SCENE_MODEL?: string;
+  GEMINI_FREE_TIER_MODE?: string;
+  GEMINI_FREE_TIER_RPM?: string;
+  GEMINI_FREE_TIER_TPM?: string;
   AI_GENERATION_MODEL?: RecommendationAiModel;
 } & SecretBindings;
 

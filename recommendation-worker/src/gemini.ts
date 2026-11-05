@@ -118,12 +118,13 @@ async function geminiFetch<T>(
   // The deadline covers the entire provider operation. The former per-attempt
   // timeout could turn one 30-second request into five attempts plus backoff,
   // which made an interactive request hang for almost three minutes.
+  const attempts=env.GEMINI_FREE_TIER_MODE==='true'?1:maxAttempts;
   const startedAt = Date.now();
   const deadline = startedAt + timeoutMs;
   let lastError: Error | undefined;
   let providerRetryAfterMs: number | undefined;
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     if (attempt > 0) {
       const remainingBeforeDelay = deadline - Date.now();
       const exponentialDelay = Math.min(8_000, 1_000 * Math.pow(2, attempt - 1));
@@ -176,7 +177,7 @@ async function geminiFetch<T>(
           elapsedMs: Date.now() - startedAt,
           operation,
         }));
-        if (retryable && attempt + 1 < maxAttempts) {
+        if (retryable && attempt + 1 < attempts) {
           lastError = new ServiceError('GEMINI_UNAVAILABLE', `Gemini request failed (${response.status})`, 503, true);
           continue;
         }
@@ -209,7 +210,7 @@ async function geminiFetch<T>(
       } else {
         lastError = new ServiceError('GEMINI_UNAVAILABLE', 'Gemini request failed', 503, true);
       }
-      if (attempt + 1 >= maxAttempts || Date.now() >= deadline) {
+      if (attempt + 1 >= attempts || Date.now() >= deadline) {
         if (lastError instanceof ServiceError) throw lastError;
         throw new ServiceError('GEMINI_UNAVAILABLE', lastError.message || 'Gemini request failed', 503, true);
       }
