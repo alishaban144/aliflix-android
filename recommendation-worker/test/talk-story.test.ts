@@ -57,12 +57,18 @@ describe('named source-bound player story',()=>{
  it('sends independent story, credits and much more than the Live transcript page, returning only bounded analysed facts',async()=>{
   const q=request();q.dialogue=Array.from({length:200},(_,i)=>[i*4,i*4+2,`Earlier exchange ${i}: `+'evidence '.repeat(12)]);
   const fetcher=vi.spyOn(globalThis,'fetch').mockResolvedValue(Response.json({candidates:[{content:{parts:[{text:JSON.stringify(answer())}]}}]}));
-  const result=await understandPlayerStory(q,sources,{GEMINI_API_KEY:'test-only'} as RecommendationEnv);
+  const result=await understandPlayerStory(q,sources,{GEMINI_API_KEY:'test-only',GEMINI_SCENE_MODEL:'gemini-3.8-flash'} as RecommendationEnv);
   expect(result.status).toBe('grounded');
   const body=JSON.parse(String(fetcher.mock.calls[0][1]?.body));expect(body.generationConfig.thinkingConfig.thinkingLevel).toBe('low');const data=JSON.parse(body.contents[0].parts[0].text);
   expect(data.dialogue).toHaveLength(200);expect(JSON.stringify(data.dialogue).length).toBeGreaterThan(12000);
   expect(data.independentResearch[0].id).toBe('wiki-rev-1');expect(body.contents[0].parts[2].inlineData.mimeType).toBe('image/jpeg');
   expect(JSON.stringify(result)).not.toContain('quarantined background');expect(body.systemInstruction.parts[0].text).toContain('past event revealed later');
+ });
+ it('uses the fast multimodal scene model without changing the general generation model',async()=>{
+  const fetcher=vi.spyOn(globalThis,'fetch').mockResolvedValue(Response.json({candidates:[{content:{parts:[{text:JSON.stringify(answer())}]}}]}));
+  expect((await understandPlayerStory(request(),sources,{GEMINI_API_KEY:'test-only',GEMINI_GENERATION_MODEL:'gemini-3.8-flash'} as RecommendationEnv)).status).toBe('grounded');
+  expect(String(fetcher.mock.calls[0][0])).toContain('gemini-3.6-flash:generateContent');
+  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).generationConfig.thinkingConfig.thinkingLevel).toBe('minimal');
  });
  it('treats a real provider quota refusal as limited evidence, never a fabricated named answer',async()=>{
   vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response('quota',{status:429}));

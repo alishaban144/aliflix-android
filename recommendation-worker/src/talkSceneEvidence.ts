@@ -1,3 +1,4 @@
+import { geminiSceneConfig } from './geminiSceneConfig';
 import { fetchGemini, hasGeminiCredentials } from './geminiKeys';
 import { z } from 'zod';
 import type { RecommendationEnv } from './types';
@@ -88,10 +89,10 @@ async function structuredSceneObservation(scene:ScenePacket,env:RecommendationEn
  const body=sceneObservationBody(scene);
  body.contents[0].parts[body.contents[0].parts.length-1]={text:'Observe this sequence now. Return only concise, evidence-supported observations in the required JSON schema. No film identification or remembered plot.'};
  const schema=z.toJSONSchema(SceneObservationSchema);delete schema.$schema;
- const model=env.GEMINI_GENERATION_MODEL || 'gemini-3.8-flash';
+ const {model,thinkingLevel}=geminiSceneConfig(env);
  const response=await fetchGemini(env,`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
   method:'POST',headers:{'content-type':'application/json'},
-  body:JSON.stringify({...body,generationConfig:{maxOutputTokens:3072,thinkingConfig:{thinkingLevel:'low'},responseMimeType:'application/json',responseJsonSchema:schema}}),signal});
+  body:JSON.stringify({...body,generationConfig:{maxOutputTokens:3072,thinkingConfig:{thinkingLevel},responseMimeType:'application/json',responseJsonSchema:schema}}),signal});
  if(!response.ok){console.warn('talk_structured_scene_failed',response.status);await response.body?.cancel();throw Error('SCENE_UNAVAILABLE');}
  const data=await boundedJson(response,32768) as {candidates?:Array<{content?:{parts?:Array<{text?:string;thought?:boolean}>}}>};
  const text=data.candidates?.[0]?.content?.parts?.filter(part=>!part.thought).map(part=>part.text||'').join('');
