@@ -87,7 +87,23 @@ class Talk190SceneDeviceTest {
                         delay(100)
                         withContext(Dispatchers.Main){assertTrue("The real toolbar tap must open Talk",player.talkVisible)}
                     }else withContext(Dispatchers.Main){player.openTalk()}
-                    withContext(Dispatchers.Main){assertFalse(player.talkVoice.state.value.textMode);if(args.getString("sceneSpeechFixture")==null){player.talkVoice.setTextMode(true);player.openTalk()}}
+                    withContext(Dispatchers.Main){assertFalse(player.talkVoice.state.value.textMode)}
+                    if(args.getString("sceneSpeechFixture")==null){
+                        if(args.getString("sceneUseToolbar")=="true"){
+                            delay(750)
+                            suspend fun tap(key:String){
+                                val bounds=withTimeout(5000){while(true){withContext(Dispatchers.Main){player.talkVoice.debugCardBounds[key]}?.let{return@withTimeout it};delay(30)};@Suppress("UNREACHABLE_CODE")error("Missing $key")}
+                                val at=android.os.SystemClock.uptimeMillis()
+                                for(action in listOf(android.view.MotionEvent.ACTION_DOWN,android.view.MotionEvent.ACTION_UP)){
+                                    val event=android.view.MotionEvent.obtain(at,android.os.SystemClock.uptimeMillis(),action,bounds.center.x,bounds.center.y,0)
+                                    event.source=android.view.InputDevice.SOURCE_TOUCHSCREEN
+                                    try{i.uiAutomation.injectInputEvent(event,true)}finally{event.recycle()}
+                                }
+                            }
+                            tap("player-orb");tap("player-type")
+                            withTimeout(5000){while(!player.talkVoice.state.value.textMode)delay(30)}
+                        }else withContext(Dispatchers.Main){player.talkVoice.setTextMode(true);player.openTalk()}
+                    }
                 }
                 val scene=withContext(Dispatchers.Main) { player.prepareTalkScene()!! }
                 val receipt=JSONObject().put("title",title.third).put("scene",scene.metadata)
@@ -118,7 +134,14 @@ class Talk190SceneDeviceTest {
                 val before=android.os.SystemClock.elapsedRealtime()
                 receipt.put("question", args.getString("sceneQuestion") ?: "Explain why this happened using the earlier setup.")
                 val speech=args.getString("sceneSpeechFixture")
-                if(speech==null)withContext(Dispatchers.Main) { player.talkVoice.sendText(receipt.getString("question")) }
+                if(speech==null)withContext(Dispatchers.Main) {
+                    player.talkVoice.sendText(receipt.getString("question"))
+                    player.currentFocus?.clearFocus()
+                    // The real Send action dismisses the IME; direct session
+                    // injection must reproduce that viewport for visual review.
+                    androidx.core.view.WindowCompat.getInsetsController(player.window,player.window.decorView)
+                        .hide(androidx.core.view.WindowInsetsCompat.Type.ime())
+                }
                 else launch(Dispatchers.Main){ player.talkVoice.debugInjectMicrophonePcm(talkValidationFixture(speech).readBytes()) }
                 var first=0L
                 val answer=withTimeout(65000) {
@@ -133,6 +156,7 @@ class Talk190SceneDeviceTest {
                     @Suppress("UNREACHABLE_CODE") error("No answer")
                 }
                 receipt.put("answer",answer).put("firstResponseMs",first).put("completedMs",android.os.SystemClock.elapsedRealtime()-before)
+                    .put("sceneWireChars",withContext(Dispatchers.Main){player.talkScene()?.parts(false)?.optJSONObject(0)?.optString("text")?.length?:0})
                     .put("recallMs",player.talkVoice.debugSceneRecallMs).put("observationMs",player.talkVoice.debugSceneObservationMs)
                     .put("questionSentMs",player.talkVoice.debugQuestionSentAt-before)
                     .put("framesSent",player.talkVoice.debugSceneFrames).put("tools",JSONObject(player.talkVoice.debugToolCalls.toMap()))
@@ -142,8 +166,15 @@ class Talk190SceneDeviceTest {
                 }
                 assertEquals("en",player.talkVoice.debugResponseLanguage)
                 assertTrue("No transcript recall supplied",player.talkVoice.debugSceneContext?.optJSONObject("episodeRecall")?.optJSONObject("storyThroughAnchor")?.optInt("includedCues",0)?.let { it > 0 } == true)
-                if(talkNeedsCurrentSceneObservation(receipt.getString("question")))
-                    assertTrue("Missing temporal image evidence; see talk190-live-$titleCase.json",(player.talkVoice.debugSceneContext?.optJSONArray("attachedCurrentFrameSeconds")?.length()?:0)>=3 || player.talkVoice.debugSceneContext?.optJSONObject("groundedObservation")?.optBoolean("titleBlind")==true)
+                if(talkNeedsCurrentSceneObservation(receipt.getString("question"))){
+                    val context=player.talkVoice.debugSceneContext
+                    val frames=context?.optJSONArray("attachedCurrentFrameSeconds")?.length()?:0
+                    val named=context?.optJSONObject("storyUnderstanding")
+                    val groundedIdentity=talkCurrentIdentityQuestion(receipt.getString("question"))&&frames>0&&
+                        named?.optString("status")=="grounded"&&(named.optJSONArray("characters")?.length()?:0)>0
+                    assertTrue("Missing temporal or independently bound identity evidence; see talk190-live-$titleCase.json",
+                        groundedIdentity||frames>=3||context?.optJSONObject("groundedObservation")?.optBoolean("titleBlind")==true)
+                }
                 assertTrue(answer,answer.length>100)
                 assertFalse(answer,Regex("(?i)trouble.{0,45}retriev|unable to (?:access|see)|cannot (?:access|see)|can't (?:access|see)|don't have.{0,20}(?:scene|details)").containsMatchIn(answer))
                 val timely=first in 1..if(speech==null)12000 else 25000
@@ -175,6 +206,13 @@ class Talk190SceneDeviceTest {
                 screenshot("talk190-live-$titleCase-$index.png")
                 args.getString("sceneFollowUp")?.let { follow ->
                     val id=player.talkVoice.state.value.conversationId
+                    if(args.getString("sceneForceQuotaRotate")=="true") {
+                        withContext(Dispatchers.Main){player.talkVoice.debugQuotaRecovery()}
+                        withTimeout(20000){while(player.talkVoice.state.value.phase !in setOf("Listening","Muted"))delay(40)}
+                        assertEquals(id,player.talkVoice.state.value.conversationId)
+                        assertEquals("en",player.talkVoice.debugResponseLanguage)
+                        receipt.put("forcedQuotaRecovery",true)
+                    }
                     val from=player.talkVoice.state.value.lines.size
                     val started=android.os.SystemClock.elapsedRealtime()
                     withContext(Dispatchers.Main){player.talkVoice.sendText(follow)}
@@ -209,6 +247,7 @@ class Talk190SceneDeviceTest {
                 .put("recallMs",nativePlayer!!.talkVoice.debugSceneRecallMs).put("observationMs",nativePlayer!!.talkVoice.debugSceneObservationMs)
                 .put("questionSentAt",nativePlayer!!.talkVoice.debugQuestionSentAt)
                 .put("finalAudio",nativePlayer!!.talkVoice.debugAudioSnapshot())
+                .put("finalConnectionIssue",nativePlayer!!.talkVoice.debugConnectionIssue)
                 .put("observationIssue",nativePlayer!!.talkVoice.debugSceneObservationIssue)
                 .put("storyIssue",nativePlayer!!.talkVoice.javaClass.methods.firstOrNull{it.name.startsWith("getDebugSceneStoryIssue")}?.invoke(nativePlayer!!.talkVoice))
                 .put("storyMs",nativePlayer!!.talkVoice.javaClass.methods.firstOrNull{it.name.startsWith("getDebugSceneStoryMs")}?.invoke(nativePlayer!!.talkVoice))

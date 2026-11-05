@@ -1,0 +1,112 @@
+{
+  "scope": "Physical Pixel 7a. Four additional titles and ten distinct questions, including same-conversation follow-ups. These are observed samples, not a guarantee for every scene.",
+  "cases": [
+    {
+      "title": "Arrival",
+      "kind": "movie",
+      "pauseSeconds": 2100.181,
+      "appVersion": "3.1.194",
+      "validatedBackendSource": "e93b9880",
+      "question": "Why can't the linguist just translate the recording Weber played her?",
+      "answer": "It's impossible to translate an entirely unknown language just from an audio file. Louise explains that she needs to interact directly with the extraterrestrials inside their spacecraft to learn it. She mentions that she could translate Farsi from recordings before only because she already knew the language.",
+      "firstTextMs": 11170,
+      "manualReview": "Pass: explains unknown-language interaction versus already-known Farsi; distinguishes human unrest from an alien attack. The automated follow-up matcher missed equivalent violence/looting wording; both full answers were manually reviewed.",
+      "followUp": {
+        "question": "Does that news report prove the aliens attacked people?",
+        "answer": "No, the news report does not prove the aliens attacked people. The report describes increasing violence, looting, and a cult compound burning down in North Dakota as consequences following the alien landings, but it doesn't mention any direct attacks by the extraterrestrials themselves.",
+        "completeMs": 5084,
+        "sameConversation": true
+      }
+    },
+    {
+      "title": "Knives Out",
+      "kind": "movie",
+      "pauseSeconds": 3600.189,
+      "appVersion": "3.1.195",
+      "validatedBackendSource": "5e149747",
+      "question": "Why is Marta nervous about her medical bag being missing?",
+      "answer": "Marta believes she accidentally gave Harlan a lethal overdose of morphine, and she fears her missing medical bag might contain evidence that would incriminate her if the police examine it.",
+      "firstTextMs": 7238,
+      "manualReview": "Pass: gives the earlier morphine-overdose belief as the stake, not a frame description; preserves what Blanc has not been told and does not disclose later medication revelations.",
+      "followUp": {
+        "question": "Does Blanc know what she thinks happened with the medicine yet?",
+        "answer": "No, Blanc does not know what Marta believes happened with the medicine yet. In this scene, he is inquiring about her missing medical bag and observing the study, while Marta keeps her concerns to herself.",
+        "completeMs": 2455,
+        "sameConversation": true
+      },
+      "wireSceneTextCharacters": 28975
+    },
+    {
+      "title": "Severance",
+      "kind": "tv",
+      "season": 1,
+      "episode": 1,
+      "pauseSeconds": 1200.194,
+      "appVersion": "3.1.195",
+      "validatedBackendSource": "35ac58b9",
+      "question": "Why can she name a U.S. state but not remember her own name?",
+      "answer": "Her personal memories, like her name, have been suppressed, but her general knowledge, like naming a U.S. state, remains intact.",
+      "firstTextMs": 7416,
+      "manualReview": "Pass: separates preserved general knowledge from inaccessible personal memories; explains Mark replacing Petey. Does not disclose the later reason for Petey leaving.",
+      "followUp": {
+        "question": "Why is Mark now doing this job instead of Petey?",
+        "answer": "Petey is no longer with the company, so the Board has promoted Mark to serve as the department chief in his place.",
+        "completeMs": 1903,
+        "sameConversation": true
+      },
+      "wireSceneTextCharacters": 21441
+    },
+    {
+      "title": "The Good Place",
+      "kind": "tv",
+      "season": 1,
+      "episode": 1,
+      "pauseSeconds": 600.381,
+      "appVersion": "3.1.195",
+      "validatedBackendSource": "5e149747",
+      "question": "Why can Eleanor understand Chidi when he says he is speaking French?",
+      "answer": "Eleanor can understand Chidi when he speaks French because the afterlife automatically translates whatever is said into a language the listener can comprehend.",
+      "firstTextMs": 6369,
+      "manualReview": "Pass: automatic translation explains French understood by Eleanor; English output and same conversation remain intact. The follow-up recalls her already-shown confession without later-season revelations.",
+      "followUp": {
+        "question": "Does Chidi know Eleanor is the wrong person yet?",
+        "answer": "Yes, Chidi knows there is a major mistake, as Eleanor has just confessed to him that the memories of being a death row lawyer and rescuing orphans do not belong to her at all.",
+        "completeMs": 2778,
+        "sameConversation": true
+      },
+      "wireSceneTextCharacters": 25089
+    },
+    {
+      "title": "The Good Place",
+      "kind": "tv",
+      "season": 1,
+      "episode": 1,
+      "pauseSeconds": 600.38,
+      "appVersion": "3.1.194",
+      "validatedBackendSource": "e93b9880",
+      "question": "Why is Eleanor telling Chidi that Michael got the wrong person?",
+      "answer": "Eleanor is telling Chidi that Michael made a mistake because the memories shown in the life review video do not belong to her. She realizes that the supposed life of a death row lawyer who rescued orphans is not her reality. Because of this discrepancy, Eleanor concludes she is not the person who should be in the Good Place.",
+      "firstTextMs": 5444,
+      "manualReview": "Pass: identifies the wrong biography and distinguishes Michael's claim of a perfect system from proof. No later explanation of the setting is revealed.",
+      "followUp": {
+        "question": "Does Michael's claim that the system is perfect prove she belongs here?",
+        "answer": "No, Michael's claim does not prove she belongs here. Eleanor explicitly rejects the evidence shown in the video, pointing out that the memories of being a death row lawyer and rescuing orphans do not belong to her. This discrepancy leads her to conclude that the system made a major mistake and that she is not supposed to be in the Good Place.",
+        "completeMs": 3473,
+        "sameConversation": true
+      }
+    }
+  ],
+  "changesFromRejectedRuns": [
+    "Unsupported thinking/schema parameters fixed; free-tier compilation uses a bounded Live tool result.",
+    "A real post-handshake quota failure led to bounded remaining-project recovery for both conversation and compiler.",
+    "Duplicate timeline/window text removed while preserving selected timed dialogue and full local retrieval.",
+    "Earlier causal-clue terms now feed both bounded compilation and the existing local recall query.",
+    "An overconstrained generation grammar regressed and was reverted; independent application validation remains strict."
+  ],
+  "limits": [
+    "No universal catalogue-wide same-cut scene index.",
+    "Uncaptured handwriting or action between sparse images can remain unresolved.",
+    "Caption cut alignment and model interpretation are not certified.",
+    "All three free-project quotas remain finite."
+  ]
+}

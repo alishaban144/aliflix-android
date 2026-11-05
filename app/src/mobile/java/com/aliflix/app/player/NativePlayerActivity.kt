@@ -83,7 +83,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         val packet = sceneMemory.recall(query, fullStory) ?: return null
         val needsCurrentVideo = com.aliflix.app.talk.talkNeedsCurrentSceneObservation(query) &&
             com.aliflix.app.talk.sceneNeedsVideoBackfill(sceneMemory.temporalFrames(), packet.optDouble("anchorSeconds"))
-        if (query != "current scene" && (packet.optString("mode") in setOf("previous", "timestamp") || needsCurrentVideo || packet.optString("mode")=="search" && com.aliflix.app.talk.talkNeedsCurrentSceneObservation(query) && Regex("(?i)earlier|previous|before|beginning|first|zuvor|vorher|سابق|قبل").containsMatchIn(query))) {
+        if (query != "current scene" && (packet.optString("mode") in setOf("previous", "timestamp") || needsCurrentVideo || packet.optString("mode")=="search" && !com.aliflix.app.talk.talkCurrentIdentityQuestion(query) && com.aliflix.app.talk.talkNeedsCurrentSceneObservation(query) && Regex("(?i)earlier|previous|before|beginning|first|zuvor|vorher|سابق|قبل").containsMatchIn(query))) {
             val anchor = packet.optDouble("anchorSeconds")
             val windows = packet.optJSONArray("scenes") ?: JSONArray()
             val target = packet.optDouble("targetSeconds", Double.NaN)
@@ -91,7 +91,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
             // Decode its temporal window first; older search hits must not consume
             // the eight-frame budget and leave only a paused still.
             val positions = if(needsCurrentVideo)
-                listOf(24.0,8.0,2.0).map{(anchor-it).coerceAtLeast(0.0)}
+                listOf(2.0,8.0,24.0).map{(anchor-it).coerceAtLeast(0.0)}
             else if (packet.optString("mode") == "timestamp" && target.isFinite())
                 listOf(target - 8.0, target - 3.0, target, target + 3.0).filter { it in 0.0..anchor }
             else if (packet.optString("mode") == "previous") buildList {
@@ -109,9 +109,11 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                 add((anchor-8).coerceAtLeast(0.0));add(anchor)
             } else listOf(32.0, 16.0, 8.0, 6.0, 4.0, 2.0, 1.0).map { (anchor - it).coerceAtLeast(0.0) }
             NativePlaybackService.activeRequest?.let { request ->
-                val decoded = try { talkVideo.frames(requestId, request, positions, anchor,
-                    { !isDestroyed && selection?.key == current.key && NativePlaybackService.activeRequestId == requestId &&
-                        kotlin.math.abs(talkSnapshot().optDouble("positionSeconds") - anchor) < .8 })
+                val decoded = try { withTimeoutOrNull(if(com.aliflix.app.talk.talkCurrentIdentityQuestion(query))3500L else 12000L) {
+                    talkVideo.frames(requestId, request, positions, anchor,
+                        { !isDestroyed && selection?.key == current.key && NativePlaybackService.activeRequestId == requestId &&
+                            kotlin.math.abs(talkSnapshot().optDouble("positionSeconds") - anchor) < .8 })
+                    }.orEmpty()
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { emptyList() }
                 sceneMemory.retrievedFrames(decoded)
@@ -693,16 +695,13 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                     onControlsVisibilityChanged = ::updateSubtitlePadding,
                     onOverlayVisibilityChanged = { captionGestureBlocked = it },
                 )
+                val talkMotion=com.aliflix.app.ui.common.rememberMobileMotionEnabled()&&com.aliflix.app.ui.common.rememberMobileResumed()
                 androidx.compose.animation.AnimatedVisibility(talkVisible,
-                    enter=androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(180)),
-                    exit=androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(240))) {
+                    enter=androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(if(talkMotion)180 else 0)),
+                    exit=androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(if(talkMotion)360 else 0))) {
                     key(talkOpening) {
                         com.aliflix.app.talk.TalkPlayerBubble(talkVoice,onStart=::openTalk,onClose=::closeTalk,tracker=talkTouches,
-                            orbTransition=Modifier.animateEnterExit(
-                                enter=androidx.compose.animation.scaleIn(androidx.compose.animation.core.spring(dampingRatio=.78f,stiffness=210f),initialScale=.35f)+
-                                    androidx.compose.animation.slideInVertically(androidx.compose.animation.core.tween(420)){it/3},
-                                exit=androidx.compose.animation.scaleOut(androidx.compose.animation.core.tween(240),targetScale=.35f)+
-                                    androidx.compose.animation.slideOutVertically(androidx.compose.animation.core.tween(240)){it/4}))
+                            orbTransition=com.aliflix.app.talk.playerOrbTransition(transition,talkMotion))
                     }
                 }
             } }

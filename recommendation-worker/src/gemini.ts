@@ -1,3 +1,4 @@
+import { fetchGemini, hasGeminiCredentials, redactGeminiKeys } from './geminiKeys';
 import { EDITORIAL_RECOMMENDATIONS_PROMPT } from './prompts';
 import {
   DESCRIBE_RECOMMENDATIONS_COMPACT_PROMPT,
@@ -112,17 +113,18 @@ async function geminiFetch<T>(
   operation = 'request',
   maxAttempts = 2,
 ): Promise<T> {
-  if (!env.GEMINI_API_KEY) throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini is not configured', 503, true);
+  if (!hasGeminiCredentials(env)) throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini is not configured', 503, true);
 
   // The deadline covers the entire provider operation. The former per-attempt
   // timeout could turn one 30-second request into five attempts plus backoff,
   // which made an interactive request hang for almost three minutes.
+  const attempts=env.GEMINI_FREE_TIER_MODE==='true'?1:maxAttempts;
   const startedAt = Date.now();
   const deadline = startedAt + timeoutMs;
   let lastError: Error | undefined;
   let providerRetryAfterMs: number | undefined;
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     if (attempt > 0) {
       const remainingBeforeDelay = deadline - Date.now();
       const exponentialDelay = Math.min(8_000, 1_000 * Math.pow(2, attempt - 1));
@@ -135,9 +137,9 @@ async function geminiFetch<T>(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), remainingMs);
     try {
-      const response = await fetch(url, {
+      const response = await fetchGemini(env,url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
         signal: controller.signal,
       });
@@ -168,18 +170,18 @@ async function geminiFetch<T>(
           status: response.status,
           providerCode: providerError?.error?.code,
           providerStatus: providerError?.error?.status,
-          providerMessage: providerError?.error?.message?.slice(0, 300),
+          providerMessage: redactGeminiKeys(env,providerError?.error?.message || '').slice(0, 300),
           providerRetryAfterMs,
           retryable,
           attempt: attempt + 1,
           elapsedMs: Date.now() - startedAt,
           operation,
         }));
-        if (retryable && attempt + 1 < maxAttempts) {
+        if (retryable && attempt + 1 < attempts) {
           lastError = new ServiceError('GEMINI_UNAVAILABLE', `Gemini request failed (${response.status})`, 503, true);
           continue;
         }
-        const providerMessage = providerError?.error?.message?.trim().slice(0, 300);
+        const providerMessage = redactGeminiKeys(env,providerError?.error?.message || '').trim().slice(0, 300);
         const isGeminiCapacityFailure = response.status === 503
           && /high demand/i.test(providerMessage || '');
         if (isGeminiCapacityFailure) {
@@ -208,7 +210,7 @@ async function geminiFetch<T>(
       } else {
         lastError = new ServiceError('GEMINI_UNAVAILABLE', 'Gemini request failed', 503, true);
       }
-      if (attempt + 1 >= maxAttempts || Date.now() >= deadline) {
+      if (attempt + 1 >= attempts || Date.now() >= deadline) {
         if (lastError instanceof ServiceError) throw lastError;
         throw new ServiceError('GEMINI_UNAVAILABLE', lastError.message || 'Gemini request failed', 503, true);
       }

@@ -1,5 +1,9 @@
 Native Ask/Talk visual adaptations
 
+Circular LED halo: original native implementation inspired by Triangle LED Front — @vgpu (MIT), https://21st.dev/@vgpu/components/triangle-led-front
+Rising Ball: native Canvas adaptation of the CSS trajectory and timing — @theutkarshmail (MIT), https://21st.dev/@theutkarshmail/components/rising-ball
+Player orb entrance/exit: original native implementation inspired by Motion Primitives Morphing Dialog — ibelick (MIT), https://21st.dev/community/components/ibelick/morphing-dialog
+
 Halftone Wordmark Footer — Kedhareswer Naidu (MIT), https://21st.dev/@kedhareswer/components/halftone-wordmark-footer
 Motion Primitives — Copyright (c) 2024 ibelick (MIT), https://github.com/ibelick/motion-primitives
 

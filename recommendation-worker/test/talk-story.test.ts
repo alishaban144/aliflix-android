@@ -27,9 +27,21 @@ describe('named source-bound player story',()=>{
  });
  it('canonicalizes a unique first-name answer without inventing another credited person',()=>{
   const value=answer();value.characters[0].name='Daniel';expect(validateStoryUnderstanding(value,request(),sources).characters[0].name).toBe('Daniel Kellner');
+  value.characters[0].name='Kellner';expect(validateStoryUnderstanding(value,request(),sources).characters[0].name).toBe('Daniel Kellner');
   value.characters[0].name='Daniel Kellner';expect(()=>validateStoryUnderstanding(value,request(),{...sources,characters:[...sources.characters,{name:'Daniel Other',performer:'Other'}]})).not.toThrow();
   value.characters[0].name='Daniel';expect(()=>validateStoryUnderstanding(value,request(),{...sources,characters:[...sources.characters,{name:'Daniel Other',performer:'Other'}]})).toThrow();
   expect(validateStoryUnderstanding(value,request(),{...sources,characters:[{name:'Dr. Daniel Kellner',performer:'Credited'}]}).characters[0].name).toBe('Dr. Daniel Kellner');
+ });
+ it('allows an early identity to be corroborated by later already-viewed dialogue',()=>{
+  const value=answer();value.characters[0].firstEstablishedSeconds=20;
+  expect(validateStoryUnderstanding(value,request(),sources).characters[0].name).toBe('Daniel Kellner');
+  value.characters[0].cueIds=[2];expect(()=>validateStoryUnderstanding(value,request(),sources)).toThrow();
+ });
+ it('retains independently valid claims while removing an unsupported claim and its prose',()=>{
+  const value=answer();value.facts.push({...value.facts[0],frameIds:[99]});
+  const result=validateStoryUnderstanding(value,request(),sources,true);
+  expect(result.characters).toHaveLength(1);expect(result.facts).toHaveLength(1);expect(result.explanation).toBe('');
+  expect(()=>validateStoryUnderstanding(value,request(),sources)).toThrow();
  });
  it('rejects an invented name rather than making a confident character guess',()=>{const value=answer();value.characters[0].name='Invented Name';expect(()=>validateStoryUnderstanding(value,request(),sources)).toThrow();});
  it('rejects a cast-only binding without actual scene and earlier dialogue support',()=>{
@@ -57,17 +69,39 @@ describe('named source-bound player story',()=>{
  it('sends independent story, credits and much more than the Live transcript page, returning only bounded analysed facts',async()=>{
   const q=request();q.dialogue=Array.from({length:200},(_,i)=>[i*4,i*4+2,`Earlier exchange ${i}: `+'evidence '.repeat(12)]);
   const fetcher=vi.spyOn(globalThis,'fetch').mockResolvedValue(Response.json({candidates:[{content:{parts:[{text:JSON.stringify(answer())}]}}]}));
-  const result=await understandPlayerStory(q,sources,{GEMINI_API_KEY:'test-only'} as RecommendationEnv);
+  const result=await understandPlayerStory(q,sources,{GEMINI_API_KEY:'test-only',GEMINI_SCENE_MODEL:'gemini-3.8-flash'} as RecommendationEnv);
   expect(result.status).toBe('grounded');
-  const body=JSON.parse(String(fetcher.mock.calls[0][1]?.body));const data=JSON.parse(body.contents[0].parts[0].text);
-  expect(data.dialogue).toHaveLength(200);expect(JSON.stringify(data.dialogue).length).toBeGreaterThan(12000);
+  const body=JSON.parse(String(fetcher.mock.calls[0][1]?.body));expect(body.generationConfig.thinkingConfig.thinkingLevel).toBe('low');const data=JSON.parse(body.contents[0].parts[0].text);
+  expect(JSON.stringify(body.generationConfig.responseJsonSchema)).not.toContain('maxItems');expect(data.dialogue).toHaveLength(200);expect(JSON.stringify(data.dialogue).length).toBeGreaterThan(12000);
   expect(data.independentResearch[0].id).toBe('wiki-rev-1');expect(body.contents[0].parts[2].inlineData.mimeType).toBe('image/jpeg');
   expect(JSON.stringify(result)).not.toContain('quarantined background');expect(body.systemInstruction.parts[0].text).toContain('past event revealed later');
+ });
+ it('separates focused fast extraction from the Flash 3.8 conversation and supports either configured model',async()=>{
+  const fetcher=vi.spyOn(globalThis,'fetch').mockResolvedValue(Response.json({candidates:[{content:{parts:[{text:JSON.stringify(answer())}]}}]}));
+  expect((await understandPlayerStory(request(),sources,{GEMINI_API_KEY:'test-only',GEMINI_GENERATION_MODEL:'gemini-3.8-flash'} as RecommendationEnv)).status).toBe('grounded');
+  expect(String(fetcher.mock.calls[0][0])).toContain('gemini-3.6-flash:generateContent');
+  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).generationConfig.thinkingConfig.thinkingLevel).toBe('low');
+  await understandPlayerStory(request(),sources,{GEMINI_API_KEY:'test-only',GEMINI_SCENE_MODEL:'gemini-3.8-flash'} as RecommendationEnv);
+  expect(String(fetcher.mock.calls[1][0])).toContain('gemini-3.8-flash:generateContent');
+  expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body)).generationConfig.thinkingConfig.thinkingLevel).toBe('low');
+ });
+ it('requires evidence for a premise correction and retains a specifically unresolved premise',()=>{
+  const value={...answer(),premiseChecks:[{claim:'Jane is responsible',verdict:'contradicted',correction:'The reassurance denies her responsibility.',cueIds:[2],frameIds:[]}]};
+  expect(validateStoryUnderstanding(value,request(),sources).premiseChecks[0].verdict).toBe('contradicted');
+  value.premiseChecks[0].cueIds=[99];expect(()=>validateStoryUnderstanding(value,request(),sources)).toThrow();
+  value.premiseChecks[0]={claim:'The offscreen person is an extra',verdict:'unresolved',correction:'No binding established.',cueIds:[],frameIds:[]};
+  expect(validateStoryUnderstanding(value,request(),sources).premiseChecks[0].verdict).toBe('unresolved');
  });
  it('treats a real provider quota refusal as limited evidence, never a fabricated named answer',async()=>{
   vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response('quota',{status:429}));
   const result=await understandPlayerStory(request(),sources,{GEMINI_API_KEY:'test-only'} as RecommendationEnv);
   expect(result.status).toBe('limited');expect(result.characters).toEqual([]);
+ });
+ it('reports a bounded provider failure without exposing future source text as scene knowledge',async()=>{
+  vi.spyOn(globalThis,'fetch').mockRejectedValue(new DOMException('deadline','TimeoutError'));
+  const result=await understandPlayerStory(request(),sources,{GEMINI_API_KEY:'test-only'} as RecommendationEnv);
+  expect(result).toMatchObject({status:'limited',preferredFailure:'timeout'});
+  expect(JSON.stringify(result)).not.toContain('quarantined background');
  });
  it('uses current Cloudflare vision with the same evidence gates and bounded temporal images',async()=>{
   const run=vi.fn().mockResolvedValue({choices:[{message:{content:JSON.stringify(answer())}}]});
@@ -77,7 +111,9 @@ describe('named source-bound player story',()=>{
   expect(run.mock.calls[0][0]).toBe('@cf/qwen/qwen3.8-27b');expect(body.messages[1].content.filter((p:{type:string})=>p.type==='image_url')).toHaveLength(3);
   expect(body.reasoning_effort).toBe('low');expect(body.store).toBe(false);
   const invalid=answer();invalid.characters[0].name='Invented Person';run.mockResolvedValue({choices:[{message:{content:JSON.stringify(invalid)}}]});
-  expect((await understandPlayerStory(request(),sources,{AI:{run}} as unknown as RecommendationEnv)).status).toBe('limited');
+  const retained=await understandPlayerStory(request(),sources,{AI:{run}} as unknown as RecommendationEnv);
+  expect(retained).toMatchObject({status:'grounded',characters:[],explanation:''});
+  expect(JSON.stringify(retained)).not.toContain('Invented Person');
  });
  it('versions the new read-only capability without breaking the installed client contract',()=>{
   const setup=(version:number)=>liveSetup(TalkContextSchema.parse({companionVersion:version,recentProgress:[],stickyLanguage:true}));

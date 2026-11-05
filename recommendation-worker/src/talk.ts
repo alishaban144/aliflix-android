@@ -1,3 +1,5 @@
+import {configuredGeminiSlots,type GeminiKeySlot} from './geminiKeys';
+import {reserveGeminiBudget,type GeminiBudgetState,type GeminiBudgetGrant} from './geminiQuota';
 import { DurableObject } from 'cloudflare:workers';
 import { z } from 'zod';
 import { verifyIdentity } from './watchParty';
@@ -54,8 +56,8 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
    return json(await user.open(body.context));
   }
   if(path.endsWith('/renew')){
-   const b=z.object({session:z.string().uuid(),responseLanguage:z.string().regex(/^[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}$/).optional()}).strict().parse(bodyRaw);
-   return json(await user.renew(b.session,b.responseLanguage));
+   const b=z.object({session:z.string().uuid(),responseLanguage:z.string().regex(/^[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}$/).optional(),rotateProject:z.boolean().optional()}).strict().parse(bodyRaw);
+   return json(await user.renew(b.session,b.responseLanguage,b.rotateProject));
   }
   if(path.endsWith('/research')||path.endsWith('/recommendations')||path.endsWith('/cancel')) {
    const b=z.object({session:z.string().uuid(),requestId:z.string().uuid(),question:z.string().max(1600).optional(),request:z.unknown().optional()}).strict().parse(bodyRaw);
@@ -80,11 +82,26 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
  }
 }
 type TalkSelection={tmdbId:number;mediaType:'movie'|'tv';title:string;originalTitle?:string;year?:string;posterPath?:string};
-type Session={context:TalkContext;expires:number;calls:number;searches:number;grants:string[];renewals?:number;sceneCalls?:number;selection?:TalkSelection[];recommendationRequest?:string;recommendationCollection?:RecommendationResult[];recommendationQuery?:string;recommendationAnchors?:Array<{tmdbId:number;mediaType:"movie"|"tv";title:string}>};
+type Session={keySlot?:GeminiKeySlot;keyFailures?:GeminiKeySlot[];context:TalkContext;expires:number;calls:number;searches:number;grants:string[];renewals?:number;sceneCalls?:number;selection?:TalkSelection[];recommendationRequest?:string;recommendationCollection?:RecommendationResult[];recommendationQuery?:string;recommendationAnchors?:Array<{tmdbId:number;mediaType:"movie"|"tv";title:string}>};
 export class TalkSession extends DurableObject<RecommendationEnv> {
+ private storyJobs=new Map<string,Promise<Record<string,unknown>>>();
  constructor(ctx:DurableObjectState,env:RecommendationEnv){super(ctx,env);ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS memory (key TEXT PRIMARY KEY,value TEXT NOT NULL,expires INTEGER NOT NULL)');for(const ws of ctx.getWebSockets())ws.close(1012,'Update');}
  private read<T>(key:string):T|undefined {const r=this.ctx.storage.sql.exec<{value:string}>('SELECT value FROM memory WHERE key=? AND expires>?',key,Date.now()).toArray()[0];return r?JSON.parse(r.value):undefined;}
  private put(key:string,value:unknown,expires:number){this.ctx.storage.sql.exec('INSERT OR REPLACE INTO memory VALUES (?,?,?)',key,JSON.stringify(value),expires);}
+ async acquireGeminiBudget(owner:string,scope:string,tokens:number,rpm:number,tpm:number):Promise<GeminiBudgetGrant>{
+  if(!/^[a-f0-9]{64}$/.test(owner)||!/^[-\w.]{1,100}$/.test(scope))throw Error('INVALID_PROVIDER_BUDGET');
+  const key='provider-budget:'+owner+':'+scope,now=Date.now(),state=this.read<GeminiBudgetState>(key)||{recent:[]};
+  const result=reserveGeminiBudget(state,now,Math.max(0,Math.min(1000000,tokens)),Math.max(1,Math.min(20,rpm)),Math.max(1024,tpm),crypto.randomUUID());
+  this.put(key,state,Math.max(now+120000,(state.blockedUntil||0)+60000));await this.ctx.storage.setAlarm(now+DAY);return result;
+ }
+ async releaseGeminiBudget(owner:string,scope:string,lease:string){
+  const key='provider-budget:'+owner+':'+scope,state=this.read<GeminiBudgetState>(key);
+  if(state?.active?.id===lease){delete state.active;this.put(key,state,Math.max(Date.now()+120000,(state.blockedUntil||0)+60000));}
+ }
+ async blockGeminiBudget(owner:string,scope:string,until:number,status:number){
+  const key='provider-budget:'+owner+':'+scope,state=this.read<GeminiBudgetState>(key)||{recent:[]};
+  state.blockedUntil=Math.max(state.blockedUntil||0,until);state.status=status;this.put(key,state,Math.max(Date.now()+120000,until+60000));
+ }
  async storySources(q:Pick<StoryRequest,'id'|'kind'|'title'|'season'|'episode'>):Promise<StorySources>{
   const key='story-source:v2:'+JSON.stringify([q.id,q.kind,q.season,q.episode]);
   const cached=this.read<StorySources>(key);if(cached)return cached;
@@ -93,21 +110,37 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'story-source:%' AND key NOT IN (SELECT key FROM memory WHERE key LIKE 'story-source:%' ORDER BY expires DESC LIMIT 64)");
   await this.ctx.storage.setAlarm(Date.now()+DAY);return result;
  }
- async story(session:string,q:StoryRequest){
+ async story(session:string,q:StoryRequest):Promise<Record<string,unknown>>{
   const state=this.read<Session>('live:'+session);if(!state)throw Error('SESSION_EXPIRED');
   const active=state.context.activePlayer;
   if((state.context.companionVersion||0)<16||q.id!==(active?.id||state.context.id)||q.kind!==(active?.type||state.context.type)||
    q.kind==='tv'&&(q.season!==Number(active?.season??state.context.season)||q.episode!==Number(active?.episode??state.context.episode)))throw Error('SCENE_UNSUPPORTED');
   const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(q)));
-  const key='story:v1:'+session+':'+Array.from(new Uint8Array(bytes),n=>n.toString(16).padStart(2,'0')).join('');
+  const key='story:v2:'+session+':'+Array.from(new Uint8Array(bytes),n=>n.toString(16).padStart(2,'0')).join('');
   const cached=this.read<Record<string,unknown>>(key);if(cached)return {...cached,cached:true};
+  const free=this.env.GEMINI_FREE_TIER_MODE==='true';
+  const memoryHash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify({...q,question:'',responseLanguage:'en'})));
+  const memoryKey='story-base:v3:'+session+':'+Array.from(new Uint8Array(memoryHash),n=>n.toString(16).padStart(2,'0')).join('');
+  const reuse=(memory:Record<string,unknown>)=>({...memory,explanation:'',premiseChecks:[],cached:true,reusedMemory:true,
+   instruction:'Reuse these evidence-linked names and causal facts for the NEW question. The previous answer is omitted deliberately. Retrieve any specifically missing earlier passage with scene_recall; do not repeat unchanged scene analysis.'});
+  if(free&&q.question.trim()){
+   const memory=this.read<Record<string,unknown>>(memoryKey);if(memory?.status==='grounded')return reuse(memory);
+   const pending=this.storyJobs.get(memoryKey);if(pending){const memory=await pending;return memory.status==='grounded'?reuse(memory):{...memory,cached:false};}
+  }
   state.sceneCalls=(state.sceneCalls||0)+1;if(state.sceneCalls>60)throw Error('TOOL_LIMIT');
   this.put('live:'+session,state,state.expires);
-  const sources=await this.env.TALK_SESSIONS.getByName('public-story-sources-v1').storySources(q);
-  const result=q.mode==='sources'?playerStoryResearch(q,sources):await understandPlayerStory(q,sources,this.env);
-  if(!this.read<Session>('live:'+session))throw Error('SESSION_EXPIRED');
-  this.put(key,result,Math.min(state.expires,Date.now()+(['grounded','research_ready'].includes(result.status)?20*MINUTE:30000)));
-  this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'story:v1:%' AND key NOT IN (SELECT key FROM memory WHERE key LIKE 'story:v1:%' ORDER BY expires DESC LIMIT 12)");
+  const work=(async()=>{
+   const sources=await this.env.TALK_SESSIONS.getByName('public-story-sources-v1').storySources(q);
+   const result=!free&&q.mode==='sources'?playerStoryResearch(q,sources):await understandPlayerStory(q,sources,this.env);
+   if(!this.read<Session>('live:'+session))throw Error('SESSION_EXPIRED');
+   if(free&&result.status==='grounded')this.put(memoryKey,result,Math.min(state.expires,Date.now()+20*MINUTE));
+   return result as Record<string,unknown>;
+  })();
+  if(free&&q.question.trim())this.storyJobs.set(memoryKey,work);
+  let result:Record<string,unknown>;
+  try{result=await work;}finally{if(this.storyJobs.get(memoryKey)===work)this.storyJobs.delete(memoryKey);}
+  this.put(key,result,Math.min(state.expires,Date.now()+(['grounded','research_ready'].includes(String(result.status))?20*MINUTE:30000)));
+  this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'story:v%' AND key NOT IN (SELECT key FROM memory WHERE key LIKE 'story:v%' ORDER BY expires DESC LIMIT 12)");
   return {...result,cached:false};
  }
  async chats(input:unknown) {
@@ -143,19 +176,22 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
  async reserve(amount:number,limit:number):Promise<boolean>{const day=Math.floor(Date.now()/DAY),key='quota:'+day;this.ctx.storage.sql.exec('DELETE FROM memory WHERE expires<?',Date.now());
   const r=this.ctx.storage.sql.exec<{value:string}>('SELECT value FROM memory WHERE key=?',key).toArray()[0];const n=Number(r?.value||0);if(n+amount>limit)return false;
   this.ctx.storage.sql.exec('INSERT OR REPLACE INTO memory VALUES(?,?,?)',key,String(n+amount),(day+2)*DAY);await this.ctx.storage.setAlarm((day+2)*DAY);return true;}
- async open(context:TalkContext) {const expires=Date.now()+20*MINUTE,session=crypto.randomUUID();const token=await issueLiveToken(this.env,context,expires);
+ async open(context:TalkContext) {const expires=Date.now()+20*MINUTE,session=crypto.randomUUID();const {keySlot,...token}=await issueLiveToken(this.env,context,expires);
   this.ctx.storage.sql.exec('DELETE FROM memory WHERE expires<?',Date.now());
-  this.put('live:'+session,{context,expires,calls:0,searches:0,grants:[]} satisfies Session,expires);
+  this.put('live:'+session,{keySlot,context,expires,calls:0,searches:0,grants:[]} satisfies Session,expires);
   // A new player/text connection must not invalidate another in-flight session.
   this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'live:%' AND key NOT IN (SELECT key FROM memory WHERE key LIKE 'live:%' ORDER BY expires DESC, rowid DESC LIMIT 8)");
   await this.ctx.storage.setAlarm(expires);return {...token,session};}
- async renew(session:string,responseLanguage?:string){
+ async renew(session:string,responseLanguage?:string,rotateProject=false){
   const state=this.read<Session>('live:'+session);if(!state||state.expires<Date.now()+10000)throw Error('SESSION_EXPIRED');
   if((state.renewals||0)>=6)throw Error('TOOL_LIMIT');
   state.renewals=(state.renewals||0)+1;if(responseLanguage)state.context.responseLanguage=responseLanguage;
   this.put('live:'+session,state,state.expires);
-  const token=await issueLiveToken(this.env,state.context,state.expires);
-  if(!this.read<Session>('live:'+session))throw Error('SESSION_EXPIRED');
+  const failed=rotateProject?[...new Set([...(state.keyFailures||[]),state.keySlot||'primary'])]:[];
+  if(rotateProject&&!configuredGeminiSlots(this.env).some(slot=>!failed.includes(slot)))throw Error('LIVE_UNAVAILABLE');
+  const {keySlot,...token}=await issueLiveToken(this.env,state.context,state.expires,rotateProject?undefined:state.keySlot||'primary',failed);
+  const latest=this.read<Session>('live:'+session);if(!latest)throw Error('SESSION_EXPIRED');
+  latest.keySlot=keySlot;latest.keyFailures=failed;this.put('live:'+session,latest,latest.expires);
   // No expiry extension, new voice/model or reset of knowledge/search budgets.
   return {...token,session};
  }

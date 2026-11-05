@@ -126,6 +126,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         update { it.copy(phase=if(limited)"Try again later" else "Reconnect",sending=false) }
     }
     private fun beginUserTurn() {
+        projectFailovers=0
         if(inputText.isNotBlank())commitQuestion()
         speechToolJobs.values.toList().forEach{it.cancel()};speechToolJobs.clear()
         speechInputTurn=-1L;microphoneTurn=-1L;speechInputText="";lastSpeechInputAt=0L;remoteSpeechActive=false;joinSpeechInput=false
@@ -238,7 +239,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         private set
     internal suspend fun inspectPlayerScene() { awaitSceneObservation() }
     internal suspend fun debugInspectScene(): JSONObject? { check(BuildConfig.DEBUG); return awaitSceneObservation()?.metadata }
-    private fun sendTurnContext(userOwned:Boolean=false) {
+    internal suspend fun debugQuotaRecovery(){check(BuildConfig.DEBUG);disconnected(epoch,true)}
+    private fun sendTurnContext(userOwned:Boolean=false,sceneParts:JSONArray?=null) {
         if(!socketReady||!userOwned&&(speaking||generationOpen))return
         TalkPlayerConnection.current()?.talkSnapshot()?.let { current ->
             conversationContext.put("activePlayer",current)
@@ -269,9 +271,13 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if (parseTalkRecallRequest(question, scene.anchorSeconds).mode == TalkRecallMode.TIMESTAMP) emptyList() else listOfNotNull(scene.frames.firstOrNull(),scene.frames.getOrNull(scene.frames.size/3),scene.frames.getOrNull(scene.frames.size*2/3),scene.frames.lastOrNull()).distinctBy { it.seconds })
             scene.metadata.put("attachedCurrentFrameSeconds",JSONArray(delivery.frames.map { it.seconds }))
             val key = "$epoch:$providerContext:${scene.key}:${delivery.frames.joinToString { it.seconds.toString() }}"
-            val includeFrames = key != sentSceneKey || SystemClock.elapsedRealtime() - sentSceneAt > 45_000
-            emit(JSONObject().put("clientContent", JSONObject().put("turns", JSONArray().put(JSONObject().put("role", "user")
-                .put("parts", delivery.parts(includeFrames, recalledFrames)))).put("turnComplete", false)))
+            val includeFrames = sceneParts != null || key != sentSceneKey || SystemClock.elapsedRealtime() - sentSceneAt > 45_000
+            val evidence=delivery.parts(includeFrames,recalledFrames)
+            // Keep visual evidence in the same completed user turn as a typed
+            // question; history replay/compression must not separate its images.
+            if(sceneParts!=null)for(index in 0 until evidence.length())sceneParts.put(evidence.getJSONObject(index))
+            else emit(JSONObject().put("clientContent", JSONObject().put("turns", JSONArray().put(JSONObject().put("role", "user")
+                .put("parts", evidence))).put("turnComplete", false)))
             sentSceneKey = key
             if (includeFrames) sentSceneAt = SystemClock.elapsedRealtime()
             if (BuildConfig.DEBUG) { debugSceneContext = scene.metadata; debugSceneFrames += (if (includeFrames) delivery.frames.size else 0) + recalledFrames.size }
@@ -357,9 +363,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 withTimeout(20000){while(!socketReady){check(permitted){"Connection ended"};delay(30)}}
                 answerDeadline.awaiting(45000)
                 if(conversationContext.optInt("companionVersion")>=16)
-                    TalkPlayerConnection.current()?.let{host->host.talkScene()?.let{storyContext.await(it,host)}}
-                sendTurnContext()
+                    TalkPlayerConnection.current()?.let{host->host.prepareTalkScene()?.let{storyContext.await(it,host,question,refresh=talkCurrentIdentityQuestion(question))}}
                 val parts = JSONArray()
+                sendTurnContext(userOwned=true,sceneParts=parts)
                 if (TalkPlayerConnection.current() != null && (talkSceneQuestion(question) || talkEpisodeRecallQuestion(question))) {
                     parts.put(JSONObject().put("text", "Native answer contract: answer every part of the viewer's actual question clearly and completely from the attached timed story and video. Explain the supported cause, relevant earlier setup or inference they ask about. A narration of the pause frame is never a substitute for that answer. Resolve visual references (clothing colour, screen position, objects and gestures) against the attached images before connecting them to dialogue. A colour or role in the question may be wrong or ambiguous: correct a false premise or ask a short specific clarification; never invent an absent person, unseen action or physical cause. Distinguish visible action, earlier dialogue and supported inference. If an action occurred between sparse samples, retrieve surrounding video timestamps instead of filling the gap with an expected movement. Retrieve a specifically missing causal link with scene_recall before answering; observed footage alone does not mean the question is fully supported. When explaining a character reasoning, explicitly attribute the conclusion to that character and connect each clue to the inference. A confident character deduction is not objective proof. Cover each requested premise and exception separately. Preserve explicit qualifiers, negations, place names, numbers and conditions when the viewer asks for exact details. Before finishing, check every question clause against the answer, including what is merely claimed versus independently established. Earlier scenes through the pause are allowed. Caption windows are not cinematic scene boundaries. Use the character names and relationships established in storyUnderstanding, earlier dialogue and corroborated story/scene evidence; the name need not be spoken in this shot. Retrieve a missing identity or plot-level cause with scene_story before declaring it unknown. Name both people in an established relationship, including the girlfriend or parent relevant to the question. Begin certainty questions with a direct conclusion based on the evidence at this pause; do not substitute commentary about the show or its premise. A cast list alone is not a face binding. Explain what put them in danger and what the pursuer wants; fleeing because they are scared/being chased is circular, not the plot reason. Respond in ${responseLanguage ?: "the viewer's question language"}."))
                 }
@@ -446,6 +452,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     @Volatile private var epoch = 0L
     @Volatile private var sequence = 0L
     private var reconnects = 0
+    private var projectFailovers = 0
     private var reconnectJob: Job? = null
     private var readyWatchdog: Job? = null
     private val answerDeadline:TalkResponseDeadline=TalkResponseDeadline(scope) {
@@ -549,7 +556,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 emit(JSONObject().put("clientContent", JSONObject().put("turns", JSONArray().put(JSONObject().put("role", "user")
                     .put("parts", scene.parts(false, host.talkRecallFrames(query))))).put("turnComplete", false)))
             }
-            TalkNativeResult(result)
+            TalkNativeResult(compactTalkRecall(result))
         }
         "set_voice"->{val voice=requireNotNull(VOICES.firstOrNull{it.equals(args.optString("stringValue"),true)});TalkNativeResult(JSONObject().put("status","ready").put("voice",voice).put("instruction","Say briefly that you are switching voice. The native voice changes immediately after this reply.")){selectVoice(voice)}}
         "set_history"->{require(args.opt("enabled") is Boolean);setHistory(args.getBoolean("enabled"));TalkNativeResult(JSONObject().put("status","completed").put("keepHistory",state.value.keepHistory))}
@@ -704,7 +711,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         catch(cancelled:CancellationException){if(attempt==connectAttempt&&!permitted)update{it.copy(phase="Ready")};throw cancelled}
         if(!state.value.textMode)TalkAudioLease.awaitOwnRelease(context)
         if(closed||sessionOwner!=account||attempt!=connectAttempt)return
-        reconnects = 0; permitted = true; startedAt = SystemClock.elapsedRealtime()
+        reconnects = 0; projectFailovers=0; permitted = true; startedAt = SystemClock.elapsedRealtime()
         // Deliberately omit every TMDB text field. Only the viewer's own progress
         // and opaque identifiers are used to look up permitted, independent data.
         val progress = (context.applicationContext as AliflixApplication).playbackProgressStore.entries.value.values.maxByOrNull { it.updatedAtMillis }
@@ -881,11 +888,26 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }
     private suspend fun disconnected(ticket:Long,limited:Boolean) {
         if(ticket!=epoch||!permitted)return
-        if(state.value.sending||tools.isNotEmpty()||awaitingToolAnswer)continueAfterReconnect=true
+        if(textSend?.isActive==true)continueAfterReconnect=false
+        else if(state.value.sending||tools.isNotEmpty()||awaitingToolAnswer)continueAfterReconnect=true
         commitQuestion()
         update{it.copy(phase="Reconnecting",level=0f)}
         socketReady=false
         readyWatchdog?.cancel();stopAudio(cancelTools=false);cancelSocket(ws);ws=null;inputText="";outputText="";assistantLine=-1;finalReferences=emptyList()
+        if(talkCanRotateQuotaProject(limited,projectFailovers,backendSession!=null)) {
+            projectFailovers++
+            val rotationTicket=++epoch // Stale close callbacks cannot mint another token.
+            val session=checkNotNull(backendSession)
+            try {
+                val minted=post("renew",JSONObject().put("session",session).put("rotateProject",true)
+                    .apply{responseLanguage?.let{put("responseLanguage",it)}})
+                if(rotationTicket!=epoch||!permitted)return
+                ephemeral=minted;backendSession=minted.getString("session");resumeHandle=null
+                reconnectJob?.cancel();reconnectJob=scope.launch{openSocket(rotationTicket)}
+                return
+            }catch(cancelled:CancellationException){throw cancelled}
+            catch(_:Exception){if(rotationTicket!=epoch||!permitted)return}
+        }
         if(limited||++reconnects>3||SystemClock.elapsedRealtime()-startedAt>1200000) {
             suspendSession();update {it.copy(phase=if(limited) "Try again later" else "Reconnect")};return
         }

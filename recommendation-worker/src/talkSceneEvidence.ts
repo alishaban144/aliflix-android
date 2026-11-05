@@ -1,3 +1,5 @@
+import { geminiSceneConfig, geminiSceneSchema } from './geminiSceneConfig';
+import { fetchGemini, hasGeminiCredentials } from './geminiKeys';
 import { z } from 'zod';
 import type { RecommendationEnv } from './types';
 import { TALK_MODEL, boundedJson } from './talkProviders';
@@ -83,14 +85,14 @@ export async function scenePlayedSpeech(scene:ScenePacket,env:RecommendationEnv,
 }
 
 async function structuredSceneObservation(scene:ScenePacket,env:RecommendationEnv,signal:AbortSignal) {
- if(!env.GEMINI_API_KEY)throw Error('SCENE_UNAVAILABLE');
+ if(!hasGeminiCredentials(env))throw Error('SCENE_UNAVAILABLE');
  const body=sceneObservationBody(scene);
  body.contents[0].parts[body.contents[0].parts.length-1]={text:'Observe this sequence now. Return only concise, evidence-supported observations in the required JSON schema. No film identification or remembered plot.'};
  const schema=z.toJSONSchema(SceneObservationSchema);delete schema.$schema;
- const model=env.GEMINI_GENERATION_MODEL || 'gemini-3.8-flash';
- const response=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
-  method:'POST',headers:{'x-goog-api-key':env.GEMINI_API_KEY,'content-type':'application/json'},
-  body:JSON.stringify({...body,generationConfig:{maxOutputTokens:3072,thinkingConfig:{thinkingLevel:'minimal'},responseMimeType:'application/json',responseJsonSchema:schema}}),signal});
+ const {model,thinkingLevel}=geminiSceneConfig(env);
+ const response=await fetchGemini(env,`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
+  method:'POST',headers:{'content-type':'application/json'},
+  body:JSON.stringify({...body,generationConfig:{maxOutputTokens:3072,thinkingConfig:{thinkingLevel},responseMimeType:'application/json',responseJsonSchema:geminiSceneSchema(schema)}}),signal});
  if(!response.ok){console.warn('talk_structured_scene_failed',response.status);await response.body?.cancel();throw Error('SCENE_UNAVAILABLE');}
  const data=await boundedJson(response,32768) as {candidates?:Array<{content?:{parts?:Array<{text?:string;thought?:boolean}>}}>};
  const text=data.candidates?.[0]?.content?.parts?.filter(part=>!part.thought).map(part=>part.text||'').join('');
@@ -109,7 +111,7 @@ function observationDelay(milliseconds:number,signal:AbortSignal) {
 /** Structured observation does not need a second Live session. Hedge slow requests
  * with Live while keeping the same title-blind evidence validation. */
 export async function observePlayerScene(scene:ScenePacket,env:RecommendationEnv,hedgeAfterMs?:number) {
- if(!env.GEMINI_API_KEY)throw Error('SCENE_UNAVAILABLE');
+ if(!hasGeminiCredentials(env))throw Error('SCENE_UNAVAILABLE');
  const began=Date.now();
  console.info('talk_scene_observation_start',scene.frames.length,Boolean(scene.audio));
  const owner=new AbortController();const deadline=AbortSignal.any([owner.signal,AbortSignal.timeout(10000)]);
@@ -127,11 +129,11 @@ export async function observePlayerScene(scene:ScenePacket,env:RecommendationEnv
 }
 
 async function liveSceneObservation(scene:ScenePacket,env:RecommendationEnv,deadline:AbortSignal) {
- if(!env.GEMINI_API_KEY)throw Error('SCENE_UNAVAILABLE');
+ if(!hasGeminiCredentials(env))throw Error('SCENE_UNAVAILABLE');
  const began=Date.now();const validationScene={...scene,audio:undefined};
  let response:Response;
- try{response=await fetch('https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent',{
-  headers:{Upgrade:'websocket','x-goog-api-key':env.GEMINI_API_KEY},signal:deadline});}
+ try{response=await fetchGemini(env,'https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent',{
+  headers:{Upgrade:'websocket'},signal:deadline});}
  catch{throw Error('SCENE_UNAVAILABLE');}
  const socket=response.webSocket;
  if(!socket){await response.body?.cancel();throw Error('SCENE_UNAVAILABLE');}
