@@ -244,6 +244,7 @@ class Talk190SceneDeviceTest {
                 .put("tools",JSONObject(nativePlayer!!.talkVoice.debugToolCalls.toMap()))
                 .put("deliveredScene",nativePlayer!!.talkVoice.debugSceneContext)
                 .put("wireEvents",JSONArray(nativePlayer!!.talkVoice.debugWireEvents.toList()))
+                .put("connectionEvents",JSONArray(nativePlayer!!.talkVoice.debugConnectionEvents.toList()))
                 .put("recallMs",nativePlayer!!.talkVoice.debugSceneRecallMs).put("observationMs",nativePlayer!!.talkVoice.debugSceneObservationMs)
                 .put("questionSentAt",nativePlayer!!.talkVoice.debugQuestionSentAt)
                 .put("finalAudio",nativePlayer!!.talkVoice.debugAudioSnapshot())

@@ -30,7 +30,11 @@ data class TalkSceneContext(val identity: String, val revision: Long, val anchor
             put(JSONObject().put("inlineData", JSONObject().put("mimeType", "image/jpeg")
                 .put("data", Base64.encodeToString(frame.jpeg, Base64.NO_WRAP))))
         }
-        recalledFrames.forEach { frame ->
+        // A reverse shot can be selected by both current-scene and recall paths.
+        // Send that image once, retaining its actual timestamp and full evidence.
+        recalledFrames.distinctBy { (it.seconds*1000).toLong() }.filterNot { earlier ->
+            includeFrames && frames.any { kotlin.math.abs(it.seconds-earlier.seconds)<.1 }
+        }.forEach { frame ->
             put(JSONObject().put("text", "Retrieved earlier video frame at %.2f seconds. This is an earlier moment, not the pause frame; use its own timestamp.".format(java.util.Locale.ROOT, frame.seconds)))
             put(JSONObject().put("inlineData", JSONObject().put("mimeType", "image/jpeg")
                 .put("data", Base64.encodeToString(frame.jpeg, Base64.NO_WRAP))))

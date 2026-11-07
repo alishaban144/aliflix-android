@@ -21,6 +21,7 @@ internal class TalkChatReply {
     private var sources=emptyList<TalkReference>()
     private var collectionCommitted=false
     fun reset(){prefix="";segment="";titles=emptyList();sources=emptyList();collectionCommitted=false}
+    fun reconcileNamedCards(cards:List<TalkTitleCard>,baseline:List<TalkTitleCard> = titles){titles=(baseline+cards).distinctBy{it.key}.take(24)}
     fun attach(cards:List<TalkTitleCard>,evidence:List<TalkReference>) {
         if(!collectionCommitted&&cards.isNotEmpty()){
             titles=cards.toList();sources=evidence.distinctBy{it.url}.take(12);collectionCommitted=true;return

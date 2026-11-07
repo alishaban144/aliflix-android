@@ -31,10 +31,12 @@ internal fun cachedTalkVideoFrame(cache:Map<Long,TalkSceneFrame>,millis:Long,cei
 internal class PlayerTalkVideo(private val context: Context) {
     private val mutex = Mutex()
     private var source = ""
+    private var extractingAnchor=Double.NaN
+    fun extractingAt(requestId:String,anchor:Double)=source==requestId&&kotlin.math.abs(extractingAnchor-anchor)<.1
     private val cached = linkedMapOf<Long, TalkSceneFrame>()
 
     suspend fun frames(requestId: String, request: NativePlaybackRequest, seconds: List<Double>,
-        ceiling: Double, stillCurrent: () -> Boolean): List<TalkSceneFrame> = withContext(Dispatchers.Main.immediate) {
+        ceiling: Double,onFrame:(TalkSceneFrame)->Unit={},stillCurrent: () -> Boolean): List<TalkSceneFrame> = withContext(Dispatchers.Main.immediate) {
         mutex.withLock {
             if (source != requestId) { source = requestId; cached.clear() }
             // Preserve caller priority: a timeout must not discard the nearby reverse shot.
@@ -43,7 +45,8 @@ internal class PlayerTalkVideo(private val context: Context) {
             val retained=positions.mapNotNull{cachedTalkVideoFrame(cached,(it*1000).toLong(),ceiling)}
             if(retained.size==positions.size)return@withLock retained.distinctBy{it.seconds}
             val output = mutableListOf<TalkSceneFrame>()
-            withTimeoutOrNull(12_000) {
+            extractingAnchor=ceiling
+            try { withTimeoutOrNull(12_000) {
                 val http = DefaultHttpDataSource.Factory().setUserAgent(request.userAgent)
                     .setConnectTimeoutMs(4000).setReadTimeoutMs(4000)
                     .setDefaultRequestProperties(buildMap {
@@ -95,11 +98,12 @@ internal class PlayerTalkVideo(private val context: Context) {
                         catch (_: Exception) { null }
                         if (frame != null && stillCurrent()) {
                             cached[millis] = frame; output += frame
+                            onFrame(frame)
                             while (cached.size > 32) cached.remove(cached.keys.first())
                         }
                     }
                 }
-            }
+            } } finally { extractingAnchor=Double.NaN }
             output.takeIf { stillCurrent() }.orEmpty().distinctBy { it.seconds }.sortedBy { it.seconds }
         }
     }

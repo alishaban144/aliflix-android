@@ -14,6 +14,12 @@ const answer=()=>({characters:[{name:'Daniel Kellner',sceneRole:'The driver comf
  explanation:'Daniel and Jane are fleeing the company pursuing its stolen evidence, not merely reacting to noise.',unknowns:[]});
 afterEach(()=>vi.restoreAllMocks());
 describe('named source-bound player story',()=>{
+ it('leaves room for tool/system context and a multimodal follow-up before compressing protocol 17',()=>{
+  const current=liveSetup(TalkContextSchema.parse({companionVersion:17,recentProgress:[]}));
+  const legacy=liveSetup(TalkContextSchema.parse({companionVersion:16,recentProgress:[]}));
+  expect(current.contextWindowCompression).toEqual({triggerTokens:'24576',slidingWindow:{targetTokens:'16384'}});
+  expect(legacy.contextWindowCompression.slidingWindow.targetTokens).toBe('8192');
+ });
  it('retrieves references for a single Live pass without calling another inference model or certifying untimed research',()=>{
   const fetcher=vi.spyOn(globalThis,'fetch');const result=playerStoryResearch(request(),sources);
   expect(result.status).toBe('research_ready');expect(fetcher).not.toHaveBeenCalled();
@@ -84,6 +90,9 @@ describe('named source-bound player story',()=>{
   await understandPlayerStory(request(),sources,{GEMINI_API_KEY:'test-only',GEMINI_SCENE_MODEL:'gemini-3.8-flash'} as RecommendationEnv);
   expect(String(fetcher.mock.calls[1][0])).toContain('gemini-3.8-flash:generateContent');
   expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body)).generationConfig.thinkingConfig.thinkingLevel).toBe('low');
+  await understandPlayerStory(request(),sources,{GEMINI_API_KEY:'test-only',GEMINI_SCENE_MODEL:'gemini-3.5-flash-lite'} as RecommendationEnv);
+  expect(String(fetcher.mock.calls[2][0])).toContain('gemini-3.5-flash-lite:generateContent');
+  expect(JSON.parse(String(fetcher.mock.calls[2][1]?.body)).generationConfig.thinkingConfig.thinkingLevel).toBe('minimal');
  });
  it('requires evidence for a premise correction and retains a specifically unresolved premise',()=>{
   const value={...answer(),premiseChecks:[{claim:'Jane is responsible',verdict:'contradicted',correction:'The reassurance denies her responsibility.',cueIds:[2],frameIds:[]}]};

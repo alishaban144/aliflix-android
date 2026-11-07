@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -21,7 +22,7 @@ import com.aliflix.app.ui.theme.AliflixAccentSecondary
         progress
     }else 0f
     val ease=remember { CubicBezierEasing(.42f,0f,.58f,1f) }
-    Canvas(modifier.size(32.dp)) {
+    Canvas(modifier.size(32.dp).testTag("talk-thinking-animation")) {
         val part=(phase*4f).coerceIn(0f,3.9999f)
         val index=part.toInt();val fraction=ease.transform(part-index)
         val middle=if(index%2==0)fraction else 1f-fraction

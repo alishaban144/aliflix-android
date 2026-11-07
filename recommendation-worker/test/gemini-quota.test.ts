@@ -94,17 +94,39 @@ it('reuses compiled same-cut memory across follow-ups without replaying an old a
   const service=new TalkSession(state,{...env,GEMINI_API_KEY:'owned-key-'+crypto.randomUUID(),GEMINI_FREE_TIER_MODE:'true',TALK_SESSIONS:namespace} as unknown as RecommendationEnv);
   const session=crypto.randomUUID(),expires=Date.now()+60000;
   state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)','live:'+session,JSON.stringify({context:TalkContextSchema.parse({companionVersion:16,id:10,type:'movie'}),expires,calls:0,searches:0,grants:[]}),expires);
+  let evidencePacket:{dialogue?:unknown;dialogueFormat?:string}={};
   const fetcher=vi.spyOn(globalThis,'fetch').mockImplementation(async()=>{
    const pair=new WebSocketPair();pair[1].accept();
    pair[1].addEventListener('message',event=>{const value=JSON.parse(String(event.data));
     if(value.setup)pair[1].send(JSON.stringify({setupComplete:{}}));
-    if(value.clientContent)pair[1].send(JSON.stringify({toolCall:{functionCalls:[{name:'compile_scene_memory',args:answer()}]}}));
+    if(value.clientContent){
+     evidencePacket=JSON.parse(value.clientContent.turns[0].parts[0].text);
+     pair[1].send(JSON.stringify({toolCall:{functionCalls:[{name:'compile_scene_memory',args:answer()}]}}));
+    }
    });
    return new Response(null,{status:101,webSocket:pair[0]});
   });
   expect((await service.story(session,q())).status).toBe('grounded');
+  expect(evidencePacket.dialogue).toEqual(q().dialogue.map((row,id)=>[id,...row]));
+  expect(evidencePacket.dialogueFormat).toContain('explicit FIRST number');
   const follow=await service.story(session,{...q(),question:'Who is keeping it?'});
   expect(follow).toMatchObject({status:'grounded',reusedMemory:true,explanation:''});expect(fetcher).toHaveBeenCalledTimes(1);
   await service.story(session,{...q(),sourceKey:'cut-b:revision-3'});expect(fetcher).toHaveBeenCalledTimes(2);
+ });
+});
+
+it('protocol 17 prepares same-cut evidence without an auxiliary inference or untimed plot disclosure',async()=>{
+ await runInDurableObject(env.TALK_SESSIONS.getByName('fast-player-'+crypto.randomUUID()),async(_,state)=>{
+  const namespace={getByName:()=>({storySources:async()=>({...sources,evidence:[{...sources.evidence[0],text:'Jane keeps a written record. Later the true medicine was harmless.'}]})})};
+  const service=new TalkSession(state,{...env,GEMINI_API_KEY:'unused-test-key',GEMINI_FREE_TIER_MODE:'true',TALK_SESSIONS:namespace} as unknown as RecommendationEnv);
+  const session=crypto.randomUUID(),expires=Date.now()+60000;
+  state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)','live:'+session,JSON.stringify({context:TalkContextSchema.parse({companionVersion:17,id:10,type:'movie'}),expires,calls:0,searches:0,grants:[]}),expires);
+  const upstream=vi.spyOn(globalThis,'fetch');
+  const result=await service.story(session,{...q(),mode:'sources',frames:[]});
+  expect(result).toMatchObject({status:'research_ready',mode:'direct_player_evidence',deferred:false,completed:true});
+  expect(upstream).not.toHaveBeenCalled();
+  expect(JSON.stringify(result)).not.toContain('the true medicine was harmless');
+  expect(JSON.stringify(result)).not.toContain('Future Identity');
+  expect((result.mentionedCharacters as Array<{name:string}>).map(c=>c.name)).toContain('Jane Avery');
  });
 });

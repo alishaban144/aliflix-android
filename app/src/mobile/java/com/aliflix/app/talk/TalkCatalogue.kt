@@ -58,7 +58,7 @@ internal class TalkCatalogue(private val known:()->TalkCardContext) {
         val names=args.optJSONArray("titles")
         val requested=(0 until minOf(names?.length()?:0,8)).map{names!!.optString(it)}
         if(requested.isEmpty())return known().visible.ifEmpty{known().group}.ifEmpty{known().known.take(8)}
-        return requested.flatMap{find(it,args.optString("kind").takeIf{v->v in setOf("movie","tv")},args.optInt("year"))}.distinctBy{it.key}.take(8)
+        return resolveTalkNamedCards(requested){name->find(name,args.optString("kind").takeIf{v->v in setOf("movie","tv")},args.optInt("year"))}.take(8)
     }
     suspend fun hydrate(card:TalkTitleCard):TalkTitleCard = withTimeout(7000) {
         val m=client.getTitleDetails(card.type.routeName,card.id).media
@@ -70,6 +70,7 @@ internal class TalkCatalogue(private val known:()->TalkCardContext) {
             val detail=withTimeout(7000){client.getTitleDetails(card.type.routeName,card.id)}
             val m=detail.media
             card.json().put("runtimeMinutes",m.runtimeMinutes?:JSONObject.NULL)
+                .put("premise",m.overview?.take(1200)?.takeIf{it.isNotBlank()}?:JSONObject.NULL)
                 .put("releaseDate",m.releaseDate?:JSONObject.NULL).put("genres",JSONArray(m.genres))
                 .put("originalLanguage",m.originalLanguage?:JSONObject.NULL)
                 .put("creators",JSONArray(detail.creators.map{JSONObject().put("id",it.tmdbId).put("name",it.name).put("role",it.role)}))
