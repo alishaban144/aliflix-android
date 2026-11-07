@@ -1,6 +1,6 @@
 import { geminiSceneConfig, geminiSceneSchema } from './geminiSceneConfig';
 import {geminiLiveStructured} from './geminiLiveStructured';
-import {budgetStoryEvidence,storySupportingDialogue} from './storyBudget';
+import {budgetStoryEvidence,storyPriorEncounter,storyPriorIntent,storySupportingDialogue} from './storyBudget';
 import { fetchGemini, hasGeminiCredentials, redactGeminiKeys } from './geminiKeys';
 import {z} from 'zod';
 import {TmdbClient} from './tmdb';
@@ -131,11 +131,25 @@ export function playerStoryResearch(q:StoryRequest,sources:StorySources){
 export function preparePlayerStoryEvidence(q:StoryRequest,sources:StorySources){
  const limited=limitedStoryContext(q,sources);
  const terms=budgetStoryEvidence(q,sources).establishedSearchTerms;
+ const callback=q.dialogue.slice(-32).reverse().find(([time, , text])=>time>=q.anchorSeconds-90&&/\bwhat\s+(?:you|they)\s+(?:did|said|pulled|tried)\s+(?:to|on|with)\s+(?:me|us)\b/i.test(text));
+ const callbackIndex=callback?q.dialogue.indexOf(callback):-1;
+ const currentSpeakerCue=callback?q.dialogue.slice(Math.max(0,callbackIndex-4),callbackIndex+1).reverse()
+  .find(cue=>/\b[A-Z][A-Z ]{1,24}:\s/.test(cue[2])):undefined;
+ const speakerLabel=currentSpeakerCue?[...currentSpeakerCue[2].matchAll(/\b([A-Z][A-Z ]{1,24}):\s/g)].at(-1)?.[1].trim():undefined;
+ const earlierIntent=storyPriorIntent(q,sources.characters);
+ const earlierEncounter=callback?storyPriorEncounter(q,speakerLabel):[];
+ const earlierSpeakerCue=speakerLabel?earlierEncounter.find(cue=>cue[2].includes(`${speakerLabel}:`)):undefined;
+ const focusCharacters=[...earlierIntent.flatMap(exchange=>exchange.dialogue),...earlierEncounter].reduce((sum,cue)=>sum+cue[2].length,0);
  return {status:'research_ready',mode:'direct_player_evidence',completed:true,deferred:!q.question.trim(),
   anchorSeconds:q.anchorSeconds,establishedSearchTerms:terms,
+  ...(callback?{currentCallback:{seconds:callback[0],utterance:callback[2],
+   relevance:'The speaker explicitly refers to something done to them earlier. When asked how they know, lead with what the others did to the speaker. Use earlierEncounter to resolve it. Later practice, recordings and claimed past earnings are secondary evidence.'}}:{}),
+  ...(earlierSpeakerCue?{callbackSpeakerEvidence:{speakerLabel,currentSpeakerCue,earlierSpeakerCue}}:{}),
+  ...(earlierEncounter.length?{earlierEncounter}:{}),
+  ...(earlierIntent.length?{earlierIntentExchanges:earlierIntent}:{}),
   mentionedCharacters:limited.mentionedCharacters.map(c=>({...c,performer:sources.characters.find(character=>character.name===c.name)?.performer||''})),
   supportingDialogueFormat:'[startSeconds,endSeconds,actual dialogue]',
-  supportingDialogue:storySupportingDialogue(q,terms).map(row=>[row.startSeconds,row.endSeconds,row.text]),
+  supportingDialogue:storySupportingDialogue(q,terms,Math.max(2000,8000-focusCharacters)).map(row=>[row.startSeconds,row.endSeconds,row.text]),
   sources:[{id:'credits',url:sources.creditsUrl,title:'Canonical character credits'},...sources.evidence.map(({id,url,title})=>({id,url,title}))],
   instruction:'Evidence retrieval is complete. Answer the actual question now in this conversation from the timestamped images, earlier selected-edition dialogue, these exact supporting passages and established character names. Search terms are retrieval hints, NOT claims or proof. Canonical credits alone do not bind a face. Do not announce research or compiler availability. Retrieve a missing earlier passage with scene_recall; reserve scene_story with enabled=true for a specifically unresolved identity or contradictory evidence. No additional model analysis is required for an answer already established by the supplied evidence.',
   scope:'Only actual selected-edition dialogue through the pause is quoted here. Public plot prose and future revelations are withheld. Preserve beliefs versus facts and who knows what: do not call a belief mistaken or false until the viewer has seen evidence disproving it. Never substitute a static-frame description for the requested cause or earlier setup.'};
