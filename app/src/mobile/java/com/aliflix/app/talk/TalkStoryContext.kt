@@ -6,17 +6,19 @@ import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** A separate, source-bound story/character memory; full dialogue is analysed
- * outside Live, whose own context remains bounded and latency-sensitive. */
+/** Source-bound retrieval for a single Live answer, with optional deeper analysis. */
 internal class TalkStoryContext(private val scope:CoroutineScope,
     private val post:suspend(JSONObject)->JSONObject) {
     private val jobs=linkedMapOf<String,Deferred<JSONObject?>>()
     private val ready=linkedMapOf<String,JSONObject>()
+    private val analysedFrames=linkedMapOf<String,String>()
+    private val preparedQuestions=linkedMapOf<String,String>()
     private val retryAfter=linkedMapOf<String,Long>()
     internal var issue="";private set
     internal var elapsedMs=0L;private set
     private fun memoryKey(scene:TalkSceneContext)="${scene.identity}:${scene.revision}:${(scene.anchorSeconds*10).toLong()}:${scene.metadata.optString("subtitleEdition")}:${scene.metadata.optJSONArray("dialogue")?.toString()?.hashCode()}"
-    fun clear(){jobs.values.forEach{it.cancel()};jobs.clear();ready.clear();retryAfter.clear()}
+    private fun frameKey(scene:TalkSceneContext)=scene.frames.joinToString{(it.seconds*10).toLong().toString()}
+    fun clear(){jobs.values.forEach{it.cancel()};jobs.clear();ready.clear();analysedFrames.clear();preparedQuestions.clear();retryAfter.clear()}
     fun attach(scene:TalkSceneContext){
         ready[memoryKey(scene)]?.let{scene.metadata.put(if(it.optString("status")=="research_ready")"storyResearch" else "storyUnderstanding",it)}
         scene.metadata.put("storyState",if(ready[memoryKey(scene)]?.optString("status") in setOf("grounded","research_ready"))ready[memoryKey(scene)]!!.optString("status") else if(jobs.any{(key,job)->key.startsWith(memoryKey(scene)+":")&&job.isActive})"preparing" else "limited")
@@ -24,7 +26,9 @@ internal class TalkStoryContext(private val scope:CoroutineScope,
     fun recallQuery(scene:TalkSceneContext,question:String):String = expandedTalkStoryQuery(question,
         scene.metadata.optJSONArray("dialogue")?.toString().orEmpty(),ready[memoryKey(scene)])
     fun prepare(scene:TalkSceneContext,host:TalkPlayerHost,question:String="",refresh:Boolean=false):Deferred<JSONObject?> {
-        if(!refresh)ready[memoryKey(scene)]?.takeIf{reusableTalkStoryMemory(it.optString("status"),it.optBoolean("deferred"),question.isNotBlank())}?.let{return CompletableDeferred(it)}
+        if(!refresh)ready[memoryKey(scene)]?.takeIf{reusableTalkStoryMemory(it.optString("status"),it.optBoolean("deferred"),question.isNotBlank())&&
+            (it.optString("mode")!="direct_player_evidence"||question.isBlank()||preparedQuestions[memoryKey(scene)]==question)&&
+            (!talkCurrentIdentityQuestion(question)||analysedFrames[memoryKey(scene)]==frameKey(scene))}?.let{return CompletableDeferred(it)}
         if(SystemClock.elapsedRealtime()<(retryAfter[memoryKey(scene)]?:0L))return CompletableDeferred(ready[memoryKey(scene)])
         val recall=host.talkStoryEvidence()?:return CompletableDeferred(null)
         val prefix=recall.optJSONObject("storyThroughAnchor")?:return CompletableDeferred(null)
@@ -37,10 +41,11 @@ internal class TalkStoryContext(private val scope:CoroutineScope,
             scene.frames.getOrNull(scene.frames.size*2/3),scene.frames.lastOrNull()).distinctBy{it.seconds}.filter{it.seconds<=anchor}
         val packet=JSONObject().put("id",scene.metadata.optInt("id")).put("kind",scene.metadata.optString("type"))
             .put("title",scene.metadata.optString("title").take(180)).put("sourceKey",scene.key.take(600))
-            .put("anchorSeconds",anchor).put("mode","analysis").put("question",question.take(1600)).put("dialogue",JSONArray((0 until minOf(rows.length(),5000)).map{rows.getJSONArray(it)}))
-            .put("transcriptComplete",prefix.optBoolean("complete")&&rows.length()<=5000)
+            .put("anchorSeconds",anchor).put("mode",if(refresh)"analysis"else "sources").put("question",question.take(1600))
+            .put("dialogue",JSONArray((0 until minOf(rows.length(),5000)).map{rows.getJSONArray(it)}))
+            .put("transcriptComplete",question.isNotBlank()&&prefix.optBoolean("complete")&&rows.length()<=5000)
             .put("captionAlignment",recall.optJSONObject("playbackEvidence")?.optString("captionAlignment").orEmpty().take(80))
-            .put("frames",JSONArray(chosen.map{JSONObject().put("seconds",it.seconds).put("data",Base64.encodeToString(it.jpeg,Base64.NO_WRAP))}))
+            .put("frames",if(!refresh)JSONArray()else JSONArray(chosen.map{JSONObject().put("seconds",it.seconds).put("data",Base64.encodeToString(it.jpeg,Base64.NO_WRAP))}))
         if(scene.metadata.optString("type")=="tv")packet.put("season",scene.metadata.optInt("season",1)).put("episode",scene.metadata.optInt("episode",1))
         scene.metadata.optJSONObject("groundedObservation")?.let{packet.put("observation",it.toString().take(8000))}
         val began=SystemClock.elapsedRealtime()
@@ -52,7 +57,9 @@ internal class TalkStoryContext(private val scope:CoroutineScope,
             if(result?.optString("status") in setOf("grounded","research_ready"))issue=""
             if(TalkPlayerConnection.current()?.talkScene()?.let{memoryKey(it)}==memoryKey(scene)&&result!=null){
                 ready[memoryKey(scene)]=result
-                while(ready.size>4)ready.remove(ready.keys.first())
+                preparedQuestions[memoryKey(scene)]=question
+                analysedFrames[memoryKey(scene)]=frameKey(scene)
+                while(ready.size>4){val oldest=ready.keys.first();ready.remove(oldest);analysedFrames.remove(oldest);preparedQuestions.remove(oldest)}
                 if(result.optString("status") !in setOf("grounded","research_ready"))retryAfter[memoryKey(scene)]=SystemClock.elapsedRealtime()+45000
                 while(retryAfter.size>8)retryAfter.remove(retryAfter.keys.first())
                 attach(scene)
@@ -81,6 +88,6 @@ internal fun expandedTalkStoryQuery(question:String,currentDialogue:String,resea
         if(terms.any{Regex("(?iu)\\b"+Regex.escape(it)+"\\b").containsMatchIn(currentDialogue)})addAll(terms)
     } }
     val safe=research?.optJSONArray("establishedSearchTerms")?:JSONArray()
-    val entities=(0 until minOf(safe.length(),6)).map{safe.getString(it)}
+    val entities=(0 until minOf(safe.length(),8)).map{safe.getString(it)}
     return (question+" "+(current+entities).distinct().joinToString(" ")).trim().take(1600)
 }

@@ -8,7 +8,7 @@ export const TALK_MODEL = 'gemini-3.8-live';
 export const TALK_VOICE = 'Aoede';
 export const LIVE_TOOLS = [{ functionDeclarations: [{
   name:'title_facts',behavior:'NON_BLOCKING',
-  description:'Read exact TMDB catalogue facts for one to three supplied/established films or series, without a recommendation search or plot research. Use when a decision depends on runtime, release year, genres, language or title identity. Reuse canonical movie:id/tv:id keys when known. Missing fields are unknown, not permission to invent facts. Does not play, save or navigate.',
+  description:'Read exact TMDB catalogue facts for one to three supplied/established films or series, without a recommendation search or plot research. Use when a decision depends on runtime, release year, genres, language or title identity. Reuse canonical movie:id/tv:id keys when known. Clients at companionVersion 17 also return canonical premise metadata for brief title introductions. Missing fields are unknown, not permission to invent facts. Does not play, save or navigate.',
   parameters:{type:'OBJECT',properties:{titles:{type:'ARRAY',minItems:1,maxItems:3,items:{type:'STRING'}},kind:{type:'STRING',enum:['movie','tv']}},required:['titles']}
 },{
   name:'wait_for_user',behavior:'NON_BLOCKING',
@@ -99,6 +99,7 @@ export function liveSetup(context: TalkContext) {
    const stepActions=['play','player_state','pause','resume','seek','audio_language','subtitle_language',...playerActions,'save','unsave','favorite','unfavorite','set_setting'];
    upgraded.parameters.properties.action={type:'STRING',enum:[...tool.parameters.properties.action!.enum,...playerActions,...((context.companionVersion||0)>=13?['scene_context']:[]),...((context.companionVersion||0)>=14?['scene_recall']:[]),...((context.companionVersion||0)>=16?['scene_story']:[]),'execute_task','task_state','cancel_task']};
    if((context.companionVersion||0)>=16)upgraded.description+=' scene_story retrieves the active scene character and causal-story understanding from canonical credits, independent story evidence, the available full earlier transcript and actual images. Use query=the exact identity/why/relationship question. Wait for it rather than refusing a name because the current subtitle lacks a speaker label. It preserves the paused reveal boundary and is read-only.';
+   if((context.companionVersion||0)>=17)upgraded.description+=' Protocol 17 scene_story normally returns prepared evidence without another model call. Set enabled=true only when an identity or contradiction remains unresolved after inspecting the actual images and earlier dialogue; this requests deeper validated analysis.';
    upgraded.parameters.properties.taskId={type:'STRING',description:'Actual taskId returned by the native task. Never invent one.'};
    if((context.companionVersion||0)>=14){
     upgraded.parameters.properties.query={type:'STRING',description:'For scene_recall: the viewer\'s exact previous-scene, timestamp, recap or named-event question. For search: the catalogue query.'};
@@ -136,7 +137,7 @@ export function liveSetup(context: TalkContext) {
   realtimeInputConfig: { automaticActivityDetection: (context.companionVersion||0)>=9 ? {disabled:true} : { disabled: false, startOfSpeechSensitivity: (context.companionVersion||0)>=8?'START_SENSITIVITY_LOW':'START_SENSITIVITY_HIGH',
     endOfSpeechSensitivity: 'END_SENSITIVITY_LOW', prefixPaddingMs: (context.companionVersion||0)>=8?500:180, silenceDurationMs: (context.companionVersion||0)>=8?1500:650 },
     activityHandling: 'START_OF_ACTIVITY_INTERRUPTS', turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY' },
-  contextWindowCompression: { triggerTokens: (context.companionVersion||0)>=5?'16384':'8192', slidingWindow: { targetTokens: (context.companionVersion||0)>=5?'8192':'4096' } },
+  contextWindowCompression: { triggerTokens: (context.companionVersion||0)>=17?'24576':(context.companionVersion||0)>=5?'16384':'8192', slidingWindow: { targetTokens: (context.companionVersion||0)>=17?'16384':(context.companionVersion||0)>=5?'8192':'4096' } },
   sessionResumption: {} };
 }
 export async function boundedJson(response: Response, limit = 256000): Promise<unknown> {
@@ -151,7 +152,7 @@ export async function boundedJson(response: Response, limit = 256000): Promise<u
 export async function issueLiveToken(env: RecommendationEnv, context: TalkContext, expires: number, pinned?:GeminiKeySlot,excluded:GeminiKeySlot[]=[]) {
  if(!hasGeminiCredentials(env))throw Error('LIVE_UNAVAILABLE');
  const setup=liveSetup(context);
- if(env.GEMINI_FREE_TIER_MODE==='true'&&(context.companionVersion||0)>=16)setup.systemInstruction.parts[0].text+='\nFree-tier scene memory: public-source readiness is NOT compiled scene understanding. When player evidence has storyResearch.deferred=true and the viewer asks a scene question about identity, causes, relationships, motives or earlier setup, you MUST call app_control(scene_story) once with the actual complete question BEFORE answering, unless storyUnderstanding for this pause already covers that question. A list of names or completed=true on the public lookup is not compiled understanding. Reuse evidence-linked facts on follow-ups. Use scene_recall for any specifically missing earlier passage; do not repeatedly compile unchanged evidence. Greetings, ordinary catalogue questions and playback commands need no scene-analysis call. This rule applies if player context arrives after the connection opened.';
+ if(env.GEMINI_FREE_TIER_MODE==='true'&&(context.companionVersion||0)===16)setup.systemInstruction.parts[0].text+='\nFree-tier scene memory: public-source readiness is NOT compiled scene understanding. When player evidence has storyResearch.deferred=true and the viewer asks a scene question about identity, causes, relationships, motives or earlier setup, you MUST call app_control(scene_story) once with the actual complete question BEFORE answering, unless storyUnderstanding for this pause already covers that question. A list of names or completed=true on the public lookup is not compiled understanding. Reuse evidence-linked facts on follow-ups. Use scene_recall for any specifically missing earlier passage; do not repeatedly compile unchanged evidence. Greetings, ordinary catalogue questions and playback commands need no scene-analysis call. This rule applies if player context arrives after the connection opened.';
  // Lock model, voice, prompt, tools and budgets, while permitting ONLY the
  // session-resumption handle to change on a same-model reconnect.
  const {sessionResumption: _resumption, ...lockedSetup}=setup;

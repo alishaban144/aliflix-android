@@ -51,7 +51,15 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
             if (frame.seconds >= position - 48 && frames.none { abs(it.seconds - frame.seconds) < .1 }) frames.addLast(frame)
         }
         while (visualBeats.size > 240) visualBeats.removeFirst()
-        cached = null
+        // Progressive decoding enriches this same pause. Preserve its captured
+        // dialogue/audio and any in-flight understanding instead of temporarily
+        // making the whole scene disappear while a later shot is still loading.
+        cached=cached?.takeIf{it.identity==identity&&it.revision==revision&&abs(it.anchorSeconds-position)<.8}?.let { scene->
+            val selected=sceneFrameSelection(frames.toList(),position)
+            val metadata=JSONObject(scene.metadata.toString()).put("frames",JSONArray(selected.map{JSONObject().put("seconds",it.seconds)}))
+            metadata.optJSONObject("episodeTranscript")?.put("visualBeatCount",visualBeats.count{it.seconds<=position})
+            scene.copy(metadata=metadata,frames=selected)
+        }
     }
 
     /** A seek keeps the episode transcript and prior visual journal; only the live window is stale. */

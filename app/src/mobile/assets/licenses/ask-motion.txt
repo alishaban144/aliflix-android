@@ -1,6 +1,7 @@
 Native Ask/Talk visual adaptations
 
-Circular LED halo: original native implementation inspired by Triangle LED Front — @vgpu (MIT), https://21st.dev/@vgpu/components/triangle-led-front
+Ask circular glow: native adaptation of Glow Button — Léo / @unlumen (MIT), https://ui.unlumen.com/docs/ui/buttons/glow and https://21st.dev/@unlumen/components/glow
+Discover smoke: GLSL-to-AGSL adaptation of Smoky Button — LRan / @lran1028 (MIT), https://21st.dev/@lran1028/components/smoky-button
 Rising Ball: native Canvas adaptation of the CSS trajectory and timing — @theutkarshmail (MIT), https://21st.dev/@theutkarshmail/components/rising-ball
 Player orb entrance/exit: original native implementation inspired by Motion Primitives Morphing Dialog — ibelick (MIT), https://21st.dev/community/components/ibelick/morphing-dialog
 

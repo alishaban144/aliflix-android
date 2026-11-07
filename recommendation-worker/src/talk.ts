@@ -10,7 +10,7 @@ import { issueLiveToken, TALK_MODEL, TALK_VOICE, boundedJson } from './talkProvi
 import { talkRecommendationPolicy, cachedTalkDiscovery, canRetainTalkResearch, talkRecommendationQuery, talkRecommendationCount, talkChatRecommendationCount, talkSeriesStatus, refineTalkCollection } from './talkIntent';
 import { TalkChat, TalkChatsRequestSchema, talkChatAccountOwner } from './talkChats';
 import { ScenePacketSchema, observePlayerScene } from './talkSceneEvidence';
-import {StoryRequestSchema,retrieveStorySources,understandPlayerStory,playerStoryResearch,type StoryRequest,type StorySources} from './talkStory';
+import {StoryRequestSchema,retrieveStorySources,understandPlayerStory,playerStoryResearch,preparePlayerStoryEvidence,type StoryRequest,type StorySources} from './talkStory';
 const MINUTE=60000,DAY=86400000;
 // Starts include legitimate reconnects, chat/voice switches and fresh-turn
 // ownership boundaries, not minutes of generated audio. Forty starts shared
@@ -85,6 +85,7 @@ type TalkSelection={tmdbId:number;mediaType:'movie'|'tv';title:string;originalTi
 type Session={keySlot?:GeminiKeySlot;keyFailures?:GeminiKeySlot[];context:TalkContext;expires:number;calls:number;searches:number;grants:string[];renewals?:number;sceneCalls?:number;selection?:TalkSelection[];recommendationRequest?:string;recommendationCollection?:RecommendationResult[];recommendationQuery?:string;recommendationAnchors?:Array<{tmdbId:number;mediaType:"movie"|"tv";title:string}>};
 export class TalkSession extends DurableObject<RecommendationEnv> {
  private storyJobs=new Map<string,Promise<Record<string,unknown>>>();
+ private storySourceJobs=new Map<string,Promise<StorySources>>();
  constructor(ctx:DurableObjectState,env:RecommendationEnv){super(ctx,env);ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS memory (key TEXT PRIMARY KEY,value TEXT NOT NULL,expires INTEGER NOT NULL)');for(const ws of ctx.getWebSockets())ws.close(1012,'Update');}
  private read<T>(key:string):T|undefined {const r=this.ctx.storage.sql.exec<{value:string}>('SELECT value FROM memory WHERE key=? AND expires>?',key,Date.now()).toArray()[0];return r?JSON.parse(r.value):undefined;}
  private put(key:string,value:unknown,expires:number){this.ctx.storage.sql.exec('INSERT OR REPLACE INTO memory VALUES (?,?,?)',key,JSON.stringify(value),expires);}
@@ -105,10 +106,15 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
  async storySources(q:Pick<StoryRequest,'id'|'kind'|'title'|'season'|'episode'>):Promise<StorySources>{
   const key='story-source:v2:'+JSON.stringify([q.id,q.kind,q.season,q.episode]);
   const cached=this.read<StorySources>(key);if(cached)return cached;
-  const result=await retrieveStorySources(this.env,q);
-  this.put(key,result,Date.now()+(result.evidence.length?DAY:5*MINUTE));
-  this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'story-source:%' AND key NOT IN (SELECT key FROM memory WHERE key LIKE 'story-source:%' ORDER BY expires DESC LIMIT 64)");
-  await this.ctx.storage.setAlarm(Date.now()+DAY);return result;
+  const pending=this.storySourceJobs.get(key);if(pending)return pending;
+  const work=(async()=>{
+   const result=await retrieveStorySources(this.env,q);
+   this.put(key,result,Date.now()+(result.evidence.length?DAY:5*MINUTE));
+   this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'story-source:%' AND key NOT IN (SELECT key FROM memory WHERE key LIKE 'story-source:%' ORDER BY expires DESC LIMIT 64)");
+   await this.ctx.storage.setAlarm(Date.now()+DAY);return result;
+  })();
+  this.storySourceJobs.set(key,work);
+  try{return await work;}finally{if(this.storySourceJobs.get(key)===work)this.storySourceJobs.delete(key);}
  }
  async story(session:string,q:StoryRequest):Promise<Record<string,unknown>>{
   const state=this.read<Session>('live:'+session);if(!state)throw Error('SESSION_EXPIRED');
@@ -131,7 +137,8 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   this.put('live:'+session,state,state.expires);
   const work=(async()=>{
    const sources=await this.env.TALK_SESSIONS.getByName('public-story-sources-v1').storySources(q);
-   const result=!free&&q.mode==='sources'?playerStoryResearch(q,sources):await understandPlayerStory(q,sources,this.env);
+   const result=q.mode==='sources'&&(state.context.companionVersion||0)>=17?preparePlayerStoryEvidence(q,sources):
+    !free&&q.mode==='sources'?playerStoryResearch(q,sources):await understandPlayerStory(q,sources,this.env);
    if(!this.read<Session>('live:'+session))throw Error('SESSION_EXPIRED');
    if(free&&result.status==='grounded')this.put(memoryKey,result,Math.min(state.expires,Date.now()+20*MINUTE));
    return result as Record<string,unknown>;

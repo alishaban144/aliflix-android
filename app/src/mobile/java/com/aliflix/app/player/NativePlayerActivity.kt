@@ -82,7 +82,20 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         }
         val packet = sceneMemory.recall(query, fullStory) ?: return null
         val needsCurrentVideo = com.aliflix.app.talk.talkNeedsCurrentSceneObservation(query) &&
+            packet.optString("mode") !in setOf("previous","timestamp") &&
             com.aliflix.app.talk.sceneNeedsVideoBackfill(sceneMemory.temporalFrames(), packet.optDouble("anchorSeconds"))
+        val decodeBudget=if(com.aliflix.app.talk.talkCurrentIdentityQuestion(query))3500L else 12000L
+        val decodeStarted=android.os.SystemClock.elapsedRealtime()
+        // Opening Talk already decodes this same pause. Consume its progressive
+        // frames rather than queueing a second full decode behind its slowest shot.
+        if(needsCurrentVideo&&talkVideo.extractingAt(requestId,packet.optDouble("anchorSeconds"))) {
+            val anchor=packet.optDouble("anchorSeconds")
+            withTimeoutOrNull(decodeBudget) {
+                while(talkVideo.extractingAt(requestId,anchor)&&com.aliflix.app.talk.sceneNeedsVideoBackfill(sceneMemory.temporalFrames(),anchor))delay(25)
+            }
+            if(!com.aliflix.app.talk.sceneNeedsVideoBackfill(sceneMemory.temporalFrames(),anchor))return sceneMemory.recall(query,fullStory)
+            if(android.os.SystemClock.elapsedRealtime()-decodeStarted>=decodeBudget)return sceneMemory.recall(query,fullStory)
+        }
         if (query != "current scene" && (packet.optString("mode") in setOf("previous", "timestamp") || needsCurrentVideo || packet.optString("mode")=="search" && !com.aliflix.app.talk.talkCurrentIdentityQuestion(query) && com.aliflix.app.talk.talkNeedsCurrentSceneObservation(query) && Regex("(?i)earlier|previous|before|beginning|first|zuvor|vorher|سابق|قبل").containsMatchIn(query))) {
             val anchor = packet.optDouble("anchorSeconds")
             val windows = packet.optJSONArray("scenes") ?: JSONArray()
@@ -109,9 +122,10 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                 add((anchor-8).coerceAtLeast(0.0));add(anchor)
             } else listOf(32.0, 16.0, 8.0, 6.0, 4.0, 2.0, 1.0).map { (anchor - it).coerceAtLeast(0.0) }
             NativePlaybackService.activeRequest?.let { request ->
-                val decoded = try { withTimeoutOrNull(if(com.aliflix.app.talk.talkCurrentIdentityQuestion(query))3500L else 12000L) {
+                val decoded = try { withTimeoutOrNull((decodeBudget-(android.os.SystemClock.elapsedRealtime()-decodeStarted)).coerceAtLeast(1L)) {
                     talkVideo.frames(requestId, request, positions, anchor,
-                        { !isDestroyed && selection?.key == current.key && NativePlaybackService.activeRequestId == requestId &&
+                        onFrame={frame->sceneMemory.retrievedFrames(listOf(frame))},
+                        stillCurrent={ !isDestroyed && selection?.key == current.key && NativePlaybackService.activeRequestId == requestId &&
                             kotlin.math.abs(talkSnapshot().optDouble("positionSeconds") - anchor) < .8 })
                     }.orEmpty()
                 } catch (cancelled: CancellationException) { throw cancelled }
@@ -127,7 +141,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     private var talkPreparationPaused = false
     private val talkPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
         if (granted && talkVisible) lifecycleScope.launch {
-            sceneMemory.capture(includeAudio=true);talkVoice.connect()
+            coroutineScope { val capture=async { sceneMemory.capture(includeAudio=true) };talkVoice.connect();capture.await() }
             prepareTalkRecall("What is happening in the current scene?");talkVoice.inspectPlayerScene()
         } else if (talkCreated) talkVoice.permissionDenied()
     }
@@ -140,8 +154,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         lifecycleScope.launch { prepareTalkRecall("current scene") }
         if (talkVoice.state.value.textMode || ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED)
             lifecycleScope.launch {
-                sceneMemory.capture(includeAudio = true)
-                talkVoice.connect()
+                coroutineScope { val capture=async { sceneMemory.capture(includeAudio=true) };talkVoice.connect();capture.await() }
                 if(opening) {
                     prepareTalkRecall("What is happening in the current scene?")
                     talkVoice.inspectPlayerScene()

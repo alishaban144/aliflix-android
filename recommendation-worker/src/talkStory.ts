@@ -1,6 +1,6 @@
 import { geminiSceneConfig, geminiSceneSchema } from './geminiSceneConfig';
 import {geminiLiveStructured} from './geminiLiveStructured';
-import {budgetStoryEvidence} from './storyBudget';
+import {budgetStoryEvidence,storySupportingDialogue} from './storyBudget';
 import { fetchGemini, hasGeminiCredentials, redactGeminiKeys } from './geminiKeys';
 import {z} from 'zod';
 import {TmdbClient} from './tmdb';
@@ -65,18 +65,24 @@ Before compiling facts, fill premiseChecks for the question's important assumpti
 An invitation or greeting establishes a visit, not its earlier motive or proof of a conspiracy. Cite the actual earlier discovery or exchange for those claims. A clue that strengthens a character's suspicions does not prove every allegation; preserve that distinction. For competing explanations, attach each proposal and objection to its named speaker, and identify whose theory remains unproven.
 Do not contradict an emotional premise just because a subtitle does not explicitly say nervous or afraid; look for earlier stakes first. For memory questions distinguish general learned knowledge from personal autobiographical memories and from forming new memories. Being prompted with a test question does not itself explain why a person retains a fact.
 When asked why someone is worried, afraid, nervous or guilty, explain the earlier situation that puts them at risk and what they believe may be discovered. Do not replace the requested cause with 'does not express nervousness' or a description of the current exchange. Qualify an uncertain feeling briefly, then provide the supported earlier stakes. Keep suspected actions distinct from what actually happened.
-For every binding/fact cite zero-based cueIds/frameIds and actual sourceIds. Character bindings require actual scene images and dialogue/relationship support; story_and_scene also requires an independent source. Source IDs are research identifiers, with 'credits' reserved for the canonical cast list. Every plot fact requires at least one supplied cue or frame; source research alone is insufficient. Distinguish what a character claims/believes from objective events. Caption timestamps are viewing order, not necessarily story chronology: use the actual sequence and records to resolve a flashback or nonlinear story instead of assuming every earlier-viewed event happened earlier in the story. Preserve names, negations, distinct objects and who knows what. Do not claim the viewer watched a skipped scene.
+For every binding/fact cite zero-based cueIds/frameIds and actual sourceIds. Character bindings require actual scene images and dialogue/relationship support; story_and_scene also requires an independent source. Source IDs are research identifiers, with 'credits' reserved for the canonical cast list. Every plot fact requires at least one supplied cue or frame; source research alone is insufficient. Distinguish what a character claims/believes from objective events. Do not label a belief mistaken, false or correct unless the supplied already-viewed dialogue/images explicitly establish its truth status; an untimed article cannot supply that verdict. Caption timestamps are viewing order, not necessarily story chronology: use the actual sequence and records to resolve a flashback or nonlinear story instead of assuming every earlier-viewed event happened earlier in the story. Preserve names, negations, distinct objects and who knows what. Do not claim the viewer watched a skipped scene.
 The explanation must give WHO is involved, WHY this is happening and the relevant earlier causal setup, in clear connected sentences. 'They flee because they are scared / sped away / are being chased' merely repeats the image and is not the plot explanation. Trace what put them in danger and what the pursuer wants, if established. Correct false premises. Answer yes/no questions directly before explaining; distinguish a claimed moral score from proof of moral superiority. Do not substitute object descriptions, generic synopsis, a transcript dump or retrieval apologies. Explain all requested parts. Captions can be a different cut; corroborate timing against the actual images, and qualify only a specific remaining uncertainty.
 Write internal facts in English. Write explanation as a complete direct answer to the actual question in responseLanguage, including every requested part and natural character names. No introduction about sources or analysis. Keep at most three current-scene character bindings and five useful causal facts. Do not inventory the whole earlier story; select only the facts needed to answer this question. Include concrete earlier causes, relationships, beliefs and stakes relevant to this scene, without padding or invented certainty.`;
 
 export function validateStoryUnderstanding(raw:unknown,q:StoryRequest,sources:StorySources,partial=false){
  const result=StoryUnderstandingSchema.parse(raw),sourceIds=new Set(['credits',...sources.evidence.map(e=>e.id)]);
+ const rejections:string[]=[];
+ const unsupported=(reason:string):never=>{throw Error('SCENE_UNSUPPORTED',{cause:reason});};
  function valid(cues:number[],frames:number[],ids:string[],at:number){
-  if(at>q.anchorSeconds||(!cues.length&&!frames.length)||cues.some(i=>i>=q.dialogue.length)||frames.some(i=>i>=q.frames.length)||ids.some(id=>!sourceIds.has(id)))throw Error('SCENE_UNSUPPORTED');
-  if(!cues.some(i=>q.dialogue[i][0]<=at+.5)&&!frames.some(i=>q.frames[i].seconds<=at+.5))throw Error('SCENE_UNSUPPORTED');
+  if(at>q.anchorSeconds)unsupported('reveal after pause');
+  if(!cues.length&&!frames.length)unsupported('missing evidence references');
+  if(cues.some(i=>i>=q.dialogue.length))unsupported('cue ID outside supplied selection');
+  if(frames.some(i=>i>=q.frames.length))unsupported('frame ID outside supplied selection');
+  if(ids.some(id=>!sourceIds.has(id)))unsupported('unknown source ID');
+  if(!cues.some(i=>q.dialogue[i][0]<=at+.5)&&!frames.some(i=>q.frames[i].seconds<=at+.5))unsupported('reveal precedes its supporting evidence');
  }
  let rejected=false;
- const keep=(check:()=>void)=>{try{check();return true;}catch(error){if(!partial)throw error;rejected=true;return false;}};
+ const keep=(check:()=>void)=>{try{check();return true;}catch(error){if(!partial)throw error;rejected=true;rejections.push(error instanceof Error?String(error.cause||'binding constraint'):'binding constraint');return false;}};
  result.premiseChecks=result.premiseChecks.filter(check=>keep(()=>{
   if(check.verdict!=='unresolved')valid(check.cueIds,check.frameIds,[],q.anchorSeconds);
   else if(check.cueIds.some(i=>i>=q.dialogue.length)||check.frameIds.some(i=>i>=q.frames.length))throw Error('SCENE_UNSUPPORTED');
@@ -92,7 +98,7 @@ export function validateStoryUnderstanding(raw:unknown,q:StoryRequest,sources:St
   if(!binding.frameIds.length||!binding.cueIds.length||binding.basis==='story_and_scene'&&!binding.sourceIds.some(id=>id!=='credits'))throw Error('SCENE_UNSUPPORTED');
  }));
  result.facts=result.facts.filter(f=>keep(()=>valid(f.cueIds,f.frameIds,f.sourceIds,f.revealSeconds)));
- if(partial&&!result.characters.length&&!result.facts.length)throw Error('SCENE_UNSUPPORTED');
+ if(partial&&!result.characters.length&&!result.facts.length)unsupported(rejections.slice(0,3).join('; ')||'empty compiled memory');
  if(rejected){result.explanation='';result.unknowns=['Unsupported evidence claims were omitted; use only the remaining linked facts.',...result.unknowns].slice(0,5);}
  return result;
 }
@@ -102,7 +108,7 @@ export function limitedStoryContext(q:StoryRequest,sources:StorySources){
  const names=sources.characters.filter(c=>norm(c.name).split(' ').filter(t=>t.length>2&&!['doctor','dr','mrs','miss','mr','young','older'].includes(t)).some(t=>new RegExp(`(?:^| )${t}(?: |$)`,'u').test(dialogue)))
   .map(c=>({name:c.name,scope:'Canonical spelling for an already-mentioned character; no face/scene binding is certified.'}));
  return {status:'limited',anchorSeconds:q.anchorSeconds,characters:[],mentionedCharacters:names,facts:[],explanation:'',
-  unknowns:['Independent named-story analysis is currently unavailable. Use actual earlier dialogue and images; retrieve a specifically missing identity or causal link instead of making up a name. Never put a named person in this room from the question wording alone. If the current counterpart is unresolved, ask a short named clarification about the distinct visits instead of guessing.']};
+  unknowns:['No additional compiled claims are available. The supplied timed earlier dialogue and actual images remain usable evidence: answer the supported question from them and retrieve a missing earlier cause with scene_recall. Do not describe compiler availability or substitute a retrieval apology for the answer. Never infer a person from the question alone or make up a name. Qualify only a specifically unresolved identity or event.']};
 }
 /** Fast source retrieval for a single multimodal Live reasoning pass. Research
  * stays explicitly untimed; it is never relabelled as observed scene truth. */
@@ -120,6 +126,21 @@ export function playerStoryResearch(q:StoryRequest,sources:StorySources){
   creditsUrl:sources.creditsUrl,dialogueCount:q.dialogue.length,transcriptComplete:q.transcriptComplete,
   scope:'Independent untimed story research and credited fictional-character spellings, NOT a face binding or a timestamped scene observation. Research may contain future events and identities. Use it only to resolve already-established names, relationships and causal setup supported by the supplied full earlier transcript and current temporal images. A past event revealed later remains a future spoiler. Do not expose later aliases or motives. Never present cast order or a plot paragraph alone as proof of who is on screen. Answer with current scene plus earlier story, not frame narration.'};
 }
+/** Fast path: retrieve evidence, not another model's answer. Untimed public plot
+ * is used for search clues but never copied into the viewer's factual context. */
+export function preparePlayerStoryEvidence(q:StoryRequest,sources:StorySources){
+ const limited=limitedStoryContext(q,sources);
+ const terms=budgetStoryEvidence(q,sources).establishedSearchTerms;
+ return {status:'research_ready',mode:'direct_player_evidence',completed:true,deferred:!q.question.trim(),
+  anchorSeconds:q.anchorSeconds,establishedSearchTerms:terms,
+  mentionedCharacters:limited.mentionedCharacters.map(c=>({...c,performer:sources.characters.find(character=>character.name===c.name)?.performer||''})),
+  supportingDialogueFormat:'[startSeconds,endSeconds,actual dialogue]',
+  supportingDialogue:storySupportingDialogue(q,terms).map(row=>[row.startSeconds,row.endSeconds,row.text]),
+  sources:[{id:'credits',url:sources.creditsUrl,title:'Canonical character credits'},...sources.evidence.map(({id,url,title})=>({id,url,title}))],
+  instruction:'Evidence retrieval is complete. Answer the actual question now in this conversation from the timestamped images, earlier selected-edition dialogue, these exact supporting passages and established character names. Search terms are retrieval hints, NOT claims or proof. Canonical credits alone do not bind a face. Do not announce research or compiler availability. Retrieve a missing earlier passage with scene_recall; reserve scene_story with enabled=true for a specifically unresolved identity or contradictory evidence. No additional model analysis is required for an answer already established by the supplied evidence.',
+  scope:'Only actual selected-edition dialogue through the pause is quoted here. Public plot prose and future revelations are withheld. Preserve beliefs versus facts and who knows what: do not call a belief mistaken or false until the viewer has seen evidence disproving it. Never substitute a static-frame description for the requested cause or earlier setup.'};
+}
+
 export async function understandPlayerStory(q:StoryRequest,sources:StorySources,env:RecommendationEnv){
  let establishedSearchTerms:string[]=[];
  if(env.GEMINI_FREE_TIER_MODE==='true'){
@@ -135,7 +156,9 @@ export async function understandPlayerStory(q:StoryRequest,sources:StorySources,
   pauseSeconds:q.anchorSeconds,responseLanguage:q.responseLanguage,
   questionFocus:/\bwhy\b.{0,100}\b(?:nervous|afraid|scared|worried|worry|guilty|panic|angry)\b/i.test(q.question)?'Explain earlier plot stakes behind the reaction, not whether a caption explicitly labels the emotion.':'Answer the requested identity, action or explanation.',
   captionAlignment:q.captionAlignment,transcriptComplete:q.transcriptComplete,
-  canonicalCharacters:sources.characters,independentResearch:sources.evidence,dialogue:q.dialogue.map((row,id)=>({id,start:row[0],end:row[1],text:row[2]})),
+  canonicalCharacters:sources.characters,independentResearch:sources.evidence,
+  dialogueFormat:'Each dialogue row is [cueId,startSeconds,endSeconds,text]. Cite the explicit FIRST number as cueId, never a timestamp. Preserve the exact words, negations and speaker ownership.',
+  dialogue:q.dialogue.map((row,id)=>[id,...row]),
   independentCurrentObservation:q.observation||'',
   question:q.question||'Explain the active scene: identify the main people, plot-level cause, earlier setup and stakes.'})}];
  q.frames.forEach((f,index)=>parts.push({text:`Scene image ${index}, timestamp ${f.seconds.toFixed(2)} seconds.`},{inlineData:{mimeType:'image/jpeg',data:f.data}}));
@@ -145,14 +168,14 @@ export async function understandPlayerStory(q:StoryRequest,sources:StorySources,
  const {model,thinkingLevel}=geminiSceneConfig(env);
  const gemini=async()=>{
   if(!hasGeminiCredentials(env))throw Error('provider_unavailable');
-  if(env.GEMINI_FREE_TIER_MODE==='true'){
+  if(env.GEMINI_FREE_TIER_MODE==='true'&&!model.includes('flash-lite')){
    provider='gemini-live-structured';
    return geminiLiveStructured(env,STORY_ANALYSIS_INSTRUCTIONS,parts,geminiSceneSchema(schema));
   }
   const response=await fetchGemini(env,`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
    method:'POST',headers:{'content-type':'application/json'},
    body:JSON.stringify({systemInstruction:{parts:[{text:STORY_ANALYSIS_INSTRUCTIONS}]},contents:[{role:'user',parts}],
-    generationConfig:{maxOutputTokens:4096,thinkingConfig:{thinkingLevel},responseMimeType:'application/json',responseJsonSchema:geminiSceneSchema(schema)}}),signal:AbortSignal.timeout(15000)});
+    generationConfig:{maxOutputTokens:3072,thinkingConfig:{thinkingLevel},responseMimeType:'application/json',responseJsonSchema:geminiSceneSchema(schema)}}),signal:AbortSignal.timeout(model.includes('flash-lite')?7000:15000)});
   if(!response.ok){preferredStatus=response.status;
    try{const failure=await boundedJson(response,8192) as {error?:{message?:string}};preferredMessage=redactGeminiKeys(env,failure.error?.message||'').slice(0,240);}catch{await response.body?.cancel().catch(()=>undefined);}
    throw Error('provider_unavailable');}
@@ -164,6 +187,8 @@ export async function understandPlayerStory(q:StoryRequest,sources:StorySources,
  catch(error){
   if(error instanceof Error&&/^SCENE_HTTP_\d+$/.test(error.message))preferredStatus=Number(error.message.slice(11));
   preferredFailure=error instanceof z.ZodError?'schema':error instanceof SyntaxError?'json':error instanceof Error&&error.message==='SCENE_UNSUPPORTED'?'evidence':error instanceof Error&&/timeout|abort/i.test(error.name)?'timeout':'request';
+  if(error instanceof z.ZodError)preferredMessage=error.issues.slice(0,3).map(issue=>issue.path.join('.')+': '+issue.message).join('; ').slice(0,240);
+  else if(error instanceof Error&&typeof error.cause==='string')preferredMessage=error.cause.slice(0,240);
   if(preferredStatus||!env.AI||env.GEMINI_FREE_TIER_MODE==='true')return {...limitedStoryContext(q,sources),establishedSearchTerms,provider,preferredStatus,preferredFailure,preferredMessage,issue:preferredStatus?'http_'+preferredStatus:'provider_or_evidence'};
   try{
    provider='cloudflare-qwen3.8';

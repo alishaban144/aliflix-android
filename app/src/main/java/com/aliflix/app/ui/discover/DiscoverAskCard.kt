@@ -8,6 +8,8 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material3.*
@@ -48,7 +50,8 @@ internal fun DiscoverAskCard(touchTracker: DiscoverTouchTracker = remember { Dis
             verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Small),
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().height(84.dp),
+                modifier = Modifier.fillMaxWidth().height(84.dp)
+                    .then(if(!com.aliflix.app.BuildConfig.IS_TV)Modifier.clip(RoundedCornerShape(22.dp)).discoverSmokeBackground()else Modifier),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -58,7 +61,7 @@ internal fun DiscoverAskCard(touchTracker: DiscoverTouchTracker = remember { Dis
                     lineHeight = 31.sp,
                     fontWeight = FontWeight.Bold,
                     color = AliflixContentPrimary,
-                    modifier = Modifier.weight(1f).padding(start = 9.dp),
+                    modifier = Modifier.weight(1f).padding(start = if(com.aliflix.app.BuildConfig.IS_TV)9.dp else 18.dp),
                 )
                 if (!com.aliflix.app.BuildConfig.IS_TV) {
                     DiscoverLiveOrb(touchTracker, Modifier.size(76.dp))

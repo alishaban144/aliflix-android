@@ -36,6 +36,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
@@ -194,9 +195,10 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                             if(line.text.isNotBlank())Surface(color=if(line.role=="user")AliflixAccentSecondary.copy(alpha=.14f) else Color.Transparent,
                                 shape=RoundedCornerShape(22.dp,22.dp,if(line.role=="user")6.dp else 22.dp,if(line.role=="user")22.dp else 6.dp),
                                 modifier=Modifier.widthIn(max=520.dp)) {
-                                SelectionContainer { Text(line.text,Modifier.padding(horizontal=if(line.role=="user")16.dp else 2.dp,vertical=12.dp),color=AliflixContentPrimary,fontSize=16.sp,lineHeight=25.sp) }
+                                SelectionContainer { Text(remember(line.text,line.role){if(line.role=="assistant")talkFormattedAnswer(line.text)else androidx.compose.ui.text.AnnotatedString(line.text)},Modifier.padding(horizontal=if(line.role=="user")16.dp else 2.dp,vertical=12.dp),color=AliflixContentPrimary,fontSize=16.sp,lineHeight=25.sp) }
                             }
-                            if(line.text.isNotBlank()||state.answerComplete)TalkTitleCards(line.titles,::openTitle,motion=motion,collection=true)
+                            if(line.text.isNotBlank()||state.answerComplete)TalkTitleCards(line.titles,::openTitle,motion=motion,collection=true,
+                                onBounds={key,bounds->if(com.aliflix.app.BuildConfig.DEBUG)session.debugCardBounds[key]=bounds})
                             TalkSources(line.sources)
                             if(index==state.lines.lastIndex&&line.role=="assistant"&&line.titles.isNotEmpty()&&!state.sending) {
                                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -405,7 +407,7 @@ private class TalkParticleField(private val width: Int, private val height: Int,
  * A feathered radial alpha replaces CSS blur: no rings, clipped layers or resets
  * between listening/speaking. The uninterrupted clock and PCM envelope are separate. */
 @Composable internal fun TalkLiveOrb(phase:String,level:()->Float,motion:Boolean,modifier:Modifier=Modifier,tracker:DiscoverTouchTracker=remember{DiscoverTouchTracker()},attention:Offset?=null,
-    activity:TalkOrbActivity?=null,haloStyle:TalkHaloStyle=TalkHaloStyle.SOFT,haloReady:Boolean=true) {
+    activity:TalkOrbActivity?=null,haloStyle:TalkHaloStyle=TalkHaloStyle.SOFT,haloReady:Boolean=true,playerThinking:Boolean=false) {
     val appearance=remember(activity,phase) { talkOrbAppearance(activity ?: talkOrbPhaseActivity(phase)) }
     val animate=motion&&android.animation.ValueAnimator.areAnimatorsEnabled()
     val seconds=rememberMobileAnimationClock(animate)
@@ -451,7 +453,8 @@ private class TalkParticleField(private val width: Int, private val height: Int,
     }
     val led=remember(bounds,haloStyle){if(haloStyle==TalkHaloStyle.LED&&bounds.width>0)TalkLedHaloField(bounds.width.toFloat(),bounds.height.toFloat())else null}
     Box(modifier.onSizeChanged{bounds=it}.semantics {contentDescription="Aliflix voice: ${appearance.label}";stateDescription=appearance.label},contentAlignment=Alignment.Center){
-        Canvas(Modifier.fillMaxSize().clip(androidx.compose.foundation.shape.CircleShape)){
+        Canvas(Modifier.fillMaxSize().clip(androidx.compose.foundation.shape.CircleShape).then(
+            if(haloStyle==TalkHaloStyle.LED)Modifier.blur(16.dp,androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded)else Modifier)){
             val extent=size.minDimension*.475f;val breath=1f+sin(seconds.value*.82f)*appearance.breath+energy*.02f
             if(haloStyle==TalkHaloStyle.LED)led?.draw(this,glow.value,if(animate)energy else currentLevel().coerceIn(0f,1f),seconds.value,animate)
             else lights?.let{(aura,rim,lobes)->
@@ -467,9 +470,11 @@ private class TalkParticleField(private val width: Int, private val height: Int,
             }
         }
         DiscoverLiveOrb(tracker,Modifier.fillMaxSize(.66f).graphicsLayer{
-            scaleX=1f+energy*.012f;scaleY=1f-energy*.004f;rotationZ=tilt.value
-            translationY=if(animate)sin(seconds.value*.95f)*.65.dp.toPx() else 0f
+            val thought=if(playerThinking&&animate)sin(seconds.value*2f*PI.toFloat()/6.4f)else 0f
+            scaleX=1f+energy*.012f+thought*.007f;scaleY=1f-energy*.004f-thought*.005f
+            rotationZ=tilt.value+thought*if(playerThinking)1.8f else 0f
+            translationY=if(animate)(sin(seconds.value*.95f)*.65f+thought*if(playerThinking)1.2f else 0f).dp.toPx() else 0f
         },conversing=phase=="Speaking",voiceCompanion=true,voiceEnergy={energy},attention=attention,
-            expression=appearance.face,motionEnabled=animate)
+            expression=if(playerThinking&&animate)playerThinkingExpression(seconds.value,activity?:TalkOrbActivity.THINK)else appearance.face,motionEnabled=animate)
     }
 }
