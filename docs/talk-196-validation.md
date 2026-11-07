@@ -37,3 +37,13 @@ The earlier transcript stays indexed locally and is searchable after seeks. Cove
 - [Google prompt design](https://ai.google.dev/gemini-api/docs/prompting-strategies): evidence precedes the specific question and focused factual checks.
 - [Live session context](https://firebase.google.com/docs/ai-logic/live-api/sessions): compression trades retained context against latency; the application tuning is an implementation choice.
 - [Unlumen Glow](https://ui.unlumen.com/docs/ui/buttons/glow) and [LRan Smoky Button](https://21st.dev/@lran1028/components/smoky-button): native adaptations, with MIT attribution in mobile assets.
+
+## Additional phone checks on 7 November
+
+The Matrix spoke the answer in English and explained both Neo’s earlier fall and the spoon lesson. The first reply began about 3.8 seconds after the 5.65-second speech fixture. Manual review accepted the paraphrase “Neo fell” where the literal check expected “jump” or “roof.”
+
+The Better Call Saul pilot exposed two gaps. Early attempts confused the skaters’ payment with Jimmy’s goal, and a later follow-up confused his earlier role with the current target. The Worker now reserves earlier dialogue windows, surfaces prior offers and refusals, and links speaker labels across a first-person callback. It uses the same dialogue budget and conversational model pass.
+
+On the final check at 44:57, the first response took 2.987 seconds and explained how Jimmy plans to appear as a bystander so the Kettlemans will hire him. The follow-up correctly identified Jimmy as the earlier driver and explained why he wants the skaters to repeat the stunt. It took 15.759 seconds and stayed in the same conversation. Earlier broad questions sometimes missed that detail.
+
+The final Worker passed 361 tests across 39 files and typecheck. This follow-up changes the backend only. The signed Android build uses the Android source verified in the original release workflow.

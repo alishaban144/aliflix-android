@@ -4,7 +4,7 @@ import {TalkSession} from '../src/talk';
 import {TmdbClient} from '../src/tmdb';
 import * as evidence from '../src/talkEvidence';
 import {storySupportingDialogue} from '../src/storyBudget';
-import {StoryRequestSchema} from '../src/talkStory';
+import {preparePlayerStoryEvidence,StoryRequestSchema} from '../src/talkStory';
 
 it('retains a later causal exchange instead of clipping it behind the first clue mention',()=>{
  const dialogue=Array.from({length:180},(_,index)=>[index*3,index*3+2,'Unrelated background conversation.'] as [number,number,string]);
@@ -19,6 +19,40 @@ it('retains a later causal exchange instead of clipping it behind the first clue
  expect(rows.some(row=>row.text.includes('antidote'))).toBe(true);
  expect(rows.reduce((size,row)=>size+row.text.length,0)).toBeLessThanOrEqual(8000);
  expect(rows.map(row=>row.startSeconds)).toEqual(rows.map(row=>row.startSeconds).sort((a,b)=>a-b));
+});
+
+it('keeps the actual earlier accident exchange alongside a dense later rehearsal',()=>{
+ const dialogue=Array.from({length:400},(_,index)=>[index*3,index*3+2,
+  index<315?'Unrelated background conversation.':'PARK: Remember the green wagon, the school, the corner and the plate.'] as [number,number,string]);
+ dialogue[70][2]='DANA: Look what you did to my brother!';
+ dialogue[71][2]='PARK: It was an accident.';
+ dialogue[72][2]='DANA: My brother can barely stand.';
+ dialogue[399][2]='PARK: Do what you did to me.';
+ const q=StoryRequestSchema.parse({id:11,kind:'movie',title:'Owned callback fixture',sourceKey:'owned-cut',anchorSeconds:1200,
+  question:'How did Park know they could make a staged accident look convincing?',dialogue,transcriptComplete:true,frames:[]});
+ const rows=storySupportingDialogue(q,[]);
+ expect(rows.some(row=>row.text==='PARK: It was an accident.')).toBe(true);
+ expect(rows.some(row=>row.text==='DANA: Look what you did to my brother!')).toBe(true);
+ expect(rows.at(-1)?.text).toBe('PARK: Do what you did to me.');
+ expect(rows.reduce((size,row)=>size+row.text.length,0)).toBeLessThanOrEqual(8000);
+ const packet=preparePlayerStoryEvidence(q,{id:q.id,kind:q.kind,title:q.title,characters:[],evidence:[],creditsUrl:''});
+ expect(packet.currentCallback).toMatchObject({seconds:1197,utterance:'PARK: Do what you did to me.'});
+ expect(packet.earlierEncounter).toContainEqual(q.dialogue[71]);
+ expect(packet.callbackSpeakerEvidence).toMatchObject({speakerLabel:'PARK',earlierSpeakerCue:q.dialogue[71]});
+ const identity=preparePlayerStoryEvidence({...q,question:'Who was driving when the accident happened earlier?'},
+  {id:q.id,kind:q.kind,title:q.title,characters:[],evidence:[],creditsUrl:''});
+ expect(identity.callbackSpeakerEvidence?.earlierSpeakerCue).toEqual(q.dialogue[71]);
+});
+
+it('surfaces a current target’s earlier offer and refusal within the existing dialogue budget',()=>{
+ const q=StoryRequestSchema.parse({id:12,kind:'movie',title:'Owned motive fixture',sourceKey:'owned-cut',anchorSeconds:1000,
+  question:'Why does the planner want the others to approach her?',transcriptComplete:true,frames:[],dialogue:[
+   [50,52,'MARA: Are you really here about my case?'],[54,56,'I would like to represent you.'],
+   [58,60,'MARA: I do not want to hire a lawyer.'],[400,403,'I promised the other customer a discount.'],
+   [990,992,'Find Mara outside the station.'],[995,997,'I will pay you for your help.'],
+  ]});
+ const packet=preparePlayerStoryEvidence(q,{id:q.id,kind:q.kind,title:q.title,characters:[{name:'Mara',performer:'Example'}],evidence:[],creditsUrl:''});
+ expect(packet.earlierIntentExchanges).toEqual([{personReference:'Mara',dialogue:[q.dialogue[1],q.dialogue[2]]}]);
 });
 
 afterEach(()=>vi.restoreAllMocks());
