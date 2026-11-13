@@ -35,19 +35,20 @@ class TalkTitleCardsDeviceTest {
             screenshot("talk-focused-179.png")
         } finally {session.close();scope.cancel()}
     }
-    @Test fun voiceCardsFitBetweenTheAnimatedTopicAndControls() {
+    @Test fun voiceCardsFitBetweenTheOrbAndControls() {
         val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
         val session=TalkVoiceSession(InstrumentationRegistry.getInstrumentation().targetContext,scope,restoreHistory=false)
         try {
             session.debugPreviewTitles(titles,false)
             compose.setContent{AliflixMobileTheme{TalkVoiceScreen(session,{}, {})}}
-            compose.onNodeWithTag("talk-topic").assertIsDisplayed()
             compose.onNodeWithTag("talk-orb").assertIsDisplayed()
             compose.onNodeWithTag("talk-title-movie:27205").assertIsDisplayed()
-            val topic=compose.onNodeWithTag("talk-topic").fetchSemanticsNode().boundsInRoot
+            val orb=compose.onNodeWithTag("talk-orb").fetchSemanticsNode().boundsInRoot
+            val controls=compose.onNodeWithContentDescription("End conversation").fetchSemanticsNode().boundsInRoot
             for(title in titles) {
                 val card=compose.onNodeWithTag("talk-title-${title.key}").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
-                assertTrue("Each card must sit below the animated topic",card.top>=topic.bottom)
+                assertTrue("Each card must sit below the orb",card.top>=orb.bottom)
+                assertTrue("Each card must sit above the conversation controls",card.bottom<=controls.top)
                 assertTrue("Card metadata must retain real height",card.height>100*InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density)
             }
             screenshot("talk-cards-voice-178.png")

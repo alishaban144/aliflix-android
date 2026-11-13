@@ -32,7 +32,7 @@ class TalkAppNavigationDeviceTest {
        }
        InstrumentationRegistry.getInstrumentation().runOnMainSync{assertTrue("Ask opens the actual text conversation",talk!!.voice.state.value.textMode)}
        compose.onNodeWithTag("talk-composer").assertIsDisplayed()
-       compose.onNodeWithText("Ask Aliflix").assertIsDisplayed()
+       compose.onNodeWithText("Talk").assertIsDisplayed()
       } finally {InstrumentationRegistry.getInstrumentation().runOnMainSync{talk?.finish()}}
      }
     }
