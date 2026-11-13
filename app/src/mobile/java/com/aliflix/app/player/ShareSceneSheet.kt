@@ -12,6 +12,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.ZoomIn
+import androidx.compose.material.icons.rounded.ZoomOut
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -32,8 +34,14 @@ private const val DEFAULT_SCENE_MS = 30_000L
 
 internal fun defaultSceneRange(positionMs: Long, durationMs: Long): SharedSceneRange {
     val length = minOf(DEFAULT_SCENE_MS, durationMs)
-    val start = (positionMs - 10_000).coerceIn(0, durationMs - length)
+    val start = ((positionMs - 10_000) / 1_000 * 1_000).coerceIn(0, durationMs - length)
     return SharedSceneRange(start, start + length)
+}
+
+private fun sceneTrimWindow(start: Long, end: Long, duration: Long): LongRange {
+    val span = maxOf(60_000L, (end - start) * 2).coerceAtMost(duration)
+    val left = (start + (end - start - span) / 2).coerceIn(0, duration - span)
+    return left..(left + span)
 }
 
 internal fun parseSceneTime(text: String): Long? {
@@ -69,6 +77,10 @@ internal fun ShareSceneSheet(
     var endText by rememberSaveable { mutableStateOf(sceneTime(initial.endMs)) }
     var sliderStart by rememberSaveable { mutableLongStateOf(initial.startMs) }
     var sliderEnd by rememberSaveable { mutableLongStateOf(initial.endMs) }
+    var fullTimeline by rememberSaveable { mutableStateOf(false) }
+    val initialWindow = remember { sceneTrimWindow(initial.startMs, initial.endMs, durationMs) }
+    var windowStart by rememberSaveable { mutableLongStateOf(initialWindow.first) }
+    var windowEnd by rememberSaveable { mutableLongStateOf(initialWindow.last) }
     val start = parseSceneTime(startText)?.takeIf { it in 0 until durationMs }
     val end = parseSceneTime(endText)?.takeIf { it in 1..durationMs }
     val range = if (start != null && end != null && start < end) SharedSceneRange(start, end) else null
@@ -76,6 +88,18 @@ internal fun ShareSceneSheet(
     val title = if (selection.episodeNumber != null) {
         "${selection.media.title} · S${selection.seasonNumber ?: 1} E${selection.episodeNumber}"
     } else selection.media.title
+    fun updateFields(fromText: String, toText: String) {
+        startText = fromText.take(13)
+        endText = toText.take(13)
+        val from = parseSceneTime(startText) ?: return
+        val to = parseSceneTime(endText) ?: return
+        if (from !in 0 until to || to > durationMs) return
+        sliderStart = from
+        sliderEnd = to
+        val window = sceneTrimWindow(from, to, durationMs)
+        windowStart = window.first
+        windowEnd = window.last
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         sheetMaxWidth = 520.dp, containerColor = AliflixSurfacePrimary) {
@@ -93,41 +117,42 @@ internal fun ShareSceneSheet(
                 PlayerSeekThumbnail(thumbnails, start ?: sliderStart, Modifier.weight(1f), showTime = false)
                 PlayerSeekThumbnail(thumbnails, ((end ?: sliderEnd) - 1).coerceAtLeast(0), Modifier.weight(1f), showTime = false)
             }
-            RangeSlider(
-                value = sliderStart.toFloat()..sliderEnd.toFloat(),
-                onValueChange = { values ->
-                    val from = values.start.roundToLong().coerceIn(0, durationMs - 1)
-                    val to = values.endInclusive.roundToLong().coerceIn(from + 1, durationMs)
-                    sliderStart = from
-                    sliderEnd = to
-                    startText = sceneTime(from)
-                    endText = sceneTime(to)
-                },
-                valueRange = 0f..durationMs.toFloat(),
-                colors = SliderDefaults.colors(thumbColor = AliflixAccentSecondary, activeTrackColor = AliflixAccentSecondary),
-                modifier = Modifier.testTag("scene-range"),
-            )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(startText, { value ->
-                    if (value.length <= 13) startText = value
-                    val from = parseSceneTime(startText)
-                    val to = parseSceneTime(endText)
-                    if (from != null && to != null && from in 0 until to && to <= durationMs) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                val first = if (fullTimeline) 0L else windowStart
+                val last = if (fullTimeline) durationMs else windowEnd
+                RangeSlider(
+                    value = sliderStart.toFloat()..sliderEnd.toFloat(),
+                    onValueChange = { values ->
+                        val from = values.start.roundToLong().coerceIn(first, last - 1)
+                        val to = values.endInclusive.roundToLong().coerceIn(from + 1, last)
                         sliderStart = from
                         sliderEnd = to
+                        startText = sceneTime(from)
+                        endText = sceneTime(to)
+                    },
+                    valueRange = first.toFloat()..last.toFloat(),
+                    colors = SliderDefaults.colors(thumbColor = AliflixAccentSecondary, activeTrackColor = AliflixAccentSecondary),
+                    modifier = Modifier.weight(1f).testTag("scene-range"),
+                )
+                if (durationMs > 60_000) IconButton(onClick = {
+                    if (fullTimeline) {
+                        val window = sceneTrimWindow(sliderStart, sliderEnd, durationMs)
+                        windowStart = window.first
+                        windowEnd = window.last
                     }
-                }, Modifier.weight(1f).testTag("scene-start"), label = { Text("Start") }, singleLine = true,
+                    fullTimeline = !fullTimeline
+                }) {
+                    Icon(if (fullTimeline) Icons.Rounded.ZoomIn else Icons.Rounded.ZoomOut,
+                        if (fullTimeline) "Zoom to scene" else "Show full timeline")
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(startText, { updateFields(it, endText) },
+                    Modifier.weight(1f).testTag("scene-start"), label = { Text("Start") }, singleLine = true,
                     isError = start == null || end != null && start >= end,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next))
-                OutlinedTextField(endText, { value ->
-                    if (value.length <= 13) endText = value
-                    val from = parseSceneTime(startText)
-                    val to = parseSceneTime(endText)
-                    if (from != null && to != null && from in 0 until to && to <= durationMs) {
-                        sliderStart = from
-                        sliderEnd = to
-                    }
-                }, Modifier.weight(1f).testTag("scene-end"), label = { Text("End") }, singleLine = true,
+                OutlinedTextField(endText, { updateFields(startText, it) },
+                    Modifier.weight(1f).testTag("scene-end"), label = { Text("End") }, singleLine = true,
                     isError = end == null || start != null && start >= end,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done))
             }
