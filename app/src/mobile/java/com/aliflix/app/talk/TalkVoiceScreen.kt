@@ -279,7 +279,8 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
             TalkFloatingOrb(goal,if(panel)0f else roam,state.phase,{session.state.value.level},motion,tracker,if(compact)"talk-chat-orb" else "talk-orb",if(panel||compact)null else focusedBounds?.center,
                 activity=talkOrbActivity(state,keyboardOpen&&!state.sending),initialPose=initialOrbPose,haloReady=talkVoiceHaloReady(state),
                 eyesClosed=!state.textMode && state.phase in setOf("Connecting","Reconnecting"),
-                blinkOnConnect=!state.textMode && state.microphoneReady)
+                blinkOnConnect=!state.textMode && state.microphoneReady,
+                motionBounds=chatCorner.takeIf { small && !panel && !it.isEmpty }?.translate(-screenOrigin))
         }
         if(recent||privacy||voices) ModalBottomSheet(onDismissRequest={recent=false;privacy=false;voices=false},containerColor=AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated)) {
             Column(Modifier.fillMaxWidth().padding(horizontal=22.dp).navigationBarsPadding().padding(bottom=20.dp)) {

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -18,7 +19,7 @@ import com.aliflix.app.ui.discover.DiscoverTouchTracker
  * A fixed drawing surface keeps shaders and face geometry warm during flight. */
 @Composable internal fun TalkFloatingOrb(target:TalkOrbPose,roam:Float,phase:String,level:()->Float,motion:Boolean,tracker:DiscoverTouchTracker,tag:String,attention:androidx.compose.ui.geometry.Offset?=null,
     activity:TalkOrbActivity?=null,initialPose:TalkOrbPose?=null,haloReady:Boolean=false,
-    eyesClosed:Boolean=false,blinkOnConnect:Boolean=false){
+    eyesClosed:Boolean=false,blinkOnConnect:Boolean=false,motionBounds:Rect?=null){
  BoxWithConstraints(Modifier.fillMaxSize()){
  val density=LocalDensity.current
  val drawingSize=minOf(320.dp,maxWidth)
@@ -42,8 +43,12 @@ import com.aliflix.app.ui.discover.DiscoverTouchTracker
  LaunchedEffect(target,motion){if(!motion)pose.value=engine.step(target,0f,0f,false)}
  TalkLiveOrb(phase,level,motion,Modifier.wrapContentSize(Alignment.TopStart,unbounded=true).size(drawingSize).graphicsLayer{
   val p=pose.value
-  translationX=p.x-base/2f;translationY=p.y-base/2f
-  scaleX=p.diameter/base;scaleY=scaleX;rotationZ=p.bank
+  val diameter=motionBounds?.let{minOf(p.diameter,it.width,it.height)}?:p.diameter
+  val radius=diameter/2f
+  val x=motionBounds?.let{p.x.coerceIn(it.left+radius,it.right-radius)}?:p.x
+  val y=motionBounds?.let{p.y.coerceIn(it.top+radius,it.bottom-radius)}?:p.y
+  translationX=x-base/2f;translationY=y-base/2f
+  scaleX=diameter/base;scaleY=scaleX;rotationZ=if(motionBounds==null)p.bank else 0f
  }.testTag(tag),tracker,attention,activity,TalkHaloStyle.LED,haloReady,eyesClosed=eyesClosed,blinkOnConnect=blinkOnConnect)
 }
 }
