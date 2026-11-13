@@ -239,6 +239,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     internal var debugQuestionSentAt = 0L
         private set
     internal suspend fun inspectPlayerScene() { awaitSceneObservation() }
+    internal fun playerVoiceReady(): Boolean =
+        if (BuildConfig.DEBUG && debugOfflineConnection) state.value.phase == "Listening"
+        else socketReady && capture?.recordingState == AudioRecord.RECORDSTATE_RECORDING && captureJob?.isActive == true
     internal suspend fun debugInspectScene(): JSONObject? { check(BuildConfig.DEBUG); return awaitSceneObservation()?.metadata }
     internal suspend fun debugQuotaRecovery(){check(BuildConfig.DEBUG);disconnected(epoch,true)}
     private fun sendTurnContext(userOwned:Boolean=false,sceneParts:JSONArray?=null) {

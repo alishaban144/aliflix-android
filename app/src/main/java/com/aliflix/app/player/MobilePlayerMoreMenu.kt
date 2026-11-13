@@ -84,6 +84,7 @@ internal fun MobilePlayerMoreSheet(
     germanEdition: String? = null,
     onGermanEdition: (() -> Unit)? = null,
     synchronizedPlayback: Boolean = false,
+    onShareScene: (() -> Unit)? = null,
 ) {
     // Removing the sheet resets navigation and scroll positions on its next opening.
     if (!visible) return
@@ -146,6 +147,9 @@ internal fun MobilePlayerMoreSheet(
             ) {
                 when (currentPage) {
                     MorePage.HOME -> {
+                        onShareScene?.let { action ->
+                            MoreOptionRow(Icons.Rounded.ContentCut, "Share Scene", "", onClick = { onDismiss(); action() })
+                        }
                         onWatchTogether?.let { action ->
                             MoreOptionRow(Icons.Rounded.Groups, "Watch Together", "", onClick = { onDismiss(); action() })
                         }

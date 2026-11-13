@@ -153,6 +153,9 @@ class NativePlaybackService : MediaSessionService() {
     private var relayWakeLock: PowerManager.WakeLock? = null
     private var releasing = false
     private val handler = Handler(Looper.getMainLooper())
+    private var sceneEndMessage: androidx.media3.exoplayer.PlayerMessage? = null
+    private var sceneEndArmed = false
+    private var sceneAtEnd = false
     private val audioSelection by lazy { NativeAudioSelection(player, { choice ->
         preferredAudioLabelApplied = true
         if (player.deviceInfo.playbackType != DeviceInfo.PLAYBACK_TYPE_LOCAL ||
@@ -165,6 +168,7 @@ class NativePlaybackService : MediaSessionService() {
     private val captionTask = object : Runnable {
         override fun run() {
             if (releasing) return
+            enforceSceneRange()
             cineJoyRecovery.tick()
             audioSelection.tick()
             if (player.deviceInfo.playbackType != DeviceInfo.PLAYBACK_TYPE_REMOTE)
@@ -306,6 +310,7 @@ class NativePlaybackService : MediaSessionService() {
             }
             override fun onEvents(player: Player, events: Player.Events) {
                 if (releasing) return
+                enforceSceneRange()
                 updateBoost()
                 playbackReady = player.playbackState == Player.STATE_READY
                 if (playbackReady) {
@@ -395,7 +400,7 @@ class NativePlaybackService : MediaSessionService() {
                         android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
                 }
                 activeRequestId = intent.getStringExtra("requestFile")
-                load(next)
+                load(next, SharedSceneRange.from(intent))
             }.onFailure {
                 android.util.Log.e("AliflixPlayback", "Unable to start native playback", it)
                 playbackFailure = androidx.media3.common.PlaybackException("Unable to start native playback", it,
@@ -407,13 +412,18 @@ class NativePlaybackService : MediaSessionService() {
         return START_NOT_STICKY
     }
 
-    private fun load(next: NativePlaybackRequest) {
+    private fun load(next: NativePlaybackRequest, scene: SharedSceneRange?) {
         audioSelection.reset()
         cineJoyRecovery.reset(false)
         speechCapture.reset()
         embeddedSyncReference.reset(); playedUntil = 0.0
         lastAudioFingerprint = ""
         saveProgress(true)
+        sceneEndMessage?.cancel()
+        sceneEndMessage = null
+        sceneEndArmed = false
+        sceneAtEnd = false
+        activeScene = scene
         pendingResumeMs = next.positionMs.takeIf { it > 0 }
         player.stop(); player.clearMediaItems()
         relay?.close(); relay = null
@@ -503,7 +513,8 @@ class NativePlaybackService : MediaSessionService() {
         val pending = pendingResumeMs ?: return true
         val duration = player.duration
         if (duration <= 0) return false
-        val target = pending.coerceAtMost((duration - 1_000).coerceAtLeast(0))
+        val target = if (activeScene != null) pending.coerceAtMost((duration - 1).coerceAtLeast(0))
+            else pending.coerceAtMost((duration - 1_000).coerceAtLeast(0))
         if (kotlin.math.abs(player.currentPosition - target) > 3_000) {
             player.seekTo(target)
             return false
@@ -663,11 +674,49 @@ class NativePlaybackService : MediaSessionService() {
 
     private fun saveProgress(urgent: Boolean) {
         val current = selection ?: return
-        if (!canRecordProgress || player.currentMediaItem?.mediaId != current.key ||
+        if (activeScene != null || !canRecordProgress || player.currentMediaItem?.mediaId != current.key ||
             player.playbackState !in setOf(Player.STATE_READY, Player.STATE_BUFFERING, Player.STATE_ENDED)) return
         val duration = player.duration
         if (duration <= 0) return
         (application as AliflixApplication).playbackProgressStore.savePlayerProgress(current, player.currentPosition / 1000.0, duration / 1000.0, urgent, ended = player.playbackState == Player.STATE_ENDED)
+    }
+
+    private fun enforceSceneRange() {
+        val scene = activeScene ?: return
+        val duration = player.duration
+        if (duration <= 0 || player.playbackState == Player.STATE_IDLE) return
+        val end = scene.endMs.coerceAtMost(duration)
+        if (scene.startMs >= end) {
+            if (player.playWhenReady) player.pause()
+            return
+        }
+        if (!sceneEndArmed && end < duration && !localPlayer.currentTimeline.isEmpty) {
+            sceneEndArmed = true
+            sceneEndMessage = localPlayer.createMessage { _, _ ->
+                if (activeScene == scene && !releasing && player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_LOCAL &&
+                    player.currentPosition >= end - 100) {
+                    sceneAtEnd = true
+                    player.pause()
+                }
+            }.setLooper(Looper.getMainLooper()).setPosition(end).setDeleteAfterDelivery(false).send()
+        }
+        val position = player.currentPosition
+        if (position < scene.startMs - 60) {
+            player.seekTo(scene.startMs)
+        } else if (position >= end) {
+            if (player.playWhenReady) {
+                if (sceneAtEnd && player.playbackState != Player.STATE_ENDED) {
+                    sceneAtEnd = false
+                    player.seekTo(scene.startMs)
+                }
+                else player.pause()
+            } else if (position > end + 100) {
+                player.seekTo(end)
+            }
+            sceneAtEnd = !player.playWhenReady
+        } else if (position < end - 200) {
+            sceneAtEnd = false
+        }
     }
 
     override fun onDestroy() {
@@ -683,6 +732,8 @@ class NativePlaybackService : MediaSessionService() {
         dialogueRecognition = null
         saveProgress(true)
         releasing = true
+        sceneEndMessage?.cancel()
+        activeScene = null
         if (activeService === this) activeService = null
         NativeCastActivity.closeOutput()
         activeStreamUrl = null
@@ -948,6 +999,8 @@ class NativePlaybackService : MediaSessionService() {
         internal var renderedStreamUrl: String? = null
             private set
         internal var activeRequest: NativePlaybackRequest? = null
+            private set
+        internal var activeScene: SharedSceneRange? = null
             private set
         internal var activeStreamUrl: String? = null
             private set

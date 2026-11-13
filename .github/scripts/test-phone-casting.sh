@@ -82,6 +82,7 @@ classes="$classes,com.aliflix.app.ui.MobilePolishUiTest,com.aliflix.app.download
 classes="$classes,com.aliflix.app.player.PlayerHeaderVisualTest"
 classes="$classes,com.aliflix.app.player.MobileRefinementUiTest"
 classes="$classes,com.aliflix.app.player.PlayerPremiumControlsTest"
+classes="$classes,com.aliflix.app.player.SharedSceneDeviceTest"
 classes="$classes,com.aliflix.app.player.BufferedDialogueDeviceTest"
 classes="$classes,com.aliflix.app.player.NativeAudioSelectionDeviceTest,com.aliflix.app.ui.Mobile168UiTest,com.aliflix.app.talk.TalkVoiceUiTest,com.aliflix.app.player.PlayerMoreMenuTest,com.aliflix.app.player.NativeUpNextDeviceTest"
 classes="$classes,com.aliflix.app.ui.UnifiedAskUiTest"

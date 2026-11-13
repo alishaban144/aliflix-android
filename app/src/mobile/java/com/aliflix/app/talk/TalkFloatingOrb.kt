@@ -4,8 +4,10 @@ import androidx.compose.animation.core.withInfiniteAnimationFrameNanos
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -18,7 +20,7 @@ import com.aliflix.app.ui.discover.DiscoverTouchTracker
     activity:TalkOrbActivity?=null,initialPose:TalkOrbPose?=null,haloReady:Boolean=false){
  BoxWithConstraints(Modifier.fillMaxSize()){
  val density=LocalDensity.current
- val drawingSize=minOf(320.dp,maxWidth,maxHeight)
+ val drawingSize=minOf(320.dp,maxWidth)
  val base=with(density){drawingSize.toPx()}
  val engine=remember{TalkOrbFlight(initialPose)}
  val goal by rememberUpdatedState(target)
@@ -37,7 +39,7 @@ import com.aliflix.app.ui.discover.DiscoverTouchTracker
   }
  }
  LaunchedEffect(target,motion){if(!motion)pose.value=engine.step(target,0f,0f,false)}
- TalkLiveOrb(phase,level,motion,Modifier.size(drawingSize).graphicsLayer{
+ TalkLiveOrb(phase,level,motion,Modifier.wrapContentSize(Alignment.TopStart,unbounded=true).size(drawingSize).graphicsLayer{
   val p=pose.value
   translationX=p.x-base/2f;translationY=p.y-base/2f
   scaleX=p.diameter/base;scaleY=scaleX;rotationZ=p.bank

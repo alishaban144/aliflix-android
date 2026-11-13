@@ -127,6 +127,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
     val keyboardOpen=WindowInsets.ime.getBottom(LocalDensity.current)>0
     val density=LocalDensity.current
     var orbAnchor by remember{mutableStateOf(Rect.Zero)}
+    var chatCorner by remember { mutableStateOf(Rect.Zero) }
     var screenOrigin by remember{mutableStateOf(Offset.Zero)}
     var screenSize by remember{mutableStateOf(IntSize.Zero)}
     val cardBounds=remember{mutableStateMapOf<String,Rect>()}
@@ -169,8 +170,10 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 Icon(Icons.Rounded.Workspaces,null,Modifier.size(16.dp));Spacer(Modifier.width(8.dp));Text("$activeWork active",fontSize=12.sp)
             }
             if(chatLayout) {
-                if(!compactComposer)Row(Modifier.fillMaxWidth().padding(bottom=8.dp),verticalAlignment=Alignment.CenterVertically) {
-                    if(state.lines.isNotEmpty()||keyboardOpen){TalkLiveOrb(state.phase,{session.state.value.level},motion,Modifier.size(56.dp).testTag("talk-chat-orb"),activity=orbActivity);Spacer(Modifier.width(12.dp))}
+                val docked = state.lines.isNotEmpty() || keyboardOpen || compactComposer
+                Row(Modifier.fillMaxWidth().padding(bottom=if(compactComposer) 0.dp else 8.dp),verticalAlignment=Alignment.CenterVertically) {
+                    if(docked) Spacer(Modifier.size(if(compactComposer) 40.dp else 56.dp)
+                        .onGloballyPositioned { chatCorner=it.boundsInRoot() })
                     Spacer(Modifier.weight(1f))
                     AliflixIconButton(onClick={session.newChat();draft=TextFieldValue();onStart()}) { Icon(Icons.Rounded.AddComment,"New chat",tint=AliflixAccentSecondary) }
                 }
@@ -184,7 +187,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 }
                 if(state.lines.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(),contentAlignment=Alignment.Center) {
                     Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                        if(!keyboardOpen&&!compactComposer)Box(anchor(Modifier.size(116.dp)))
+                        if(!docked)Box(anchor(Modifier.size(116.dp)))
 
                     }
                 } else Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -248,9 +251,14 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 }
             }
         }
-        if(orbAnchor.width>0f&&orbAnchor.height>0f&&!compactComposer&&(!chatLayout||state.lines.isEmpty()&&!keyboardOpen)){
-            val compact=chatLayout
-            val small=compact&&(state.lines.isNotEmpty()||keyboardOpen)
+        val compact=chatLayout
+        val small=compact&&(state.lines.isNotEmpty()||keyboardOpen||compactComposer)
+        val targetAnchor=if(small) chatCorner else orbAnchor
+        val retainedChatAnchor=if(small) orbAnchor else chatCorner
+        val flightAnchor=targetAnchor.takeIf { it.width>0f && it.height>0f }
+            ?: retainedChatAnchor.takeIf { compact && it.width>0f && it.height>0f }
+        if(flightAnchor!=null){
+            val orbAnchor=flightAnchor
             val base=if(compact)minOf(orbAnchor.width,orbAnchor.height)else minOf(orbAnchor.width*.86f,orbAnchor.height,with(density){320.dp.toPx()})
             val visible=state.cards.visible.take(8)
             val attentionKey=state.spokenCardKey?:visible.singleOrNull()?.key?.takeIf{state.phase=="Speaking"}
@@ -407,7 +415,8 @@ private class TalkParticleField(private val width: Int, private val height: Int,
  * A feathered radial alpha replaces CSS blur: no rings, clipped layers or resets
  * between listening/speaking. The uninterrupted clock and PCM envelope are separate. */
 @Composable internal fun TalkLiveOrb(phase:String,level:()->Float,motion:Boolean,modifier:Modifier=Modifier,tracker:DiscoverTouchTracker=remember{DiscoverTouchTracker()},attention:Offset?=null,
-    activity:TalkOrbActivity?=null,haloStyle:TalkHaloStyle=TalkHaloStyle.SOFT,haloReady:Boolean=true,playerThinking:Boolean=false) {
+    activity:TalkOrbActivity?=null,haloStyle:TalkHaloStyle=TalkHaloStyle.SOFT,haloReady:Boolean=true,playerThinking:Boolean=false,
+    eyesClosed:Boolean=false) {
     val appearance=remember(activity,phase) { talkOrbAppearance(activity ?: talkOrbPhaseActivity(phase)) }
     val animate=motion&&android.animation.ValueAnimator.areAnimatorsEnabled()
     val seconds=rememberMobileAnimationClock(animate)
@@ -475,6 +484,7 @@ private class TalkParticleField(private val width: Int, private val height: Int,
             rotationZ=tilt.value+thought*if(playerThinking)1.8f else 0f
             translationY=if(animate)(sin(seconds.value*.95f)*.65f+thought*if(playerThinking)1.2f else 0f).dp.toPx() else 0f
         },conversing=phase=="Speaking",voiceCompanion=true,voiceEnergy={energy},attention=attention,
-            expression=if(playerThinking&&animate)playerThinkingExpression(seconds.value,activity?:TalkOrbActivity.THINK)else appearance.face,motionEnabled=animate)
+            expression=if(playerThinking&&animate)playerThinkingExpression(seconds.value,activity?:TalkOrbActivity.THINK)else appearance.face,
+            motionEnabled=animate,eyesClosed=eyesClosed)
     }
 }

@@ -186,6 +186,8 @@ import kotlin.math.roundToInt
         }.clickable(role=Role.Button,onClickLabel=if(controls)"Collapse conversation" else "Expand conversation") { controls=!controls;if(!controls)returnToVoice() }
             .pointerInput(maxX,maxY,top) { detectDragGestures(onDragStart={controls=false;returnToVoiceOnDrag()}) { change,delta -> change.consume();dragX=(dragX+delta.x).coerceIn(-maxX,0f);dragY=(dragY+delta.y).coerceIn(-top,maxY-top) } }) {
             TalkLiveOrb(state.phase,{session.state.value.level},motion,Modifier.fillMaxSize().testTag("talk-player-orb"),activity=activity,tracker=tracker,
+                haloStyle=TalkHaloStyle.LED, haloReady=session.playerVoiceReady() && talkVoiceHaloReady(state),
+                eyesClosed=!state.textMode && !session.playerVoiceReady(),
                 playerThinking=!typing&&state.phase!="Speaking"&&talkShowsResponseProgress(state.sending,state.answerComplete))
         }
     }
