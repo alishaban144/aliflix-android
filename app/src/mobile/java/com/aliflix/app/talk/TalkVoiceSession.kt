@@ -193,13 +193,18 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         frameAttentionId = frameId
         frameAttentionFrame = frame
         frameAttentionTurn = userTurn.get()
-        parts.put(JSONObject().put("text","Paused player frame at ${frame.seconds} seconds. scene_attention frameId=$frameId"))
+        parts.put(JSONObject().put("text","Exact paused player image at ${frame.seconds} seconds, frameId=$frameId. " +
+            "For a question about a detail actually visible in this image, call scene_attention with this frameId before speaking. " +
+            "For each visible referent you will discuss, provide its tight normalized box and a verbatim phrase from the spoken answer, in the order you will say them. " +
+            "For people, box the visible face rather than the entire figure when possible. Keep distinct targets separate and use a short unique mention for each. " +
+            "Then speak the actual answer immediately. Use earlier frames for story evidence only. Skip scene_attention for unrelated questions or absent or ambiguous targets."))
         if(id==null) {
             parts.put(JSONObject().put("inlineData",JSONObject().put("mimeType","image/jpeg")
                 .put("data",Base64.encodeToString(frame.jpeg,Base64.NO_WRAP))))
             sentAttentionFrame = frame
             sentAttentionId = frameId
         }
+        if(BuildConfig.DEBUG)debugToolCalls.merge("paused_frame_attached",1){a,b->a+b}
     }
 
     private fun acceptFrameAttention(callId: String, args: JSONObject?): Boolean {
@@ -337,11 +342,11 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             scene.metadata.put("attachedCurrentFrameSeconds",JSONArray(delivery.frames.map { it.seconds }))
             val key = "$epoch:$providerContext:${scene.key}:${delivery.frames.joinToString { it.seconds.toString() }}"
             val includeFrames = key != sentSceneKey || SystemClock.elapsedRealtime() - sentSceneAt > 45_000
-            val evidence=JSONArray()
+            val attention=JSONArray()
             if(userOwned && !state.value.textMode && conversationContext.optInt("companionVersion")>=18)
-                addAttentionFrame(evidence)
-            val sceneEvidence=delivery.parts(includeFrames,recalledFrames,frameAttentionFrame)
-            for(index in 0 until sceneEvidence.length())evidence.put(sceneEvidence.getJSONObject(index))
+                addAttentionFrame(attention)
+            val evidence=delivery.parts(includeFrames,recalledFrames,frameAttentionFrame)
+            for(index in 0 until attention.length())evidence.put(attention.getJSONObject(index))
             // Keep visual evidence in the same completed user turn as a typed
             // question; history replay/compression must not separate its images.
             if(sceneParts!=null)for(index in 0 until evidence.length())sceneParts.put(evidence.getJSONObject(index))
@@ -1178,7 +1183,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if(wireName=="scene_attention") {
                     val id=original.getString("id")
                     val accepted=acceptFrameAttention(id,original.optJSONObject("args"))
-                    if(BuildConfig.DEBUG && accepted)debugToolCalls.merge(wireName,1){a,b->a+b}
+                    if(BuildConfig.DEBUG)debugToolCalls.merge(if(accepted)wireName else "scene_attention_rejected",1){a,b->a+b}
                     emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(
                         talkFunctionResponse(id,wireName,JSONObject().put("accepted",accepted),"SILENT")))))
                     continue

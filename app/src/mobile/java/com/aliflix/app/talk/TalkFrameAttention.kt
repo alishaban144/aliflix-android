@@ -12,8 +12,8 @@ internal data class TalkFrameTarget(val left: Float, val top: Float, val right: 
 }
 
 internal class TalkFrameAttention(args: JSONObject, frameId: String) {
-    private data class Cue(val target: TalkFrameTarget, val phrase: Regex)
-    private data class Mention(val target: TalkFrameTarget, val index: Int)
+    private data class Cue(val target: TalkFrameTarget, val phrases: List<Regex>)
+    private data class Mention(val target: TalkFrameTarget, val index: Int, val cue: Int)
 
     private val cues = buildList {
         if (args.optString("frameId") != frameId) return@buildList
@@ -28,9 +28,16 @@ internal class TalkFrameAttention(args: JSONObject, frameId: String) {
             if (values.any { !it.isFinite() || it !in 0f..1f }) continue
             val (top, left, bottom, right) = values
             if (top >= bottom || left >= right || (bottom-top)*(right-left) > .55f) continue
-            val words = phrase.split(Regex("\\s+")).joinToString("\\s+") { Regex.escape(it) }
-            add(Cue(TalkFrameTarget(left, top, right, bottom),
-                Regex("(?<![\\p{L}\\p{N}])$words(?![\\p{L}\\p{N}])", RegexOption.IGNORE_CASE)))
+            val aliases = cue.optJSONArray("aliases")?.let { rows ->
+                (0 until minOf(rows.length(), 3)).map { rows.optString(it) }
+            }.orEmpty()
+            val terms = (listOf(phrase) + aliases)
+                .map(String::trim).filter { it.length in 2..80 }.distinct()
+            val patterns = terms.map { term ->
+                val words = term.split(Regex("[\\s\\p{Pd}]+")).joinToString("[\\s\\p{Pd}]+") { Regex.escape(it) }
+                Regex("(?<![\\p{L}\\p{N}])$words(?![\\p{L}\\p{N}])", RegexOption.IGNORE_CASE)
+            }
+            add(Cue(TalkFrameTarget(left, top, right, bottom), patterns))
         }
     }
     val available get() = cues.isNotEmpty()
@@ -39,17 +46,21 @@ internal class TalkFrameAttention(args: JSONObject, frameId: String) {
     private var firstSample = -1L
     private var samples = 0L
     private var complete = false
-    private var currentIndex = -1
+    private var currentCue = -1
+    private var currentTarget: TalkFrameTarget? = null
+    private var estimatedDuration = 0L
 
     @Synchronized fun update(text: String) {
         narration = text
         var cursor = 0
-        mentions = cues.mapNotNull { cue ->
-            cue.phrase.find(text, cursor)?.let { match ->
+        mentions = cues.mapIndexedNotNull { index, cue ->
+            cue.phrases.mapNotNull { it.find(text, cursor) }.minByOrNull { it.range.first }?.let { match ->
                 cursor = match.range.last + 1
-                Mention(cue.target, match.range.first)
+                Mention(cue.target, match.range.first, index)
             }
         }
+        val words = text.count { it.isWhitespace() } + 1
+        estimatedDuration = (words * 24_000 / 2.6).toLong()
     }
 
     @Synchronized fun receive(count: Int, start: Long) {
@@ -61,11 +72,13 @@ internal class TalkFrameAttention(args: JSONObject, frameId: String) {
 
     @Synchronized fun at(rendered: Long): TalkFrameTarget? {
         if (firstSample < 0 || samples == 0L || rendered < firstSample || rendered >= firstSample + samples) return null
-        val wordCount = narration.count { it.isWhitespace() } + 1
-        val duration = if (complete) samples else maxOf(samples, (wordCount * 24_000 / 2.6).toLong())
+        val duration = if (complete) samples else maxOf(samples, estimatedDuration)
         val cursor = ((rendered - firstSample + 4_800L).toDouble() / duration * narration.length).toInt()
-        currentIndex = maxOf(currentIndex, mentions.indexOfLast { it.index <= cursor })
-        return mentions.getOrNull(currentIndex)?.target
+        mentions.lastOrNull { it.index <= cursor && it.cue > currentCue }?.let {
+            currentCue = it.cue
+            currentTarget = it.target
+        }
+        return currentTarget
     }
 }
 

@@ -161,8 +161,8 @@ import kotlin.math.roundToInt
             .coerceIn(0f,(heightPixels-estimatedHeight).coerceAtLeast(0f))
         Box(Modifier.absoluteOffset { IntOffset(paletteX.roundToInt(), paletteY.roundToInt()) }) {
             AnimatedVisibility(controls,
-                enter = if(motion) fadeIn(androidx.compose.animation.core.tween(220))+scaleIn(initialScale=.96f) else EnterTransition.None,
-                exit = if(motion) fadeOut(androidx.compose.animation.core.tween(150)) else ExitTransition.None) {
+                enter = if(motion) fadeIn(tween(180))+scaleIn(initialScale=.97f) else EnterTransition.None,
+                exit = ExitTransition.None) {
                 Surface(Modifier.width(paletteWidth).heightIn(max=panelLimit).animateContentSize(androidx.compose.animation.core.tween(if(motion)260 else 0)).onSizeChanged { panelHeight=it.height }.measured("player-palette").testTag("talk-inline-conversation"),
                     shape=RoundedCornerShape(28.dp),color=Color(0xFF151422),shadowElevation=14.dp) {
                     Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {

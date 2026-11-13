@@ -26,6 +26,10 @@ class Talk187SceneDeviceTest {
         if(node==null)return ""
         return node.text.toString()+" "+node.contentDescription.toString()+" "+(0 until node.childCount).joinToString(" "){visibleText(node.getChild(it))}
     }
+    private fun currentVisibleText(): String {
+        if (android.os.Build.VERSION.SDK_INT >= 33) i.uiAutomation.clearCache()
+        return visibleText(i.uiAutomation.rootInActiveWindow)
+    }
     private fun fixture(body:suspend (NativePlayerActivity)->Unit) {
         i.uiAutomation.grantRuntimePermission(context.packageName,android.Manifest.permission.RECORD_AUDIO)
         grantNativeFixtureNetworkPermission()
@@ -144,11 +148,11 @@ class Talk187SceneDeviceTest {
             player.talkVoice.debugPreviewOrbContext("Speaking",answer)
         }
         delay(350)
-        assertFalse(visibleText(i.uiAutomation.rootInActiveWindow).contains(answer))
+        assertFalse(currentVisibleText().contains(answer))
         tap(bound(player,"player-orb"));delay(450)
-        assertTrue(visibleText(i.uiAutomation.rootInActiveWindow).contains(answer))
+        assertTrue(currentVisibleText().contains(answer))
         tap(bound(player,"player-orb"));delay(450)
-        assertFalse(visibleText(i.uiAutomation.rootInActiveWindow).contains(answer))
+        assertFalse(currentVisibleText().contains(answer))
     }
 
     @Test fun liveMicrophoneStartsAndReconnectsAfterAnImmediateClose()=fixture { player ->
@@ -166,6 +170,41 @@ class Talk187SceneDeviceTest {
             android.util.Log.i("TalkPlayerTiming","opening=$attempt captureMs=$captured connectedMs=$connected")
             withContext(Dispatchers.Main) { player.closeTalk() }
             assertFalse(player.talkVoice.state.value.microphoneReady)
+        }
+    }
+
+    @Test fun livePausedFrameCanDirectTheOrbToSuccessiveVisibleDetails()=fixture { player ->
+        assumeTrue(InstrumentationRegistry.getArguments().getString("liveTalk187")=="true")
+        val voice=player.talkVoice
+        withContext(Dispatchers.Main) { player.openTalk() }
+        withTimeout(20_000) {
+            while(!withContext(Dispatchers.Main) { voice.playerVoiceReady() && player.talkAttentionFrame()!=null })delay(20)
+        }
+        for((fixture, visual) in listOf("visible" to true, "unrelated" to false)) {
+            val cues = linkedSetOf<TalkFrameTarget>()
+            coroutineScope {
+                val monitor = launch {
+                    voice.state.collect { value -> value.frameTarget?.let(cues::add) }
+                }
+                try {
+                    val baseline=voice.state.value.lines.count { it.role=="assistant" }
+                    withContext(Dispatchers.Main) {
+                        voice.debugInjectMicrophonePcm(talkValidationFixture("talk198-$fixture.pcm").readBytes())
+                    }
+                    withTimeout(45_000) {
+                        while (voice.state.value.let {
+                            !it.answerComplete || it.lines.count { line -> line.role=="assistant" }<=baseline ||
+                                it.phase !in setOf("Listening","Muted")
+                        }) delay(40)
+                    }
+                } finally { monitor.cancelAndJoin() }
+            }
+            android.util.Log.i("TalkPlayerTiming","fixture=$fixture cues=${cues.size} calls=${voice.debugToolCalls["scene_attention"] ?: 0}")
+            if(visual)assertTrue("Expected multiple visible details: $cues",cues.size>=2)
+            else assertTrue("An unrelated answer moved the orb: $cues",cues.isEmpty())
+            assertFalse(visibleText(i.uiAutomation.rootInActiveWindow).contains(
+                voice.state.value.lines.last { it.role=="assistant" }.text.take(40)))
+            screenshot("talk198-$fixture.png")
         }
     }
 

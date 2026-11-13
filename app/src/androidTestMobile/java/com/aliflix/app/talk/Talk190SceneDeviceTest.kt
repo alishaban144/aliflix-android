@@ -134,6 +134,10 @@ class Talk190SceneDeviceTest {
                 val before=android.os.SystemClock.elapsedRealtime()
                 receipt.put("question", args.getString("sceneQuestion") ?: "Explain why this happened using the earlier setup.")
                 val speech=args.getString("sceneSpeechFixture")
+                val targets=java.util.concurrent.CopyOnWriteArraySet<TalkFrameTarget>()
+                val attention=launch(start=CoroutineStart.UNDISPATCHED) {
+                    player.talkVoice.state.collect { it.frameTarget?.let(targets::add) }
+                }
                 if(speech==null)withContext(Dispatchers.Main) {
                     player.talkVoice.sendText(receipt.getString("question"))
                     player.currentFocus?.clearFocus()
@@ -191,14 +195,18 @@ class Talk190SceneDeviceTest {
                     withTimeout(30000){while(player.talkVoice.debugAudioSnapshot().let{it.optBoolean("speaking")||it.optBoolean("writing")||it.optInt("queued")>0})delay(40)}
                     val final=player.talkVoice.debugAudioSnapshot()
                     receipt.put("spokenOutputDrained",final).put("sameConversation",conversationBefore==player.talkVoice.state.value.conversationId)
+                    receipt.put("attentionTargets",JSONArray(targets.map { JSONArray(listOf(it.left,it.top,it.right,it.bottom)) }))
+                    if(args.getString("sceneMinimumTargets")!=null)
+                        assertTrue("Scene targets: $targets. Answer: $answer",targets.size>=args.getString("sceneMinimumTargets")!!.toInt())
                     assertEquals(conversationBefore,player.talkVoice.state.value.conversationId)
                     assertTrue("Speech must render beyond the first fragment",final.optLong("rendered")>50000)
                     assertFalse("Speaker echo interrupted the scene reply",player.talkVoice.debugActivityEvents.any{it.optBoolean("barge")})
                 }
+                attention.cancelAndJoin()
                 val expected = args.getString("sceneExpected")?.split(';')?.getOrNull(index)
                 val missing=expected?.split("~")?.filterNot { Regex("(?i)(?:$it)").containsMatchIn(answer) }.orEmpty()
                 receipt.put("missingRequiredPoints",JSONArray(missing))
-                assertNotNull(withContext(Dispatchers.Main) { player.talkVoice.debugCardBounds["player-exchange"] })
+                if(speech!=null)assertNull(withContext(Dispatchers.Main) { player.talkVoice.debugCardBounds["player-exchange"] })
                 assertNull(withContext(Dispatchers.Main) { player.talkVoice.debugCardBounds["player-full-input"] })
                 assertFalse(withContext(Dispatchers.Main) { player.playbackController!!.isPlaying })
                 delay(600)
