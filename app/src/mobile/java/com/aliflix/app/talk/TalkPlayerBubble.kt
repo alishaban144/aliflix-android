@@ -4,7 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -38,11 +38,13 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.TextStyle
@@ -58,22 +60,26 @@ import com.aliflix.app.ui.theme.AliflixAccentSecondary
 import kotlin.math.roundToInt
 
 @Composable internal fun TalkPlayerBubble(session: TalkVoiceSession, onStart: () -> Unit, onClose: () -> Unit, orbTransition: Modifier = Modifier,
-    tracker: com.aliflix.app.ui.discover.DiscoverTouchTracker = remember { com.aliflix.app.ui.discover.DiscoverTouchTracker() }) {
+    tracker: com.aliflix.app.ui.discover.DiscoverTouchTracker = remember { com.aliflix.app.ui.discover.DiscoverTouchTracker() },
+    videoBounds: Rect? = null) {
     fun Modifier.measured(key: String): Modifier = if (!com.aliflix.app.BuildConfig.DEBUG) this else onGloballyPositioned {
         session.debugCardBounds[key] = it.findRootCoordinates().localBoundingBoxOf(it, clipBounds = false)
     }
     val state by rememberTalkPresentation(session)
     var controls by rememberSaveable { mutableStateOf(false) }
     val typing = state.textMode
+    val connected = session.playerVoiceReady()
     val draft = rememberSaveable(state.conversationId, stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue()) }
     var dragX by rememberSaveable { mutableFloatStateOf(0f) }
     var dragY by rememberSaveable { mutableFloatStateOf(0f) }
     var panelHeight by remember { mutableIntStateOf(0) }
+    var dragging by remember { mutableStateOf(false) }
     val density = LocalDensity.current
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val composerFocus = remember { FocusRequester() }
-    val motion = com.aliflix.app.ui.common.rememberMobileMotionEnabled() && com.aliflix.app.ui.common.rememberMobileResumed()
+    val motion = com.aliflix.app.ui.common.rememberMobileMotionEnabled() && com.aliflix.app.ui.common.rememberMobileResumed() &&
+        android.animation.ValueAnimator.areAnimatorsEnabled()
     val activity = talkOrbActivity(state, typing && !state.sending)
     val appearance = remember(activity) { talkOrbAppearance(activity) }
     val openingLine = remember(state.conversationId) { state.lines.size }
@@ -87,9 +93,8 @@ import kotlin.math.roundToInt
     fun dismissComposer() { focus.clearFocus(); keyboard?.hide() }
     fun returnToVoice() {
         dismissComposer()
-        if(state.textMode || state.muted) { session.setTextMode(false); onStart() }
+        if(state.textMode || state.muted) { session.usePlayerVoice(); onStart() }
     }
-    val returnToVoiceOnDrag by rememberUpdatedState(::returnToVoice)
     fun send() {
         val text = draft.value.text.trim()
         if (text.isNotEmpty()) {
@@ -97,7 +102,6 @@ import kotlin.math.roundToInt
         }
     }
     BackHandler(enabled = controls || typing) { if (typing) returnToVoice() else controls = false }
-    LaunchedEffect(state.sending,lastUser) { if(state.sending && lastUser>=openingLine) controls=true }
     LaunchedEffect(controls, typing) {
         listOf("player-microphone", "player-expand", "player-full-input", "player-full-close", "player-full-send").forEach(session.debugCardBounds::remove)
         if (!controls) listOf("player-palette", "player-type", "player-close", "player-send", "player-exchange").forEach(session.debugCardBounds::remove)
@@ -116,7 +120,13 @@ import kotlin.math.roundToInt
             }
         }
     } }
-    BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(12.dp).testTag("talk-player-bubble")) {
+    var overlayWindowOrigin by remember { mutableStateOf<Offset?>(null) }
+    var overlayRootOrigin by remember { mutableStateOf(Offset.Zero) }
+    BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(12.dp)
+        .onGloballyPositioned {
+            overlayWindowOrigin = it.positionInWindow()
+            overlayRootOrigin = it.localToRoot(Offset.Zero)
+        }.testTag("talk-player-bubble")) {
         val orbSize = 76.dp
         val maxX = with(density) { (maxWidth - orbSize).toPx().coerceAtLeast(0f) }
         val maxY = with(density) { (maxHeight - orbSize).toPx().coerceAtLeast(0f) }
@@ -130,6 +140,18 @@ import kotlin.math.roundToInt
         val roomLeft = orbX >= palettePixels + gap
         val paletteX = if(roomLeft) orbX-palettePixels-gap else (orbX+orbPixels-palettePixels).coerceIn(0f,(maxX+orbPixels-palettePixels).coerceAtLeast(0f))
         val heightPixels = with(density) { maxHeight.toPx() }
+        val radius = orbPixels / 2f
+        val home = Offset(orbX + radius, orbY + radius)
+        val viewport = Rect(radius, radius, maxX + radius, maxY + radius)
+        val visibleFrame = overlayWindowOrigin?.let { origin -> videoBounds?.translate(-origin) }
+        val target = if(!controls && !typing && !dragging && state.phase=="Speaking")
+            visibleFrame?.let { frame ->
+                state.frameTarget?.inVideo(frame)?.intersect(Rect(0f,0f,maxX+orbPixels,heightPixels))
+                    ?.takeUnless { it.isEmpty }
+            } else null
+        val destination = if (motion) target?.let { talkOrbBesideTarget(it,home,viewport,radius) } ?: home else home
+        val flight by animateOffsetAsState(destination, if(motion && !dragging)
+            spring(dampingRatio=1f,stiffness=Spring.StiffnessMediumLow) else snap(), label="player-orb-attention")
         val downStart=if(roomLeft)orbY else orbY+orbPixels+gap
         val upEnd=if(roomLeft)orbY+orbPixels else orbY-gap
         val growDown=heightPixels-downStart>=upEnd
@@ -148,6 +170,8 @@ import kotlin.math.roundToInt
                         val compactComposer=typing&&LocalConfiguration.current.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE
                         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.End) {
                             if(compactComposer)composer(Modifier.weight(1f),true)
+                            if(activity==TalkOrbActivity.UNAVAILABLE)
+                                ScenePaletteButton(Icons.Rounded.Refresh,"Reconnect",onClick=onStart)
                             ScenePaletteButton(if(typing)Icons.Rounded.GraphicEq else Icons.Rounded.Keyboard,
                                 if(typing)"Voice conversation" else "Type",Modifier.measured("player-type").semantics { selected=typing },active=typing) {
                                 if(typing) returnToVoice() else { session.setTextMode(true); onStart() }
@@ -180,14 +204,28 @@ import kotlin.math.roundToInt
         }
         // Clip the interaction layer too: clipping only the halo Canvas leaves
         // Compose's bounded pressed indication as a visible rectangular square.
-        Box(Modifier.absoluteOffset { IntOffset(orbX.roundToInt(),orbY.roundToInt()) }.then(orbTransition).size(orbSize).clip(CircleShape).testTag("talk-player-orb-container").measured("player-orb").semantics {
+        Box(Modifier.absoluteOffset {
+            val center=if(dragging)home else flight
+            IntOffset((center.x-radius).roundToInt(),(center.y-radius).roundToInt())
+        }.then(orbTransition).size(orbSize).clip(CircleShape).testTag("talk-player-orb-container").measured("player-orb").semantics {
             contentDescription="Talk controls";stateDescription=appearance.label
             customActions=listOf(CustomAccessibilityAction("Move to other side") { dragX=if(orbX>maxX/2)-maxX else 0f;true })
         }.clickable(role=Role.Button,onClickLabel=if(controls)"Collapse conversation" else "Expand conversation") { controls=!controls;if(!controls)returnToVoice() }
-            .pointerInput(maxX,maxY,top) { detectDragGestures(onDragStart={controls=false;returnToVoiceOnDrag()}) { change,delta -> change.consume();dragX=(dragX+delta.x).coerceIn(-maxX,0f);dragY=(dragY+delta.y).coerceIn(-top,maxY-top) } }) {
+            .pointerInput(maxX,maxY,top) {
+                detectDragGestures(
+                    onDragStart={controls=false;dragging=true},
+                    onDragEnd={dragging=false},
+                    onDragCancel={dragging=false},
+                ) { change,delta ->
+                    change.consume()
+                    dragX=(dragX+delta.x).coerceIn(-maxX,0f)
+                    dragY=(dragY+delta.y).coerceIn(-top,maxY-top)
+                }
+            }) {
             TalkLiveOrb(state.phase,{session.state.value.level},motion,Modifier.fillMaxSize().testTag("talk-player-orb"),activity=activity,tracker=tracker,
-                haloStyle=TalkHaloStyle.LED, haloReady=session.playerVoiceReady() && talkVoiceHaloReady(state),
-                eyesClosed=!state.textMode && !session.playerVoiceReady(),
+                attention=target?.center?.plus(overlayRootOrigin),
+                haloStyle=TalkHaloStyle.LED, haloReady=!typing && (connected && talkVoiceHaloReady(state) || !connected && state.microphoneReady && !state.muted),
+                eyesClosed=!state.textMode && !connected,blinkOnConnect=!state.textMode && connected,
                 playerThinking=!typing&&state.phase!="Speaking"&&talkShowsResponseProgress(state.sending,state.answerComplete))
         }
     }

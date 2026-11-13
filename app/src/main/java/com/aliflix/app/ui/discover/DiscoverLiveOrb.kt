@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -67,7 +68,8 @@ internal data class OrbExpression(val gaze: Offset, val openness: Float, val asy
 /** Live Orb's capsule eyes and spherical projection, in Aliflix's pearl/lavender palette. */
 @Composable
 internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier = Modifier, conversing: Boolean = false, voiceCompanion: Boolean = false, voiceEnergy:()->Float={0f},attention:Offset?=null,
-    expression: OrbExpression? = null, motionEnabled: Boolean = true, eyesClosed: Boolean = false) {
+    expression: OrbExpression? = null, motionEnabled: Boolean = true, eyesClosed: Boolean = false,
+    blinkOnConnect: Boolean = false) {
     val motion = rememberMobileMotionEnabled() && motionEnabled
     val resumed = rememberMobileResumed()
     var bounds by remember { mutableStateOf(Rect.Zero) }
@@ -90,7 +92,18 @@ internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier =
     LaunchedEffect(voiceCompanion,motion,resumed) {
         idleLook=Offset(0f,if(voiceCompanion).06f else .08f)
     }
-    LaunchedEffect(voiceCompanion,motion,resumed) {
+    LaunchedEffect(voiceCompanion,motion,resumed,eyesClosed,blinkOnConnect) {
+        blink=0f
+        if(eyesClosed)return@LaunchedEffect
+        if(blinkOnConnect&&motion&&resumed) {
+            kotlinx.coroutines.delay(190)
+            repeat(2) {
+                blink=1f
+                kotlinx.coroutines.delay(95)
+                blink=0f
+                kotlinx.coroutines.delay(180)
+            }
+        }
         if(voiceCompanion&&motion&&resumed)while(true) {
             kotlinx.coroutines.delay(kotlin.random.Random.nextLong(2800,5200))
             var waited=0
@@ -109,11 +122,11 @@ internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier =
             var previous = 0L
             while (true) withInfiniteAnimationFrameNanos { now ->
                 val idle = SystemClock.uptimeMillis() - tracker.lastTouchMillis > 1800L
-                val point=if(!idle)tracker.point else contentAttention
+                val point=contentAttention ?: if(!idle)tracker.point else null
                 val target = if(point==null||bounds.width<=0f)expressionTarget?.gaze ?: idleLook else boundedOrbLook(point,bounds.center,bounds.width/2f)
                 if (previous != 0L) {
                     val dt=((now-previous)/1_000_000_000f).coerceIn(0f,.05f)
-                    look = dampOrbLook(look,target,dt,idle && expressionTarget==null)
+                    look = dampOrbLook(look,target,dt,idle && point==null && expressionTarget==null)
                     val blend=1f-exp(-12f*dt)
                     openness+=((expressionTarget?.openness ?: 1f)-openness)*blend
                     asymmetry+=((expressionTarget?.asymmetry ?: 0f)-asymmetry)*blend
@@ -148,6 +161,21 @@ internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier =
         val norm = sqrt(.32f*.32f+.08f*.08f+1f)
         for (eye in 0..1) {
             val side=if(eye==0)-1f else 1f
+            val eyeX=side*.32f/norm
+            val eyeY=.08f/norm
+            if (lid >= .9f && (eyesClosed || blinkOnConnect)) {
+                val z=sqrt(1f-eyeX*eyeX-eyeY*eyeY)
+                val py=eyeY*cosPitch-z*sinPitch
+                val pz=eyeY*sinPitch+z*cosPitch
+                if (-eyeX*sinYaw+pz*cosYaw>0f) {
+                    val px=eyeX*cosYaw+pz*sinYaw
+                    val middle=Offset(center.x+px*radius,center.y-py*radius)
+                    val halfWidth=radius*.126f
+                    drawLine(AliflixContentInverse,middle-Offset(halfWidth,0f),middle+Offset(halfWidth,0f),
+                        strokeWidth=(radius*.067f).coerceAtLeast(1f),cap=StrokeCap.Round)
+                }
+                continue
+            }
             val openHeight=.128f*openness.coerceIn(.65f,1.12f)*(1f+side*asymmetry.coerceIn(-.1f,.1f))
             val halfH = openHeight + (.012f-openHeight) * lid
             val path = paths[eye].apply { reset() }

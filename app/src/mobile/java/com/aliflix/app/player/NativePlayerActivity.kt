@@ -58,10 +58,15 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     internal fun talkHandoff()=if(talkCreated)talkVoice.handoff()else null
     private var talkCreated = false
     private var talkOpening by mutableIntStateOf(0)
+    private var talkConnectJob: Job? = null
+    private var talkConnectTextMode: Boolean? = null
+    private var talkSceneJob: Job? = null
+    private var talkVideoBounds by mutableStateOf<androidx.compose.ui.geometry.Rect?>(null)
     internal val talkTouches = com.aliflix.app.ui.discover.DiscoverTouchTracker()
     private val sceneMemory by lazy { PlayerSceneMemory({ if (::video.isInitialized) video else null }, ::talkSnapshot) }
     private var sceneCaptureJob: Job? = null
     override fun talkScene() = sceneMemory.current()
+    override fun talkAttentionFrame() = sceneMemory.attentionFrame()
     override fun talkRecall(query: String) = sceneMemory.recall(query)
     private val talkTranscript = PlayerTalkTranscript()
     private val talkVideo by lazy { PlayerTalkVideo(this) }
@@ -140,31 +145,56 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     override suspend fun prepareTalkScene() = sceneMemory.current()?.takeIf { controller?.isPlaying != true && it.frames.isNotEmpty() && it.metadata.optBoolean("audioChecked") } ?: sceneMemory.capture(includeAudio = true)
     private var talkPreparationPaused = false
     private val talkPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted && talkVisible) lifecycleScope.launch {
-            coroutineScope { val capture=async { sceneMemory.capture(includeAudio=true) };talkVoice.connect();capture.await() }
-            prepareTalkRecall("What is happening in the current scene?");talkVoice.inspectPlayerScene()
-        } else if (talkCreated) talkVoice.permissionDenied()
+        if (talkVisible) {
+            if (granted) connectPlayerTalk() else talkVoice.permissionDenied()
+        }
     }
+    private fun connectPlayerTalk() {
+        val typing = talkVoice.state.value.textMode
+        if (talkConnectJob?.isActive == true && talkConnectTextMode == typing) return
+        talkConnectJob?.cancel()
+        talkConnectTextMode = typing
+        talkConnectJob = lifecycleScope.launch { talkVoice.connect() }
+    }
+
+    private fun preparePlayerTalkFrame() {
+        talkSceneJob?.cancel()
+        talkSceneJob = lifecycleScope.launch {
+            sceneMemory.capture(includeAudio = true)
+            prepareTalkRecall("What is happening in the current scene?")
+            if (talkVisible) talkVoice.inspectPlayerScene()
+        }
+    }
+
     internal fun openTalk() {
         controller?.pause()
         val opening = !talkVisible
         talkCreated = true
-        if(opening) { talkVoice.stopAnswer();talkVoice.setTextMode(false);talkOpening++ }
+        if(opening) { talkVoice.stopAnswer();talkVoice.usePlayerVoice();talkOpening++ }
         talkVisible = true
-        lifecycleScope.launch { prepareTalkRecall("current scene") }
         if (talkVoice.state.value.textMode || ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED)
-            lifecycleScope.launch {
-                coroutineScope { val capture=async { sceneMemory.capture(includeAudio=true) };talkVoice.connect();capture.await() }
-                if(opening) {
-                    prepareTalkRecall("What is happening in the current scene?")
-                    talkVoice.inspectPlayerScene()
-                }
-            }
+            connectPlayerTalk()
         else talkPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+        if (opening) preparePlayerTalkFrame()
     }
     internal fun closeTalk() {
-        if (talkCreated) { talkVoice.handoff();talkVoice.pauseSession() }
         talkVisible = false
+        talkConnectJob?.cancel(); talkConnectJob = null
+        talkSceneJob?.cancel(); talkSceneJob = null
+        if (talkCreated) { talkVoice.handoff();talkVoice.pauseSession() }
+    }
+
+    private fun updateTalkVideoBounds() {
+        if (!video.isShown || !video.holder.surface.isValid) {
+            talkVideoBounds = null
+            return
+        }
+        val location = IntArray(2)
+        video.getLocationInWindow(location)
+        talkVideoBounds = androidx.compose.ui.geometry.Rect(
+            location[0].toFloat(), location[1].toFloat(),
+            (location[0] + video.width).toFloat(), (location[1] + video.height).toFloat(),
+        ).takeIf { it.width > 0f && it.height > 0f }
     }
     override fun talkSnapshot(): JSONObject {
         val current = selection
@@ -526,7 +556,14 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     private val listener = object : Player.Listener {
         override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
             sceneMemory.invalidate()
-            lifecycleScope.launch { delay(250); sceneMemory.capture() }
+            if (talkCreated) talkVoice.clearFrameAttention()
+            lifecycleScope.launch {
+                delay(250)
+                if (talkVisible && controller?.isPlaying != true) preparePlayerTalkFrame() else sceneMemory.capture()
+            }
+        }
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (isPlaying && talkCreated) talkVoice.clearFrameAttention()
         }
         override fun onEvents(player: Player, events: Player.Events) {
             updateOutput()
@@ -566,10 +603,11 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         }
         root.addView(receiverButton, FrameLayout.LayoutParams(1, 1))
         video = SurfaceView(this)
+        video.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateTalkVideoBounds() }
         video.holder.addCallback(object : SurfaceHolder.Callback {
-            override fun surfaceCreated(holder: SurfaceHolder) = sendSurface()
-            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = sendSurface()
-            override fun surfaceDestroyed(holder: SurfaceHolder) = sendSurface(clear = true)
+            override fun surfaceCreated(holder: SurfaceHolder) { sendSurface(); updateTalkVideoBounds() }
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) { sendSurface(); updateTalkVideoBounds() }
+            override fun surfaceDestroyed(holder: SurfaceHolder) { sendSurface(clear = true); talkVideoBounds = null }
         })
         videoFrame = AspectRatioFrameLayout(this).apply {
             resizeMode = if (settingsStore.settings.value.resizeModeZoom) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
@@ -727,7 +765,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                     exit=androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(if(talkMotion)360 else 0))) {
                     key(talkOpening) {
                         com.aliflix.app.talk.TalkPlayerBubble(talkVoice,onStart=::openTalk,onClose=::closeTalk,tracker=talkTouches,
-                            orbTransition=com.aliflix.app.talk.playerOrbTransition(transition,talkMotion))
+                            orbTransition=com.aliflix.app.talk.playerOrbTransition(transition,talkMotion), videoBounds=talkVideoBounds)
                     }
                 }
             } }
@@ -2389,6 +2427,10 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                 if (controller?.isPlaying == true && selection != null && requestId != null && requestId != warmedRequest) {
                     warmedRequest = requestId
                     launch { prepareTalkRecall("current scene") }
+                    if (!talkVisible) {
+                        talkCreated = true
+                        talkVoice.preparePlayerConnection()
+                    }
                 }
                 delay(2500)
             }
@@ -2413,6 +2455,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         val current = controller ?: return
         val external = !NativePlaybackService.castingSuppressed && (current.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE || displays.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION).isNotEmpty())
         videoFrame.visibility = if (external) View.INVISIBLE else View.VISIBLE
+        updateTalkVideoBounds()
         val size = current.videoSize
         if (size.height > 0) videoFrame.setAspectRatio(size.width * size.pixelWidthHeightRatio / size.height)
         updateSubtitleCues()
@@ -2459,9 +2502,10 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         startService(Intent(this, NativePlaybackService::class.java).setAction(NativePlaybackService.ACTION_STOP)); finish()
     }
     override fun onStop() {
+        if (talkCreated) talkVoice.cancelPlayerPreparation()
         sceneCaptureJob?.cancel(); sceneCaptureJob = null
         sceneMemory.invalidate()
-        if (talkCreated) { talkVoice.handoff();talkVoice.pauseSession() }
+        if (talkVisible) closeTalk()
         com.aliflix.app.talk.TalkPlayerConnection.detach(this)
         audioSyncJob?.cancel(); audioSyncJob = null
         ui = ui.copy(audioSyncState = if (audioCorrection != null) "Synced" else null, audioSyncMessage = null)

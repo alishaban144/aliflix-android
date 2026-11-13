@@ -7,6 +7,7 @@ import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import com.aliflix.app.player.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -132,6 +133,62 @@ class Talk187SceneDeviceTest {
         assertFalse(visibleText(i.uiAutomation.rootInActiveWindow).contains("Earlier question retained in this chat"))
         assertFalse(visibleText(i.uiAutomation.rootInActiveWindow).contains("Stop reply"))
         screenshot("talk191-reopened-voice.png")
+    }
+    @Test fun speechKeepsTextHiddenUntilTheOrbIsTapped()=fixture { player ->
+        val question = "Who is the woman near the window?"
+        val answer = "The woman is standing beside the window."
+        withContext(Dispatchers.Main) { player.openTalk() }
+        delay(450)
+        withContext(Dispatchers.Main) {
+            player.talkVoice.debugPreviewUserQuestion(question)
+            player.talkVoice.debugPreviewOrbContext("Speaking",answer)
+        }
+        delay(350)
+        assertFalse(visibleText(i.uiAutomation.rootInActiveWindow).contains(answer))
+        tap(bound(player,"player-orb"));delay(450)
+        assertTrue(visibleText(i.uiAutomation.rootInActiveWindow).contains(answer))
+        tap(bound(player,"player-orb"));delay(450)
+        assertFalse(visibleText(i.uiAutomation.rootInActiveWindow).contains(answer))
+    }
+
+    @Test fun liveMicrophoneStartsAndReconnectsAfterAnImmediateClose()=fixture { player ->
+        assumeTrue(InstrumentationRegistry.getArguments().getString("liveTalk187")=="true")
+        withContext(Dispatchers.Main) { player.openTalk();player.closeTalk() }
+        repeat(3) { attempt ->
+            val start = android.os.SystemClock.elapsedRealtime()
+            withContext(Dispatchers.Main) { player.openTalk() }
+            withTimeout(2500) { player.talkVoice.state.first { it.microphoneReady } }
+            val captured = android.os.SystemClock.elapsedRealtime()-start
+            withTimeout(20_000) {
+                while(!withContext(Dispatchers.Main) { player.talkVoice.playerVoiceReady() })delay(20)
+            }
+            val connected = android.os.SystemClock.elapsedRealtime()-start
+            android.util.Log.i("TalkPlayerTiming","opening=$attempt captureMs=$captured connectedMs=$connected")
+            withContext(Dispatchers.Main) { player.closeTalk() }
+            assertFalse(player.talkVoice.state.value.microphoneReady)
+        }
+    }
+
+    @Test fun pausedFrameCuesFollowTheSpokenOrderAndRejectOtherFrames() {
+        fun cue(mention:String, vararg box:Int) = JSONObject()
+            .put("mention",mention).put("box",JSONArray(box.toList()))
+        val args = JSONObject().put("frameId","pause")
+            .put("targets",JSONArray(listOf(
+                cue("blonde woman",110,120,360,310),
+                cue("red car",440,540,820,910),
+                cue("window",370,20,700,220),
+                cue("off-screen person",0,0,1300,900),
+            )))
+        assertFalse(TalkFrameAttention(args,"previous-pause").available)
+        val plan = TalkFrameAttention(args,"pause")
+        plan.update("The blonde woman turns around. Then the red car passes the window.")
+        plan.receive(240_000, 0)
+        plan.finish()
+        assertNull(plan.at(-1))
+        assertEquals(.12f,plan.at(30_000)?.left ?: -1f,0.001f)
+        assertEquals(.54f,plan.at(160_000)?.left ?: -1f,0.001f)
+        assertEquals(.02f,plan.at(220_000)?.left ?: -1f,0.001f)
+        assertNull(plan.at(240_000))
     }
     @Test fun paletteRetainsTheOrbAnchorAndRealTargetsAcrossBothOrientations()=fixture { player ->
         withContext(Dispatchers.Main) { player.openTalk() }

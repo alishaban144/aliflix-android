@@ -35,6 +35,7 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
     private var revision = 0L
     private var copying = false
     private var cached: TalkSceneContext? = null
+    private var pausedFrame: TalkSceneFrame? = null
     private var lastCaptionText = ""
     private val captureMutex = Mutex()
     private var retrievedTranscript: TalkTranscript? = null
@@ -64,12 +65,12 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
 
     /** A seek keeps the episode transcript and prior visual journal; only the live window is stale. */
     fun invalidate() {
-        revision++; frames.clear(); cached = null; lastPosition = Double.NaN; lastCaptionText = ""; lastWatchedPosition = Double.NaN
+        revision++; frames.clear(); cached = null; pausedFrame = null; lastPosition = Double.NaN; lastCaptionText = ""; lastWatchedPosition = Double.NaN
     }
 
     private fun resetEpisode() {
         revision++; frames.clear(); visualBeats.clear(); observedCaptions.clear(); watchedRanges.clear()
-        cached = null; lastPosition = Double.NaN; lastWatchedPosition = Double.NaN; lastBeatPosition = Double.NaN
+        cached = null; pausedFrame = null; lastPosition = Double.NaN; lastWatchedPosition = Double.NaN; lastBeatPosition = Double.NaN
         lastCaptionText = ""; identity = ""
         retrievedTranscript = null
     }
@@ -164,6 +165,15 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
 
     suspend fun capture(includeAudio: Boolean = false): TalkSceneContext? = captureMutex.withLock { captureOnce(includeAudio) }
 
+    fun attentionFrame(): TalkSceneFrame? {
+        val state = snapshot()
+        val position = observe(state)
+        return pausedFrame?.takeIf {
+            state.optBoolean("sceneSurfaceReady") && !state.optBoolean("playWhenReady") &&
+                abs(position-it.seconds)<.15
+        }
+    }
+
     private suspend fun captureOnce(includeAudio: Boolean): TalkSceneContext? {
         val state = snapshot(); val position = observe(state)
         if (state.optString("contentKey").isBlank()) return null
@@ -177,7 +187,10 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
                 observe(after)
                 if (frame != null && owner == identity && generation == revision && abs(after.optDouble("positionSeconds") - position) < 1.2) {
                     if (frames.lastOrNull()?.let { abs(it.seconds - position) <= 1.5 } == true) frames.removeLast()
-                    frames.addLast(TalkSceneFrame(position, frame))
+                    val captured = TalkSceneFrame(position, frame)
+                    frames.addLast(captured)
+                    if (!state.optBoolean("playWhenReady") && !after.optBoolean("playWhenReady") &&
+                        abs(after.optDouble("positionSeconds")-position)<.15) pausedFrame = captured
                     while (frames.size > 20 || frames.firstOrNull()?.seconds?.let { it < position - 48 } == true) frames.removeFirst()
                     if (lastBeatPosition.isNaN() || abs(position - lastBeatPosition) >= 20.0) {
                         visualBeats.addLast(TalkSceneFrame(position, frame))

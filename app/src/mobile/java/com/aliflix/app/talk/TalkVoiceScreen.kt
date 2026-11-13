@@ -277,7 +277,9 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
             val panel=agentTasks||recent||privacy||voices
             val goal=if(panel)TalkOrbPose(screenSize.width-with(density){52.dp.toPx()},WindowInsets.systemBars.getTop(density)+with(density){104.dp.toPx()},with(density){42.dp.toPx()})else TalkOrbPose(x,y,diameter)
             TalkFloatingOrb(goal,if(panel)0f else roam,state.phase,{session.state.value.level},motion,tracker,if(compact)"talk-chat-orb" else "talk-orb",if(panel||compact)null else focusedBounds?.center,
-                activity=talkOrbActivity(state,keyboardOpen&&!state.sending),initialPose=initialOrbPose,haloReady=talkVoiceHaloReady(state))
+                activity=talkOrbActivity(state,keyboardOpen&&!state.sending),initialPose=initialOrbPose,haloReady=talkVoiceHaloReady(state),
+                eyesClosed=!state.textMode && state.phase in setOf("Connecting","Reconnecting"),
+                blinkOnConnect=!state.textMode && state.microphoneReady)
         }
         if(recent||privacy||voices) ModalBottomSheet(onDismissRequest={recent=false;privacy=false;voices=false},containerColor=AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated)) {
             Column(Modifier.fillMaxWidth().padding(horizontal=22.dp).navigationBarsPadding().padding(bottom=20.dp)) {
@@ -416,7 +418,7 @@ private class TalkParticleField(private val width: Int, private val height: Int,
  * between listening/speaking. The uninterrupted clock and PCM envelope are separate. */
 @Composable internal fun TalkLiveOrb(phase:String,level:()->Float,motion:Boolean,modifier:Modifier=Modifier,tracker:DiscoverTouchTracker=remember{DiscoverTouchTracker()},attention:Offset?=null,
     activity:TalkOrbActivity?=null,haloStyle:TalkHaloStyle=TalkHaloStyle.SOFT,haloReady:Boolean=true,playerThinking:Boolean=false,
-    eyesClosed:Boolean=false) {
+    eyesClosed:Boolean=false,blinkOnConnect:Boolean=false) {
     val appearance=remember(activity,phase) { talkOrbAppearance(activity ?: talkOrbPhaseActivity(phase)) }
     val animate=motion&&android.animation.ValueAnimator.areAnimatorsEnabled()
     val seconds=rememberMobileAnimationClock(animate)
@@ -485,6 +487,6 @@ private class TalkParticleField(private val width: Int, private val height: Int,
             translationY=if(animate)(sin(seconds.value*.95f)*.65f+thought*if(playerThinking)1.2f else 0f).dp.toPx() else 0f
         },conversing=phase=="Speaking",voiceCompanion=true,voiceEnergy={energy},attention=attention,
             expression=if(playerThinking&&animate)playerThinkingExpression(seconds.value,activity?:TalkOrbActivity.THINK)else appearance.face,
-            motionEnabled=animate,eyesClosed=eyesClosed)
+            motionEnabled=animate,eyesClosed=eyesClosed,blinkOnConnect=blinkOnConnect)
     }
 }

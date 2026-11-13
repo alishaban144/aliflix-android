@@ -127,7 +127,14 @@ export function liveSetup(context: TalkContext) {
     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: context.voice || TALK_VOICE } } } },
   systemInstruction: { parts: [{ text: liveInstructions(context) }] },
   // Legacy installed clients cannot answer the new local topic/history tools.
-  tools: [{functionDeclarations:[...tools,...((context.companionVersion||0)>=10&&!context.textMode?[{
+  tools: [{functionDeclarations:[...tools,...((context.companionVersion||0)>=18&&context.activePlayer&&!context.textMode?[{
+   name:'scene_attention',behavior:'NON_BLOCKING',
+   description:'Direct the orb beside visible details in the labeled paused frame only when the viewer asks about a person, object, place, action or detail actually visible there. Call once immediately before the answer, after any necessary evidence lookup. Use the current frameId. Never use earlier images, off-screen speakers, cast lists, imagined objects, unrelated questions or guesses. For multiple visible referents, list them in the order you will discuss them; include a return to an earlier referent only when the answer actually returns to it. Give a tight box around the relevant face or object/detail and a short verbatim phrase that you will say at that point in the answer, in the spoken response language. Do not speak about the tool, coordinates or movement. Continue speaking without waiting for a result.',
+   parameters:{type:'OBJECT',properties:{frameId:{type:'STRING'},targets:{type:'ARRAY',minItems:1,maxItems:8,items:{type:'OBJECT',properties:{
+    mention:{type:'STRING',description:'Short verbatim spoken phrase, preferably unique in the answer.'},
+    box:{type:'ARRAY',minItems:4,maxItems:4,items:{type:'INTEGER'},description:'[top, left, bottom, right] normalized to 0–1000 in the exact paused image.'},
+   },required:['mention','box']}}},required:['frameId','targets']}
+  }]:[]),...((context.companionVersion||0)>=10&&!context.textMode?[{
    name:'research_note',behavior:'NON_BLOCKING',description:'Offer one useful, newly composed observation about this request while a research lookup is pending. Start the actual lookup first. At most once for this user turn. Use it for a concrete interesting distinction grounded in the request, not a search announcement, promise, acknowledgement, slogan, matching explanation, or provisional title list. Do not assert unverified film facts. Read the approved speechText exactly, then let the lookup finish. Never call it after the lookup returns.',
    parameters:{type:'OBJECT',properties:{thought:{type:'STRING',description:'One short thoughtful sentence, at most 240 characters, in the conversation language. No candidate recommendations or internal progress.'}},required:['thought']}
   }]:[]),...((context.companionVersion||0)>=8?agentTools:[]),...((context.companionVersion||0)>=6&&!context.textMode?[{
