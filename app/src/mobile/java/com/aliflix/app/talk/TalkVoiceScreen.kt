@@ -419,7 +419,7 @@ private class TalkParticleField(private val width: Int, private val height: Int,
  * between listening/speaking. The uninterrupted clock and PCM envelope are separate. */
 @Composable internal fun TalkLiveOrb(phase:String,level:()->Float,motion:Boolean,modifier:Modifier=Modifier,tracker:DiscoverTouchTracker=remember{DiscoverTouchTracker()},attention:Offset?=null,
     activity:TalkOrbActivity?=null,haloStyle:TalkHaloStyle=TalkHaloStyle.SOFT,haloReady:Boolean=true,playerThinking:Boolean=false,
-    eyesClosed:Boolean=false,blinkOnConnect:Boolean=false,sceneFocus:Boolean=false) {
+    eyesClosed:Boolean=false,blinkOnConnect:Boolean=false,sceneFocus:Boolean=false,faceFloat:Boolean=true) {
     val appearance=remember(activity,phase) { talkOrbAppearance(activity ?: talkOrbPhaseActivity(phase)) }
     val animate=motion&&android.animation.ValueAnimator.areAnimatorsEnabled()
     val seconds=rememberMobileAnimationClock(animate)
@@ -486,7 +486,8 @@ private class TalkParticleField(private val width: Int, private val height: Int,
             val thought=if(playerThinking&&animate)sin(seconds.value*2f*PI.toFloat()/6.4f)else 0f
             scaleX=1f+energy*.012f+thought*.007f;scaleY=1f-energy*.004f-thought*.005f
             rotationZ=tilt.value+thought*if(playerThinking)1.8f else 0f
-            translationY=if(animate)(sin(seconds.value*.95f)*(if(sceneFocus).24f else .65f)+thought*if(playerThinking)1.2f else 0f).dp.toPx() else 0f
+            val drift=if(faceFloat)sin(seconds.value*.95f)*.65f else 0f
+            translationY=if(animate)(drift+thought*if(playerThinking)1.2f else 0f).dp.toPx() else 0f
         },conversing=phase=="Speaking",voiceCompanion=true,voiceEnergy={energy},attention=attention,
             expression=when {
                 sceneFocus -> appearance.face.copy(openness=.9f,asymmetry=0f)

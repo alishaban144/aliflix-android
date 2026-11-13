@@ -154,6 +154,8 @@ import kotlin.math.roundToInt
         var hasSceneTravel by remember { mutableStateOf(false) }
         val glide = remember { Animatable(0f) }
         val speaking = state.phase == "Speaking"
+        val floatClock = com.aliflix.app.ui.common.rememberMobileAnimationClock(motion)
+        val floatDistance = with(density) { .55.dp.toPx() }
         LaunchedEffect(target,home,viewport,captions,motion,dragging,speaking,controls,typing) {
             if(!motion || dragging || controls || typing || target==null && !speaking && !hasSceneTravel) {
                 orbCenter = home
@@ -233,8 +235,10 @@ import kotlin.math.roundToInt
         // Compose's bounded pressed indication as a visible rectangular square.
         Box(Modifier.absoluteOffset {
             val center=if(dragging || !hasSceneTravel)home else orbCenter
+            val drift=if(motion && connected && !controls && !typing && !dragging && !speaking && !hasSceneTravel)
+                kotlin.math.sin(floatClock.value * .94f) * floatDistance else 0f
             IntOffset((center.x.coerceIn(viewport.left,viewport.right)-radius).roundToInt(),
-                (center.y.coerceIn(viewport.top,viewport.bottom)-radius).roundToInt())
+                ((center.y+drift).coerceIn(viewport.top,viewport.bottom)-radius).roundToInt())
         }.then(orbTransition).size(orbSize).clip(CircleShape).testTag("talk-player-orb-container").measured("player-orb").semantics {
             contentDescription="Talk controls";stateDescription=appearance.label
             customActions=listOf(CustomAccessibilityAction("Move to other side") { dragX=if(orbX>maxX/2)-maxX else 0f;true })
@@ -252,7 +256,7 @@ import kotlin.math.roundToInt
             }) {
             TalkLiveOrb(state.phase,{session.state.value.level},motion,Modifier.fillMaxSize().testTag("talk-player-orb"),activity=activity,tracker=tracker,
                 attention=target?.center?.plus(overlayRootOrigin),
-                sceneFocus=target!=null,
+                sceneFocus=target!=null,faceFloat=false,
                 haloStyle=TalkHaloStyle.LED, haloReady=!typing && (connected && talkVoiceHaloReady(state) || !connected && state.microphoneReady && !state.muted),
                 eyesClosed=!state.textMode && !connected,blinkOnConnect=!state.textMode && connected,
                 playerThinking=!typing&&state.phase!="Speaking"&&talkShowsResponseProgress(state.sending,state.answerComplete))
