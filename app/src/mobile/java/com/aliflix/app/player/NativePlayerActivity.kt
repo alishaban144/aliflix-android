@@ -469,6 +469,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     private var introKey: String? = null
     private var resolver: NativeStreamResolver? = null
     private var requestAccepted = false
+    private var sceneRange by mutableStateOf<SharedSceneRange?>(null)
     private lateinit var receiverButton: androidx.mediarouter.app.MediaRouteButton
     private val receiverPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) openReceiverPicker() else ui = ui.copy(message = "Allow Nearby devices in app settings to find compatible TVs.")
@@ -610,6 +611,8 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                     }, { showProviderVerification = false })
                 }
                 NativePlayerScreen(
+                    sceneRange = sceneRange,
+                    previewSurface = video,
                     onTalk = { if(talkVisible)closeTalk()else openTalk() },
                     onWatchTogether = {
                         if (ui.external) ui = ui.copy(message = "Stop casting to start Watch Together")
@@ -621,12 +624,22 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                     player = controller,
                     settings = playerSettings,
                     onBack = ::pauseAndLeavePlayer,
-                    onResumeClicked = { talkPreparationPaused=false;closeTalk();selection?.let { (application as AliflixApplication).libraryStore.markPlayed(it.media) } },
+                    onResumeClicked = {
+                        talkPreparationPaused = false
+                        closeTalk()
+                        if (sceneRange == null) selection?.let { (application as AliflixApplication).libraryStore.markPlayed(it.media) }
+                    },
                     onResumeRequested = {
                         val target=controller;val content=selection?.key
                         lifecycleScope.launch {
                             com.aliflix.app.talk.TalkAudioLease.awaitOwnRelease(this@NativePlayerActivity)
-                            if(!isFinishing&&!isDestroyed&&controller===target&&selection?.key==content)target?.play()
+                            if(!isFinishing&&!isDestroyed&&controller===target&&selection?.key==content) {
+                                sceneRange?.let { range ->
+                                    if (target != null && target.currentPosition >= minOf(range.endMs, target.duration) - 120)
+                                        target.seekTo(range.startMs)
+                                }
+                                target?.play()
+                            }
                         }
                     },
                     onRetry = retry@{
@@ -856,7 +869,9 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         }
         if (recordPlay) (application as AliflixApplication).libraryStore.markPlayed(current.media)
         recordCurrentProgress(urgent = true)
+        sceneRange = null
         selection = current.copy(seasonNumber = episode.seasonNumber, episodeNumber = episode.number, episodeTitle = episode.title)
+        intent.removeExtra("sceneStart"); intent.removeExtra("sceneEnd")
         intent.putExtra("selection", selection!!.nativeJson())
         exhaustedSources.clear(); triedServers.clear()
         recoveryCount = 0
@@ -926,26 +941,37 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         talkPreparationPaused = intent.getBooleanExtra("talkPreparePaused",false)
         val incoming = intent.getStringExtra("selection")?.let { runCatching { nativeSelection(it) }.getOrNull() }
             ?: runCatching { nativeRequestPayload(this, intent)?.let { nativeSelection(NativePlaybackRequest.fromJson(it).selectionJson) } }.getOrNull()
+        val incomingScene = SharedSceneRange.from(intent)
         if (incoming != null && !intent.getBooleanExtra("partyConsent", false) && party.state.value.active &&
-            !com.aliflix.app.party.PartyProtocol.matches(party.state.value.content, incoming)) {
-            requestPlaybackRoomConsent(this, incoming) { acceptRequest(intent.putExtra("partyConsent", true)) }
+            (incomingScene != null || !com.aliflix.app.party.PartyProtocol.matches(party.state.value.content, incoming))) {
+            requestPlaybackRoomConsent(this, incoming, leaveEvenForSameTitle = incomingScene != null) {
+                acceptRequest(intent.putExtra("partyConsent", true))
+            }
             return
         }
+        sceneRange = if (incoming != null) incomingScene else NativePlaybackService.activeScene
         selection = intent.getStringExtra("selection")?.let { runCatching { nativeSelection(it) }.getOrNull() }
             ?: NativePlaybackService.activeRequest?.selectionJson?.let { runCatching { nativeSelection(it) }.getOrNull() }
         updateSelectionUi()
         loadEpisodeQueue()
         if (requestAccepted) {
-            if (selection != null && activeSelectionKey() != selection?.key) prepareSelection()
+            if (selection != null && (activeSelectionKey() != selection?.key || sceneRange != NativePlaybackService.activeScene)) prepareSelection()
             return
         }
         requestAccepted = true
         val raw = runCatching { nativeRequestPayload(this, intent, consume = true) }.getOrNull()
         intent.removeExtra("request"); intent.removeExtra("requestFile")
         if (raw != null) {
-            runCatching { NativePlaybackRequest.fromJson(raw) }.onSuccess(::startNative)
+            runCatching { NativePlaybackRequest.fromJson(raw) }.onSuccess { request ->
+                startNative(incomingScene?.let { request.copy(positionMs = it.startMs) } ?: request)
+            }
                 .onFailure { ui = ui.copy(error = "The saved stream is no longer available. Please choose the title again.") }
-        } else if (selection != null && intent.hasExtra("selection") && (activeSelectionKey() != selection?.key || NativePlaybackService.activeStreamUrl == null)) prepareSelection()
+        } else if (selection != null && intent.hasExtra("selection") &&
+            (incomingScene != null || NativePlaybackService.activeScene != null ||
+                activeSelectionKey() != selection?.key || NativePlaybackService.activeStreamUrl == null)) {
+            closeTalk()
+            prepareSelection(incomingScene?.startMs)
+        }
     }
 
     private val resolvedServerNames = mutableMapOf<String, List<String>>()
@@ -1098,6 +1124,10 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
 
     private fun resumePreparedPlayback() {
         if(talkPreparationPaused){controller?.pause();return}
+        if (sceneRange?.let { it.startMs >= (controller?.duration ?: Long.MAX_VALUE) } == true) {
+            ui = ui.copy(error = "Scene unavailable")
+            return
+        }
         if (party.state.value.active) controller?.playWhenReady = party.state.value.data?.optBoolean("playing") == true
         else controller?.play()
     }
@@ -1274,8 +1304,9 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         val startingSource = current.source
         val active = NativePlaybackService.activeRequest?.selectionJson?.let { runCatching { nativeSelection(it) }.getOrNull() }
         val resume = positionMs ?: controller?.takeIf {
-            mobileSameContent(active, current) && NativePlaybackService.playbackReady && it.currentPosition > 0
-        }?.currentPosition ?: mobileSavedResumeMs(progress.progressFor(current))
+            sceneRange == NativePlaybackService.activeScene &&
+                mobileSameContent(active, current) && NativePlaybackService.playbackReady && it.currentPosition > 0
+        }?.currentPosition ?: sceneRange?.startMs ?: mobileSavedResumeMs(progress.progressFor(current))
         if (warmingEpisodeKey != current.key) nextEpisodeWarmup?.cancel()
         preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel()
         val offlineStore = com.aliflix.app.downloads.OfflineDownloads.get(this)
@@ -1719,6 +1750,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         val name = "native-request-${java.util.UUID.randomUUID()}.json"
         java.io.File(cacheDir, name).writeText(playbackRequest.toJson())
         val service = Intent(this, NativePlaybackService::class.java).putExtra("requestFile", name)
+        sceneRange?.putInto(service)
         if (playbackRequest.playing) ContextCompat.startForegroundService(this, service) else startService(service)
         return name
     }
@@ -2302,7 +2334,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     private fun recordCurrentProgress(urgent: Boolean = true) {
         val sel = NativePlaybackService.activeRequest?.selectionJson?.let { runCatching { nativeSelection(it) }.getOrNull() } ?: return
         val c = controller ?: return
-        if (!NativePlaybackService.canRecordProgress || c.currentMediaItem?.mediaId != sel.key ||
+        if (NativePlaybackService.activeScene != null || !NativePlaybackService.canRecordProgress || c.currentMediaItem?.mediaId != sel.key ||
             c.playbackState !in setOf(Player.STATE_READY, Player.STATE_BUFFERING, Player.STATE_ENDED)) return
         val dur = c.duration.toDouble() / 1000.0
         val pos = c.currentPosition.toDouble() / 1000.0

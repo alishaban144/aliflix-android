@@ -26,6 +26,17 @@
                 <data android:scheme="https" android:host="aliflix-recommendations.equable-equipment.workers.dev" android:pathPrefix="/party/" />
             </intent-filter>
         </activity>
+        <activity android:name=".player.SharedSceneActivity" android:exported="true" android:noHistory="true"
+            android:theme="@style/Theme.Aliflix">
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="aliflix-recommendations.equable-equipment.workers.dev" android:pathPrefix="/scene/" />
+            </intent-filter>
+        </activity>
         <service android:name=".downloads.OfflineDownloadService" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="dataSync">
             <intent-filter><action android:name="androidx.media3.exoplayer.downloadService.action.RESTART" /><category android:name="android.intent.category.DEFAULT" /></intent-filter>
         </service>

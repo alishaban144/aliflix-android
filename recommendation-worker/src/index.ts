@@ -6,6 +6,7 @@ export { AskResearch };
 import { talkRoute } from './talk';
 export { TalkSession } from './talk';
 import { watchPartyRoute } from './watchParty';
+import { sharedSceneRoute } from './sharedScene';
 export { WatchParty } from './watchParty';
 import { browse, categories } from './browse';
 import { catalogueSearch, discoverArguments, discoverCategory, DISCOVER_CATEGORIES, DiscoverCategory } from './discover';
@@ -250,6 +251,8 @@ export default {
     if (ask) return ask;
     const talk = await talkRoute(request, env);
     if (talk) return talk;
+    const scene = sharedSceneRoute(request);
+    if (scene) return scene;
     const party = await watchPartyRoute(request, env);
     if (party) return party;
     if (url.pathname === '/health' && request.method === 'GET') {

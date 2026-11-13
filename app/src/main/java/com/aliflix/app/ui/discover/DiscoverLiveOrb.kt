@@ -67,7 +67,7 @@ internal data class OrbExpression(val gaze: Offset, val openness: Float, val asy
 /** Live Orb's capsule eyes and spherical projection, in Aliflix's pearl/lavender palette. */
 @Composable
 internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier = Modifier, conversing: Boolean = false, voiceCompanion: Boolean = false, voiceEnergy:()->Float={0f},attention:Offset?=null,
-    expression: OrbExpression? = null, motionEnabled: Boolean = true) {
+    expression: OrbExpression? = null, motionEnabled: Boolean = true, eyesClosed: Boolean = false) {
     val motion = rememberMobileMotionEnabled() && motionEnabled
     val resumed = rememberMobileResumed()
     var bounds by remember { mutableStateOf(Rect.Zero) }
@@ -129,8 +129,9 @@ internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier =
             }
         }
     }
-    val companionBlink by androidx.compose.animation.core.animateFloatAsState(blink,
-        androidx.compose.animation.core.tween(if(blink>0f)55 else 100),label="companion-blink")
+    val companionBlink by androidx.compose.animation.core.animateFloatAsState(if (eyesClosed) 1f else blink,
+        androidx.compose.animation.core.tween(if (!motion) 0 else if (eyesClosed || blink > 0f) 55 else 140),
+        label="companion-blink")
     Canvas(modifier.onGloballyPositioned { bounds = it.boundsInRoot() }.drawWithCache {
         val radius=size.minDimension*.47f
         val midpoint=Offset(size.width/2f,size.height/2f)

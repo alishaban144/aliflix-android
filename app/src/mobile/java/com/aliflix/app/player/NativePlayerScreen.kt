@@ -262,6 +262,8 @@ internal fun NativePlayerScreen(
     onVolumeGestureStarted: () -> Unit = {},
     onControlsVisibilityChanged: (Boolean) -> Unit = {},
     onOverlayVisibilityChanged: (Boolean) -> Unit = {},
+    sceneRange: SharedSceneRange? = null,
+    previewSurface: android.view.SurfaceView? = null,
 ) {
     val subtitleTracks = remember(state.subtitleTracks) { normalizeMobileSubtitleTracks(state.subtitleTracks) }
     val partyContext = androidx.compose.ui.platform.LocalContext.current
@@ -271,6 +273,7 @@ internal fun NativePlayerScreen(
     var isScrubbing by remember { mutableStateOf(false) }
     var episodesVisible by remember { mutableStateOf(false) }
     var moreVisible by remember { mutableStateOf(false) }
+    var shareScene by remember(state.playbackSelection?.key, NativePlaybackService.activeRequestId) { mutableStateOf(false) }
     var partyTopBarHeight by remember { mutableIntStateOf(56) }
     var sheet by remember { mutableStateOf<String?>(null) }
     var trackRevision by remember(player) { mutableIntStateOf(0) }
@@ -315,7 +318,7 @@ internal fun NativePlayerScreen(
     LaunchedEffect(seekFeedback.state?.token) {
         if (seekFeedback.state != null) { delay(650); seekFeedback.dismiss() }
     }
-    val overlayOpen = sheet != null || episodesVisible || moreVisible
+    val overlayOpen = sheet != null || episodesVisible || moreVisible || shareScene
     androidx.activity.compose.BackHandler(enabled = episodesVisible || moreVisible) {
         episodesVisible = false
         moreVisible = false
@@ -328,6 +331,40 @@ internal fun NativePlayerScreen(
     val ended = player?.playbackState == Player.STATE_ENDED
     val duration = (player?.duration ?: 0L).coerceAtLeast(0L)
     val position = (player?.currentPosition ?: 0L).coerceIn(0L, duration.coerceAtLeast(1L))
+    val sceneStart = sceneRange?.startMs?.coerceAtMost(duration) ?: 0L
+    val sceneEnd = sceneRange?.endMs?.coerceAtMost(duration) ?: duration
+    val previewRequest = NativePlaybackService.activeRequest.takeIf {
+        !preparing && state.error == null && player?.isCurrentMediaItemSeekable == true && duration > 0
+    }
+    val thumbnails = remember(NativePlaybackService.activeRequestId, previewRequest?.url, partyContext) {
+        previewRequest?.let { PlayerSeekThumbnails(partyContext.applicationContext, it) }
+    }
+    val previewPosition by rememberUpdatedState(position)
+    val previewVisible = com.aliflix.app.ui.common.rememberMobileResumed()
+    LaunchedEffect(thumbnails, previewVisible) {
+        if (thumbnails != null && previewVisible) thumbnails.run()
+    }
+    LaunchedEffect(thumbnails, previewVisible, isScrubbing, shareScene) {
+        if (thumbnails == null || !previewVisible || isScrubbing || shareScene) return@LaunchedEffect
+        delay(650)
+        while (true) {
+            val anchor = previewPosition
+            listOf(0L, 2_000L, -2_000L, 4_000L, -4_000L).forEach { delta ->
+                thumbnails.request((anchor + delta).coerceIn(0, duration - 1))
+                delay(450)
+            }
+            delay(1_000)
+        }
+    }
+    LaunchedEffect(thumbnails, previewVisible, playing, previewSurface, state.external) {
+        if (thumbnails != null && previewVisible && previewSurface != null && !state.external) {
+            delay(120)
+            do {
+                thumbnails.capture(previewSurface, previewPosition)
+                if (playing) delay(1_000)
+            } while (playing)
+        }
+    }
     val currentSeason = state.playbackSelection?.seasonNumber
     val currentEpisode = state.episodeNumber
     val next = if (currentSeason != null && currentEpisode != null) {
@@ -346,7 +383,7 @@ internal fun NativePlayerScreen(
     val remainingMs = duration - position
     val nextWindowStart = upNextWindowStart(duration, state.segments)
     val withinNextWindow = ended || (nextWindowStart != null && position >= nextWindowStart)
-    val showCountdown = next != null && withinNextWindow && !countdownCancelled &&
+    val showCountdown = sceneRange == null && !shareScene && next != null && withinNextWindow && !countdownCancelled &&
         !episodeAdvanced && !preparing && state.error == null
     val autoAdvanceArmed = settings.playNextEpisode && (!partyState.active || partyState.host) && showCountdown && (playing || ended)
 
@@ -373,7 +410,8 @@ internal fun NativePlayerScreen(
         if (!current.isCurrentMediaItemSeekable || !current.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)) return
         val from = current.currentPosition
         val durationMs = current.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
-        val target = (from + if (forward) 15_000L else -15_000L).coerceIn(0L, durationMs)
+        val target = (from + if (forward) 15_000L else -15_000L).coerceIn(
+            sceneRange?.startMs?.coerceAtMost(durationMs) ?: 0L, sceneRange?.endMs?.coerceAtMost(durationMs) ?: durationMs)
         if (target == from) return
         current.seekTo(target)
         seekFeedback.triggerSeek(forward)
@@ -634,7 +672,7 @@ internal fun NativePlayerScreen(
                         onPlayPause = {
                             player?.let { p ->
                                 if (p.playerError != null) p.prepare()
-                                if (ended) p.seekTo(0)
+                                if (ended) p.seekTo(sceneStart)
                                 if (p.playWhenReady && !ended) p.pause() else { onResumeClicked(); if(onResumeRequested!=null)onResumeRequested()else p.play() }
                             }
                             interaction++
@@ -646,14 +684,15 @@ internal fun NativePlayerScreen(
                     )
                 }
 
-                if (!preparing && state.error == null && duration > 0L) MobilePlayerTimeline(
-                    currentPositionMs = position,
-                    durationMs = duration,
-                    bufferedPositionMs = player?.bufferedPosition ?: 0L,
+                if (!preparing && state.error == null && sceneEnd > sceneStart) MobilePlayerTimeline(
+                    currentPositionMs = (position - sceneStart).coerceAtLeast(0L),
+                    durationMs = sceneEnd - sceneStart,
+                    bufferedPositionMs = ((player?.bufferedPosition ?: 0L) - sceneStart).coerceAtLeast(0L),
                     onSeek = { targetMs ->
-                        player?.seekTo(targetMs)
+                        player?.seekTo(sceneStart + targetMs)
                         interaction++
                     },
+                    preview = { targetMs, modifier -> PlayerSeekThumbnail(thumbnails, sceneStart + targetMs, modifier) },
                     onScrubbingChanged = { scrubbing ->
                         isScrubbing = scrubbing
                         if (scrubbing) interaction++
@@ -735,7 +774,7 @@ internal fun NativePlayerScreen(
 
         // Intro skip control. Outro is represented exclusively by Up Next above.
         val skipSegment = activeIntro
-        if (!preparing && state.error == null && !overlayOpen && player?.isCurrentMediaItemSeekable == true && !showCountdown) {
+        if (sceneRange == null && !preparing && state.error == null && !overlayOpen && player?.isCurrentMediaItemSeekable == true && !showCountdown) {
             AnimatedVisibility(
                 skipSegment != null,
                 enter = fadeIn(),
@@ -839,7 +878,11 @@ internal fun NativePlayerScreen(
         }
         MobilePlayerMoreSheet(
             synchronizedPlayback = partyState.active,
-            onWatchTogether = onWatchTogether,
+            onWatchTogether = onWatchTogether.takeIf { sceneRange == null },
+            onShareScene = {
+                moreVisible = false
+                shareScene = true
+            }.takeIf { duration in 1..86_400_000L && player?.isCurrentMediaItemSeekable == true && !preparing && state.error == null },
             germanEdition = germanEdition,
             onGermanEdition = onGermanEdition,
             visible = moreVisible,
@@ -880,12 +923,12 @@ internal fun NativePlayerScreen(
                 moreVisible = false
                 onStop()
             },
-            onOpenWirelessDisplay = {
+            onOpenWirelessDisplay = ({
                 moreVisible = false
                 onWireless()
-            },
+            }).takeIf { sceneRange == null },
             castActive = state.external,
-            onCast = {
+            onCast = ({
                 moreVisible = false
                 if (state.external) {
                     sheet = "CastOptions"
@@ -893,8 +936,15 @@ internal fun NativePlayerScreen(
                     onReceiver()
                 }
                 interaction++
-            },
+                Unit
+            }).takeIf { sceneRange == null || state.external },
         )
+        if (shareScene && duration in 1..86_400_000L && !preparing && state.error == null) {
+            ShareSceneSheet(playbackSelection, duration, position, thumbnails) {
+                shareScene = false
+                interaction++
+            }
+        }
     }
 
     // MODAL BOTTOM SHEETS (Audio & subtitles, Quality, Cast options)

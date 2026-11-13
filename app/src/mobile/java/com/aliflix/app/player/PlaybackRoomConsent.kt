@@ -36,10 +36,13 @@ import java.util.WeakHashMap
 private val roomPrompts = WeakHashMap<Activity, ComposeView>()
 
 /** All entry points share one consent boundary before replacing a party's player. */
-internal fun requestPlaybackRoomConsent(activity: Activity, selection: PlaybackSelection, proceed: () -> Unit) {
+internal fun requestPlaybackRoomConsent(activity: Activity, selection: PlaybackSelection, proceed: () -> Unit) =
+    requestPlaybackRoomConsent(activity, selection, leaveEvenForSameTitle = false, proceed = proceed)
+
+internal fun requestPlaybackRoomConsent(activity: Activity, selection: PlaybackSelection, leaveEvenForSameTitle: Boolean, proceed: () -> Unit) {
     val client = WatchPartyClient.get(activity)
     val state = client.state.value
-    if (!state.active || PartyProtocol.matches(state.content, selection)) { proceed(); return }
+    if (!state.active || !leaveEvenForSameTitle && PartyProtocol.matches(state.content, selection)) { proceed(); return }
     if (activity.isFinishing || activity.isDestroyed || roomPrompts.containsKey(activity)) return
     val room = state.room
     val root = activity.window.decorView as ViewGroup
@@ -58,7 +61,7 @@ internal fun requestPlaybackRoomConsent(activity: Activity, selection: PlaybackS
             if (!consumed) {
                 close()
                 if (client.state.value.active && client.state.value.room != room)
-                    requestPlaybackRoomConsent(activity, selection, proceed)
+                    requestPlaybackRoomConsent(activity, selection, leaveEvenForSameTitle, proceed)
                 else { client.leave(); proceed() }
             }
         })

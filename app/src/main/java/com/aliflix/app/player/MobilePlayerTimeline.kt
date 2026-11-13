@@ -3,7 +3,6 @@ package com.aliflix.app.player
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.rememberUpdatedState
@@ -13,6 +12,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -69,10 +70,12 @@ internal fun MobilePlayerTimeline(
     onSeek: (Long) -> Unit,
     onScrubbingChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    preview: (@Composable (Long, Modifier) -> Unit)? = null,
 ) {
     val seek by rememberUpdatedState(onSeek)
     val scrubbingChanged by rememberUpdatedState(onScrubbingChanged)
     val latestDuration by rememberUpdatedState(durationMs.coerceAtLeast(0L))
+    val previewEnabled by rememberUpdatedState(preview != null)
     var isDragging by remember { mutableStateOf(false) }
     var scrubFraction by remember { mutableFloatStateOf(0f) }
 
@@ -171,13 +174,13 @@ internal fun MobilePlayerTimeline(
                             fun update(x: Float, force: Boolean = false) {
                                 scrubFraction = (x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
                                 val now = android.os.SystemClock.uptimeMillis()
-                                if (force || now - lastSeekAt >= 80L) {
+                                if (force || !previewEnabled && now - lastSeekAt >= 80L) {
                                     seek((scrubFraction * duration).toLong())
                                     lastSeekAt = now
                                 }
                             }
                             try {
-                                update(down.position.x, true)
+                                update(down.position.x, !previewEnabled)
                                 while (true) {
                                     val event = awaitPointerEvent()
                                     val change = event.changes.firstOrNull { it.id == down.id } ?: break
@@ -248,8 +251,7 @@ internal fun MobilePlayerTimeline(
                         .background(AliflixPurple),
                 )
 
-                // Timestamp bubble above thumb while dragging
-                if (isDragging) {
+                if (isDragging && preview == null) {
                     val bubbleWidthPx = 160f
                     val bubbleOffsetPx = (thumbOffsetPx - bubbleWidthPx / 2f).coerceIn(0f, (widthPx - bubbleWidthPx).coerceAtLeast(0f))
                     Box(
@@ -274,6 +276,15 @@ internal fun MobilePlayerTimeline(
                         )
                     }
                 }
+            }
+            if (isDragging && preview != null) {
+                val previewWidth = minOf(160.dp, maxWidth)
+                val previewWidthPx = widthPx * (previewWidth / maxWidth.coerceAtLeast(1.dp))
+                val left = (widthPx * progressFraction - previewWidthPx / 2f)
+                    .coerceIn(0f, (widthPx - previewWidthPx).coerceAtLeast(0f))
+                preview(displayedCurrentMs, Modifier.align(Alignment.TopStart)
+                    .absoluteOffset { IntOffset(left.roundToInt(), -(previewWidth * 9f / 16f + 25.dp).roundToPx()) }
+                    .width(previewWidth))
             }
         }
     }
