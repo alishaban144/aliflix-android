@@ -1184,8 +1184,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     val id=original.getString("id")
                     val accepted=acceptFrameAttention(id,original.optJSONObject("args"))
                     if(BuildConfig.DEBUG)debugToolCalls.merge(if(accepted)wireName else "scene_attention_rejected",1){a,b->a+b}
-                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(
-                        talkFunctionResponse(id,wireName,JSONObject().put("accepted",accepted),"SILENT")))))
+                    val scheduling=if(accepted)talkControlScheduling(names,i,turnHasAudio||outputText.isNotBlank(),
+                        tools.isNotEmpty()||awaitingToolAnswer) else "SILENT"
+                    val result=talkFunctionResponse(id,wireName,JSONObject().put("accepted",accepted),scheduling)
+                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(result))))
                     continue
                 }
                 val call=talkCanonicalLookup(original,currentQuestion(original.optJSONObject("args")?.optString("query").orEmpty()),state.value.cards.group.isNotEmpty());val id=call.getString("id")
