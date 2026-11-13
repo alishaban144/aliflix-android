@@ -419,7 +419,7 @@ private class TalkParticleField(private val width: Int, private val height: Int,
  * between listening/speaking. The uninterrupted clock and PCM envelope are separate. */
 @Composable internal fun TalkLiveOrb(phase:String,level:()->Float,motion:Boolean,modifier:Modifier=Modifier,tracker:DiscoverTouchTracker=remember{DiscoverTouchTracker()},attention:Offset?=null,
     activity:TalkOrbActivity?=null,haloStyle:TalkHaloStyle=TalkHaloStyle.SOFT,haloReady:Boolean=true,playerThinking:Boolean=false,
-    eyesClosed:Boolean=false,blinkOnConnect:Boolean=false) {
+    eyesClosed:Boolean=false,blinkOnConnect:Boolean=false,sceneFocus:Boolean=false) {
     val appearance=remember(activity,phase) { talkOrbAppearance(activity ?: talkOrbPhaseActivity(phase)) }
     val animate=motion&&android.animation.ValueAnimator.areAnimatorsEnabled()
     val seconds=rememberMobileAnimationClock(animate)
@@ -428,7 +428,8 @@ private class TalkParticleField(private val width: Int, private val height: Int,
     var lightRotation by remember { mutableFloatStateOf(0f) }
     val glow=animateFloatAsState(if(haloStyle==TalkHaloStyle.LED){if(haloReady)1f else 0f}else appearance.glow,tween(if(animate)240 else 0),label="orb-activity-light")
     val flow=animateFloatAsState(appearance.flow,tween(if(animate)320 else 0),label="orb-activity-flow")
-    val tilt=animateFloatAsState(appearance.tilt,if(animate)spring(dampingRatio=.9f,stiffness=240f)else tween(0),label="orb-attention-tilt")
+    val tilt=animateFloatAsState(if(sceneFocus)appearance.tilt*.35f else appearance.tilt,
+        if(animate)tween(if(sceneFocus)540 else 360,easing=FastOutSlowInEasing)else tween(0),label="orb-attention-tilt")
     LaunchedEffect(animate){
         if(!animate){energy=0f;return@LaunchedEffect}
         var previous=0L
@@ -485,9 +486,13 @@ private class TalkParticleField(private val width: Int, private val height: Int,
             val thought=if(playerThinking&&animate)sin(seconds.value*2f*PI.toFloat()/6.4f)else 0f
             scaleX=1f+energy*.012f+thought*.007f;scaleY=1f-energy*.004f-thought*.005f
             rotationZ=tilt.value+thought*if(playerThinking)1.8f else 0f
-            translationY=if(animate)(sin(seconds.value*.95f)*.65f+thought*if(playerThinking)1.2f else 0f).dp.toPx() else 0f
+            translationY=if(animate)(sin(seconds.value*.95f)*(if(sceneFocus).24f else .65f)+thought*if(playerThinking)1.2f else 0f).dp.toPx() else 0f
         },conversing=phase=="Speaking",voiceCompanion=true,voiceEnergy={energy},attention=attention,
-            expression=if(playerThinking&&animate)playerThinkingExpression(seconds.value,activity?:TalkOrbActivity.THINK)else appearance.face,
+            expression=when {
+                sceneFocus -> appearance.face.copy(openness=.9f,asymmetry=0f)
+                playerThinking&&animate -> playerThinkingExpression(seconds.value,activity?:TalkOrbActivity.THINK)
+                else -> appearance.face
+            },
             motionEnabled=animate,eyesClosed=eyesClosed,blinkOnConnect=blinkOnConnect)
     }
 }

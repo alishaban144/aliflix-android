@@ -61,7 +61,7 @@ import kotlin.math.roundToInt
 
 @Composable internal fun TalkPlayerBubble(session: TalkVoiceSession, onStart: () -> Unit, onClose: () -> Unit, orbTransition: Modifier = Modifier,
     tracker: com.aliflix.app.ui.discover.DiscoverTouchTracker = remember { com.aliflix.app.ui.discover.DiscoverTouchTracker() },
-    videoBounds: Rect? = null) {
+    videoBounds: Rect? = null, captionBounds: Rect? = null) {
     fun Modifier.measured(key: String): Modifier = if (!com.aliflix.app.BuildConfig.DEBUG) this else onGloballyPositioned {
         session.debugCardBounds[key] = it.findRootCoordinates().localBoundingBoxOf(it, clipBounds = false)
     }
@@ -149,9 +149,36 @@ import kotlin.math.roundToInt
                 state.frameTarget?.inVideo(frame)?.intersect(Rect(0f,0f,maxX+orbPixels,heightPixels))
                     ?.takeUnless { it.isEmpty }
             } else null
-        val destination = if (motion) target?.let { talkOrbBesideTarget(it,home,viewport,radius) } ?: home else home
-        val flight by animateOffsetAsState(destination, if(motion && !dragging)
-            spring(dampingRatio=1f,stiffness=Spring.StiffnessMediumLow) else snap(), label="player-orb-attention")
+        val captions = overlayWindowOrigin?.let { origin -> captionBounds?.translate(-origin) }
+        var orbCenter by remember { mutableStateOf(home) }
+        var hasSceneTravel by remember { mutableStateOf(false) }
+        val glide = remember { Animatable(0f) }
+        val speaking = state.phase == "Speaking"
+        LaunchedEffect(target,home,viewport,captions,motion,dragging,speaking,controls,typing) {
+            if(!motion || dragging || controls || typing || target==null && !speaking && !hasSceneTravel) {
+                orbCenter = home
+                hasSceneTravel = false
+                return@LaunchedEffect
+            }
+            val from = Offset(orbCenter.x.coerceIn(viewport.left,viewport.right),
+                orbCenter.y.coerceIn(viewport.top,viewport.bottom))
+            if(target==null && speaking) return@LaunchedEffect
+            val destination = target?.let { talkOrbBesideTarget(it,from,viewport,radius,captions) } ?: home
+            val distance = (destination-from).getDistance()
+            if(distance<1f) {
+                if(target==null)hasSceneTravel=false
+                return@LaunchedEffect
+            }
+            if(target!=null)kotlinx.coroutines.delay(150)else kotlinx.coroutines.delay(240)
+            val control = talkOrbGlideControl(from,destination,viewport,radius,target,captions)
+            val duration = (590 + 175 * distance / (2 * radius)).roundToInt().coerceIn(690,1_520)
+            hasSceneTravel = true
+            glide.snapTo(0f)
+            glide.animateTo(1f,tween(duration,easing=CubicBezierEasing(.34f,.04f,.30f,1f))) {
+                orbCenter = talkOrbGlidePoint(from,control,destination,value)
+            }
+            if(target==null)hasSceneTravel=false
+        }
         val downStart=if(roomLeft)orbY else orbY+orbPixels+gap
         val upEnd=if(roomLeft)orbY+orbPixels else orbY-gap
         val growDown=heightPixels-downStart>=upEnd
@@ -205,8 +232,9 @@ import kotlin.math.roundToInt
         // Clip the interaction layer too: clipping only the halo Canvas leaves
         // Compose's bounded pressed indication as a visible rectangular square.
         Box(Modifier.absoluteOffset {
-            val center=if(dragging)home else flight
-            IntOffset((center.x-radius).roundToInt(),(center.y-radius).roundToInt())
+            val center=if(dragging || !hasSceneTravel)home else orbCenter
+            IntOffset((center.x.coerceIn(viewport.left,viewport.right)-radius).roundToInt(),
+                (center.y.coerceIn(viewport.top,viewport.bottom)-radius).roundToInt())
         }.then(orbTransition).size(orbSize).clip(CircleShape).testTag("talk-player-orb-container").measured("player-orb").semantics {
             contentDescription="Talk controls";stateDescription=appearance.label
             customActions=listOf(CustomAccessibilityAction("Move to other side") { dragX=if(orbX>maxX/2)-maxX else 0f;true })
@@ -224,6 +252,7 @@ import kotlin.math.roundToInt
             }) {
             TalkLiveOrb(state.phase,{session.state.value.level},motion,Modifier.fillMaxSize().testTag("talk-player-orb"),activity=activity,tracker=tracker,
                 attention=target?.center?.plus(overlayRootOrigin),
+                sceneFocus=target!=null,
                 haloStyle=TalkHaloStyle.LED, haloReady=!typing && (connected && talkVoiceHaloReady(state) || !connected && state.microphoneReady && !state.muted),
                 eyesClosed=!state.textMode && !connected,blinkOnConnect=!state.textMode && connected,
                 playerThinking=!typing&&state.phase!="Speaking"&&talkShowsResponseProgress(state.sending,state.answerComplete))

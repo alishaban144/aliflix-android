@@ -61,7 +61,9 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     private var talkConnectJob: Job? = null
     private var talkConnectTextMode: Boolean? = null
     private var talkSceneJob: Job? = null
+    private var talkPreparationJob: Job? = null
     private var talkVideoBounds by mutableStateOf<androidx.compose.ui.geometry.Rect?>(null)
+    private var talkCaptionBounds by mutableStateOf<androidx.compose.ui.geometry.Rect?>(null)
     internal val talkTouches = com.aliflix.app.ui.discover.DiscoverTouchTracker()
     private val sceneMemory by lazy { PlayerSceneMemory({ if (::video.isInitialized) video else null }, ::talkSnapshot) }
     private var sceneCaptureJob: Job? = null
@@ -167,21 +169,37 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     }
 
     internal fun openTalk() {
+        talkPreparationJob?.cancel()
         controller?.pause()
         val opening = !talkVisible
         talkCreated = true
-        if(opening) { talkVoice.stopAnswer();talkVoice.usePlayerVoice();talkOpening++ }
+        if(opening) { talkVoice.startPlayerOpening();talkOpening++ }
         talkVisible = true
+        updateTalkCaptionBounds()
         if (talkVoice.state.value.textMode || ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED)
             connectPlayerTalk()
         else talkPermission.launch(android.Manifest.permission.RECORD_AUDIO)
         if (opening) preparePlayerTalkFrame()
     }
-    internal fun closeTalk() {
+    internal fun closeTalk() = closeTalk(keepTransport = true)
+
+    private fun closeTalk(keepTransport: Boolean) {
         talkVisible = false
         talkConnectJob?.cancel(); talkConnectJob = null
         talkSceneJob?.cancel(); talkSceneJob = null
-        if (talkCreated) { talkVoice.handoff();talkVoice.pauseSession() }
+        if (talkCreated) {
+            talkVoice.handoff()
+            if (!keepTransport || !talkVoice.parkPlayerTransport())talkVoice.pauseSession()
+        }
+        if (keepTransport && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) prepareTalkTransport()
+    }
+
+    private fun prepareTalkTransport() {
+        if (talkVisible || controller?.playbackState != Player.STATE_READY ||
+            ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) return
+        talkCreated = true
+        talkVoice.preparePlayerConnection()
     }
 
     private fun updateTalkVideoBounds() {
@@ -765,7 +783,8 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                     exit=androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(if(talkMotion)360 else 0))) {
                     key(talkOpening) {
                         com.aliflix.app.talk.TalkPlayerBubble(talkVoice,onStart=::openTalk,onClose=::closeTalk,tracker=talkTouches,
-                            orbTransition=com.aliflix.app.talk.playerOrbTransition(transition,talkMotion), videoBounds=talkVideoBounds)
+                            orbTransition=com.aliflix.app.talk.playerOrbTransition(transition,talkMotion),
+                            videoBounds=talkVideoBounds, captionBounds=talkCaptionBounds)
                     }
                 }
             } }
@@ -843,7 +862,22 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     }
 
     internal fun captionBounds(): android.graphics.RectF? {
-        if (talkVisible || captionGestureBlocked || ui.external || renderedCaptions.isEmpty() || !subtitles.isShown) return null
+        if (talkVisible || captionGestureBlocked) return null
+        return displayedCaptionBounds()
+    }
+
+    private fun updateTalkCaptionBounds() {
+        if (!talkVisible) return
+        talkCaptionBounds = displayedCaptionBounds()?.let { bounds ->
+            val location = IntArray(2)
+            subtitles.getLocationInWindow(location)
+            androidx.compose.ui.geometry.Rect(bounds.left+location[0],bounds.top+location[1],
+                bounds.right+location[0],bounds.bottom+location[1])
+        }
+    }
+
+    private fun displayedCaptionBounds(): android.graphics.RectF? {
+        if (!::subtitles.isInitialized || ui.external || renderedCaptions.isEmpty() || !subtitles.isShown) return null
         val paint = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP,
                 settingsStore.settings.value.subtitleFontSizeSp, resources.displayMetrics)
@@ -2284,6 +2318,13 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     private val subtitleLayoutUpdate = Runnable { applySubtitlePadding() }
 
     private fun updateSubtitlePadding(controlsVisible: Boolean = lastControlsVisible) {
+        if (controlsVisible && !lastControlsVisible && !talkVisible) {
+            talkPreparationJob?.cancel()
+            talkPreparationJob = lifecycleScope.launch {
+                delay(120)
+                prepareTalkTransport()
+            }
+        }
         lastControlsVisible = controlsVisible
         if (!::subtitles.isInitialized) return
         // The video frame is laid out before its subtitle sibling. Changing sibling padding
@@ -2318,6 +2359,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         val safeBottom = bottomPx.coerceIn(0, (subtitles.height - textHeight).coerceAtLeast(0))
         subtitles.setBottomPaddingFraction(0f)
         subtitles.setPadding(horizontalPx, 0, horizontalPx, safeBottom)
+        updateTalkCaptionBounds()
         val caption = captionBounds()
         ui = ui.copy(captionBottomPx = caption?.bottom?.toInt() ?: 0, captionTopPx = caption?.top?.toInt() ?: 0)
     }
@@ -2393,11 +2435,14 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
 
     private fun renderCaptions(cues: List<Cue>) {
         sceneMemory.captions(cues.mapNotNull { it.text?.toString() })
-        renderedCaptions = cues.map { mobileCaptionCue(it).buildUpon().setPosition(0.5f)
+        val updated = cues.map { mobileCaptionCue(it).buildUpon().setPosition(0.5f)
             .setPositionAnchor(Cue.ANCHOR_TYPE_MIDDLE).setSize(0.92f)
             .setLine(Cue.DIMEN_UNSET, Cue.LINE_TYPE_FRACTION)
             .clearWindowColor().build() }
+        val changed = talkVisible && renderedCaptions.map { it.text } != updated.map { it.text }
+        renderedCaptions = updated
         subtitles.setCues(renderedCaptions)
+        if (changed) updateTalkCaptionBounds()
     }
 
     private fun updateSubtitleCues() {
@@ -2427,10 +2472,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                 if (controller?.isPlaying == true && selection != null && requestId != null && requestId != warmedRequest) {
                     warmedRequest = requestId
                     launch { prepareTalkRecall("current scene") }
-                    if (!talkVisible) {
-                        talkCreated = true
-                        talkVoice.preparePlayerConnection()
-                    }
+                    prepareTalkTransport()
                 }
                 delay(2500)
             }
@@ -2502,10 +2544,11 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         startService(Intent(this, NativePlaybackService::class.java).setAction(NativePlaybackService.ACTION_STOP)); finish()
     }
     override fun onStop() {
+        talkPreparationJob?.cancel(); talkPreparationJob=null
         if (talkCreated) talkVoice.cancelPlayerPreparation()
         sceneCaptureJob?.cancel(); sceneCaptureJob = null
         sceneMemory.invalidate()
-        if (talkVisible) closeTalk()
+        if (talkVisible) closeTalk(keepTransport = false) else if (talkCreated) talkVoice.pauseSession()
         com.aliflix.app.talk.TalkPlayerConnection.detach(this)
         audioSyncJob?.cancel(); audioSyncJob = null
         ui = ui.copy(audioSyncState = if (audioCorrection != null) "Synced" else null, audioSyncMessage = null)

@@ -73,6 +73,7 @@ internal class TalkFrameAttention(args: JSONObject, frameId: String) {
     @Synchronized fun receive(count: Int, start: Long) {
         if (firstSample < 0) firstSample = start
         samples += count
+        complete = false
     }
 
     @Synchronized fun finish() { complete = true }
@@ -80,7 +81,7 @@ internal class TalkFrameAttention(args: JSONObject, frameId: String) {
     @Synchronized fun at(rendered: Long): TalkFrameTarget? {
         if (firstSample < 0 || samples == 0L || rendered < firstSample || rendered >= firstSample + samples) return null
         val duration = if (complete) samples else maxOf(samples, estimatedDuration)
-        val cursor = ((rendered - firstSample + 4_800L).toDouble() / duration * narration.length).toInt()
+        val cursor = ((rendered - firstSample + 12_000L).toDouble() / duration * narration.length).toInt()
         mentions.lastOrNull { it.index <= cursor && it.cue > currentCue }?.let {
             currentCue = it.cue
             currentTarget = it.target
@@ -89,8 +90,32 @@ internal class TalkFrameAttention(args: JSONObject, frameId: String) {
     }
 }
 
-internal fun talkOrbBesideTarget(target: Rect, home: Offset, viewport: Rect, radius: Float): Offset? {
-    val clearance = radius * .8f
+internal fun talkOrbGlideControl(from: Offset, to: Offset, viewport: Rect, radius: Float, target: Rect?, captions: Rect?): Offset {
+    val travel = to - from
+    val length = travel.getDistance()
+    val middle = (from + to) / 2f
+    if (length < radius * .35f) return middle
+
+    val bend = minOf(length * .26f, radius * 1.4f)
+    val normal = Offset(-travel.y, travel.x) * (bend / length)
+    val candidates = listOf(middle + normal, middle - normal, middle)
+    val safe = candidates.map { Offset(it.x.coerceIn(viewport.left, viewport.right), it.y.coerceIn(viewport.top, viewport.bottom)) }
+    return safe.minBy { control ->
+        (1..7).sumOf { step ->
+            val point = talkOrbGlidePoint(from, control, to, step / 8f)
+            val footprint = Rect(point.x-radius,point.y-radius,point.x+radius,point.y+radius)
+            (if (captions?.overlaps(footprint) == true) 4 else 0) + (if (target?.overlaps(footprint) == true) 2 else 0)
+        }
+    }
+}
+
+internal fun talkOrbGlidePoint(from: Offset, control: Offset, to: Offset, progress: Float): Offset {
+    val rest = 1f - progress
+    return from * (rest * rest) + control * (2f * rest * progress) + to * (progress * progress)
+}
+
+internal fun talkOrbBesideTarget(target: Rect, from: Offset, viewport: Rect, radius: Float, avoid: Rect? = null): Offset? {
+    val clearance = radius * 1.15f
     val candidates = listOf(
         Offset(target.left - clearance, target.center.y),
         Offset(target.right + clearance, target.center.y),
@@ -100,5 +125,8 @@ internal fun talkOrbBesideTarget(target: Rect, home: Offset, viewport: Rect, rad
     return candidates.map { Offset(it.x.coerceIn(viewport.left, viewport.right), it.y.coerceIn(viewport.top, viewport.bottom)) }
         .filter { it.x <= target.left - clearance || it.x >= target.right + clearance ||
             it.y <= target.top - clearance || it.y >= target.bottom + clearance }
-        .minByOrNull { (it-home).getDistance() }
+        .filterNot { point -> avoid?.overlaps(Rect(
+            point.x-radius,point.y-radius,point.x+radius,point.y+radius,
+        )) == true }
+        .minByOrNull { (it-from).getDistance() }
 }
