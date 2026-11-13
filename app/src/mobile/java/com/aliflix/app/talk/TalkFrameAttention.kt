@@ -12,7 +12,7 @@ internal data class TalkFrameTarget(val left: Float, val top: Float, val right: 
 }
 
 internal class TalkFrameAttention(args: JSONObject, frameId: String) {
-    private data class Cue(val target: TalkFrameTarget, val phrases: List<Regex>)
+    private data class Cue(val target: TalkFrameTarget, val phrases: List<Regex>, val fallback: String?)
     private data class Mention(val target: TalkFrameTarget, val index: Int, val cue: Int)
 
     private val cues = buildList {
@@ -37,7 +37,9 @@ internal class TalkFrameAttention(args: JSONObject, frameId: String) {
                 val words = term.split(Regex("[\\s\\p{Pd}]+")).joinToString("[\\s\\p{Pd}]+") { Regex.escape(it) }
                 Regex("(?<![\\p{L}\\p{N}])$words(?![\\p{L}\\p{N}])", RegexOption.IGNORE_CASE)
             }
-            add(Cue(TalkFrameTarget(left, top, right, bottom), patterns))
+            val fallback = Regex("[\\p{L}]{4,}").findAll(phrase).lastOrNull()?.value
+                ?.takeUnless { it.lowercase() in setOf("there","here","that","this","with","near","left","right","side") }
+            add(Cue(TalkFrameTarget(left, top, right, bottom), patterns, fallback))
         }
     }
     val available get() = cues.isNotEmpty()
@@ -54,9 +56,14 @@ internal class TalkFrameAttention(args: JSONObject, frameId: String) {
         narration = text
         var cursor = 0
         mentions = cues.mapIndexedNotNull { index, cue ->
-            cue.phrases.mapNotNull { it.find(text, cursor) }.minByOrNull { it.range.first }?.let { match ->
-                cursor = match.range.last + 1
-                Mention(cue.target, match.range.first, index)
+            val exact = cue.phrases.mapNotNull { it.find(text, cursor) }.minByOrNull { it.range.first }
+            val fallback = cue.fallback?.takeIf { word -> cues.count { it.fallback.equals(word, true) } == 1 }
+            val match = exact ?: fallback?.let { word ->
+                Regex("(?<![\\p{L}\\p{N}])${Regex.escape(word)}(?![\\p{L}\\p{N}])",RegexOption.IGNORE_CASE).find(text,cursor)
+            }
+            match?.let {
+                cursor = it.range.last + 1
+                Mention(cue.target, it.range.first, index)
             }
         }
         val words = text.count { it.isWhitespace() } + 1
