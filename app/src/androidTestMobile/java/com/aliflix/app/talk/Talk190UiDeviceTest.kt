@@ -60,6 +60,8 @@ class Talk190UiDeviceTest {
    compose.setContent{AliflixMobileTheme{TalkPlayerBubble(session,{}, {})}}
    val question="Why did she return the key instead of keeping it?"
    compose.runOnIdle{session.debugPreviewUserQuestion(question)}
+   compose.onNodeWithTag("talk-inline-conversation").assertDoesNotExist()
+   compose.onNodeWithTag("talk-player-orb",useUnmergedTree=true).performClick()
    compose.onNodeWithTag("talk-inline-conversation").assertIsDisplayed()
    val first=compose.onNodeWithTag("talk-inline-conversation").fetchSemanticsNode().boundsInRoot
    val opening="She returned it because the earlier agreement required her to leave it with its owner."

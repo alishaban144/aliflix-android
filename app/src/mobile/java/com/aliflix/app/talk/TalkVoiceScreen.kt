@@ -277,7 +277,10 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
             val panel=agentTasks||recent||privacy||voices
             val goal=if(panel)TalkOrbPose(screenSize.width-with(density){52.dp.toPx()},WindowInsets.systemBars.getTop(density)+with(density){104.dp.toPx()},with(density){42.dp.toPx()})else TalkOrbPose(x,y,diameter)
             TalkFloatingOrb(goal,if(panel)0f else roam,state.phase,{session.state.value.level},motion,tracker,if(compact)"talk-chat-orb" else "talk-orb",if(panel||compact)null else focusedBounds?.center,
-                activity=talkOrbActivity(state,keyboardOpen&&!state.sending),initialPose=initialOrbPose,haloReady=talkVoiceHaloReady(state))
+                activity=talkOrbActivity(state,keyboardOpen&&!state.sending),initialPose=initialOrbPose,haloReady=talkVoiceHaloReady(state),
+                eyesClosed=!state.textMode && state.phase in setOf("Connecting","Reconnecting"),
+                blinkOnConnect=!state.textMode && state.microphoneReady,
+                motionBounds=chatCorner.takeIf { small && !panel && !it.isEmpty }?.translate(-screenOrigin))
         }
         if(recent||privacy||voices) ModalBottomSheet(onDismissRequest={recent=false;privacy=false;voices=false},containerColor=AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated)) {
             Column(Modifier.fillMaxWidth().padding(horizontal=22.dp).navigationBarsPadding().padding(bottom=20.dp)) {
@@ -416,7 +419,7 @@ private class TalkParticleField(private val width: Int, private val height: Int,
  * between listening/speaking. The uninterrupted clock and PCM envelope are separate. */
 @Composable internal fun TalkLiveOrb(phase:String,level:()->Float,motion:Boolean,modifier:Modifier=Modifier,tracker:DiscoverTouchTracker=remember{DiscoverTouchTracker()},attention:Offset?=null,
     activity:TalkOrbActivity?=null,haloStyle:TalkHaloStyle=TalkHaloStyle.SOFT,haloReady:Boolean=true,playerThinking:Boolean=false,
-    eyesClosed:Boolean=false) {
+    eyesClosed:Boolean=false,blinkOnConnect:Boolean=false,sceneFocus:Boolean=false,faceFloat:Boolean=true) {
     val appearance=remember(activity,phase) { talkOrbAppearance(activity ?: talkOrbPhaseActivity(phase)) }
     val animate=motion&&android.animation.ValueAnimator.areAnimatorsEnabled()
     val seconds=rememberMobileAnimationClock(animate)
@@ -425,7 +428,8 @@ private class TalkParticleField(private val width: Int, private val height: Int,
     var lightRotation by remember { mutableFloatStateOf(0f) }
     val glow=animateFloatAsState(if(haloStyle==TalkHaloStyle.LED){if(haloReady)1f else 0f}else appearance.glow,tween(if(animate)240 else 0),label="orb-activity-light")
     val flow=animateFloatAsState(appearance.flow,tween(if(animate)320 else 0),label="orb-activity-flow")
-    val tilt=animateFloatAsState(appearance.tilt,if(animate)spring(dampingRatio=.9f,stiffness=240f)else tween(0),label="orb-attention-tilt")
+    val tilt=animateFloatAsState(if(sceneFocus)appearance.tilt*.35f else appearance.tilt,
+        if(animate)tween(if(sceneFocus)540 else 360,easing=FastOutSlowInEasing)else tween(0),label="orb-attention-tilt")
     LaunchedEffect(animate){
         if(!animate){energy=0f;return@LaunchedEffect}
         var previous=0L
@@ -482,9 +486,14 @@ private class TalkParticleField(private val width: Int, private val height: Int,
             val thought=if(playerThinking&&animate)sin(seconds.value*2f*PI.toFloat()/6.4f)else 0f
             scaleX=1f+energy*.012f+thought*.007f;scaleY=1f-energy*.004f-thought*.005f
             rotationZ=tilt.value+thought*if(playerThinking)1.8f else 0f
-            translationY=if(animate)(sin(seconds.value*.95f)*.65f+thought*if(playerThinking)1.2f else 0f).dp.toPx() else 0f
+            val drift=if(faceFloat)sin(seconds.value*.95f)*.65f else 0f
+            translationY=if(animate)(drift+thought*if(playerThinking)1.2f else 0f).dp.toPx() else 0f
         },conversing=phase=="Speaking",voiceCompanion=true,voiceEnergy={energy},attention=attention,
-            expression=if(playerThinking&&animate)playerThinkingExpression(seconds.value,activity?:TalkOrbActivity.THINK)else appearance.face,
-            motionEnabled=animate,eyesClosed=eyesClosed)
+            expression=when {
+                sceneFocus -> appearance.face.copy(openness=.9f,asymmetry=0f)
+                playerThinking&&animate -> playerThinkingExpression(seconds.value,activity?:TalkOrbActivity.THINK)
+                else -> appearance.face
+            },
+            motionEnabled=animate,eyesClosed=eyesClosed,blinkOnConnect=blinkOnConnect)
     }
 }

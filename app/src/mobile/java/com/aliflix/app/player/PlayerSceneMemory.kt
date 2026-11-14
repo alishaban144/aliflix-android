@@ -35,6 +35,7 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
     private var revision = 0L
     private var copying = false
     private var cached: TalkSceneContext? = null
+    private var pausedFrame: TalkSceneFrame? = null
     private var lastCaptionText = ""
     private val captureMutex = Mutex()
     private var retrievedTranscript: TalkTranscript? = null
@@ -64,12 +65,12 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
 
     /** A seek keeps the episode transcript and prior visual journal; only the live window is stale. */
     fun invalidate() {
-        revision++; frames.clear(); cached = null; lastPosition = Double.NaN; lastCaptionText = ""; lastWatchedPosition = Double.NaN
+        revision++; frames.clear(); cached = null; pausedFrame = null; lastPosition = Double.NaN; lastCaptionText = ""; lastWatchedPosition = Double.NaN
     }
 
     private fun resetEpisode() {
         revision++; frames.clear(); visualBeats.clear(); observedCaptions.clear(); watchedRanges.clear()
-        cached = null; lastPosition = Double.NaN; lastWatchedPosition = Double.NaN; lastBeatPosition = Double.NaN
+        cached = null; pausedFrame = null; lastPosition = Double.NaN; lastWatchedPosition = Double.NaN; lastBeatPosition = Double.NaN
         lastCaptionText = ""; identity = ""
         retrievedTranscript = null
     }
@@ -79,6 +80,7 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
         val position = state.optDouble("positionSeconds", 0.0).coerceAtLeast(0.0)
         if (identity != next) { resetEpisode(); identity = next }
         else if (lastPosition.isFinite() && (position < lastPosition - 1 || position > lastPosition + 7)) invalidate()
+        if (state.optBoolean("playWhenReady")) pausedFrame = null
         lastPosition = position
         return position
     }
@@ -164,20 +166,34 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
 
     suspend fun capture(includeAudio: Boolean = false): TalkSceneContext? = captureMutex.withLock { captureOnce(includeAudio) }
 
+    fun attentionFrame(): TalkSceneFrame? {
+        val state = snapshot()
+        val position = observe(state)
+        return pausedFrame?.takeIf {
+            state.optBoolean("sceneSurfaceReady") && !state.optBoolean("playWhenReady") &&
+                abs(position-it.seconds)<.15
+        }
+    }
+
     private suspend fun captureOnce(includeAudio: Boolean): TalkSceneContext? {
         val state = snapshot(); val position = observe(state)
         if (state.optString("contentKey").isBlank()) return null
         rememberWatched(position)
         val owner = identity; val generation = revision
         if (!copying && state.optBoolean("sceneSurfaceReady")) {
+            val paused = !state.optBoolean("playWhenReady")
             copying = true
             try {
-                val frame = withTimeoutOrNull(900) { copyVideo() }
+                val frame = withTimeoutOrNull(900) { copyVideo(if (paused) 1080 else 640) }
                 val after = snapshot()
                 observe(after)
                 if (frame != null && owner == identity && generation == revision && abs(after.optDouble("positionSeconds") - position) < 1.2) {
                     if (frames.lastOrNull()?.let { abs(it.seconds - position) <= 1.5 } == true) frames.removeLast()
-                    frames.addLast(TalkSceneFrame(position, frame))
+                    val captured = TalkSceneFrame(position, frame)
+                    frames.addLast(captured)
+                    if (!state.optBoolean("playWhenReady") && !after.optBoolean("playWhenReady") &&
+                        abs(after.optDouble("positionSeconds")-position)<.15 &&
+                        pausedFrame?.let { abs(it.seconds-position)<.15 } != true) pausedFrame = captured
                     while (frames.size > 20 || frames.firstOrNull()?.seconds?.let { it < position - 48 } == true) frames.removeFirst()
                     if (lastBeatPosition.isNaN() || abs(position - lastBeatPosition) >= 20.0) {
                         visualBeats.addLast(TalkSceneFrame(position, frame))
@@ -219,9 +235,9 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
         return TalkSceneContext(owner, generation, position, evidence, selected, audio).also { cached = it }
     }
 
-    private suspend fun copyVideo(): ByteArray? {
+    private suspend fun copyVideo(maxDimension: Int): ByteArray? {
         val surface = video()?.takeIf { it.holder.surface.isValid && it.width > 0 && it.height > 0 } ?: return null
-        val scale = minOf(1.0, 640.0 / maxOf(surface.width, surface.height))
+        val scale = minOf(1.0, maxDimension.toDouble() / maxOf(surface.width, surface.height))
         val width = (surface.width * scale).toInt().coerceAtLeast(1)
         val height = (surface.height * scale).toInt().coerceAtLeast(1)
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
@@ -234,7 +250,16 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
             } catch (_: IllegalArgumentException) { bitmap.recycle(); if (continuation.isActive) continuation.resume(null) }
         } ?: return null
         return withContext(Dispatchers.Default) {
-            try { ByteArrayOutputStream().use { output -> copied.compress(Bitmap.CompressFormat.JPEG, 72, output); output.toByteArray().takeIf { it.size <= 160_000 } } }
+            try {
+                ByteArrayOutputStream().use { output ->
+                    for (quality in listOf(76,58,40)) {
+                        output.reset()
+                        copied.compress(Bitmap.CompressFormat.JPEG, quality, output)
+                        if (output.size() <= 160_000) return@withContext output.toByteArray()
+                    }
+                    null
+                }
+            }
             finally { copied.recycle() }
         }
     }
