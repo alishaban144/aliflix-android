@@ -48,13 +48,13 @@ class AskAliflixWiringIntegrationTest {
     }
 
     @Test
-    fun explicitSavedGeminiChoiceIsStillHonored() {
+    fun explicitSavedGeminiChoiceIsHonoredAndLegacyFlashMigratesToHydrogen() {
         assertEquals(
-            RecommendationAiModel.GEMINI_3_8_FLASH,
-            RecommendationAiModel.fromWorkerValue("gemini-3.8-flash"),
+            RecommendationAiModel.GEMINI_4_HYDROGEN,
+            RecommendationAiModel.fromWorkerValue("gemini-4-hydrogen"),
         )
         assertEquals(
-            RecommendationAiModel.GEMINI_3_8_FLASH,
+            RecommendationAiModel.GEMINI_4_HYDROGEN,
             RecommendationAiModel.fromWorkerValue("gemini-3.8-flash"),
         )
     }
@@ -77,11 +77,11 @@ class AskAliflixWiringIntegrationTest {
         val json = AskAliflixRequestMapper.map(
             request = AskAliflixRequest.Describe(MediaType.MOVIE, "space adventure"),
             requestId = "00000000-0000-4000-8000-000000000010",
-            aiModel = RecommendationAiModel.GEMINI_3_8_FLASH,
+            aiModel = RecommendationAiModel.GEMINI_4_HYDROGEN,
         ).workerRequest.toJson()
 
-        assertEquals("gemini-3.8-flash", json.getString("aiModel"))
-        assertEquals("gemini-3.8-flash", json.getString("geminiModel"))
+        assertEquals("gemini-4-hydrogen", json.getString("aiModel"))
+        assertEquals("gemini-4-hydrogen", json.getString("geminiModel"))
     }
 
     @Test

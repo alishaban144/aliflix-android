@@ -33,13 +33,47 @@ export function estimateGeminiInput(body:BodyInit|null|undefined):number {
   return count(JSON.parse(body));
  }catch{return Math.ceil(body.length/2);}
 }
+type GeminiErrorBody = {
+ error?: {
+  code?: number | string;
+  status?: string;
+  message?: string;
+  details?: Array<{
+   '@type'?:string;
+   retryDelay?:string;
+   violations?:Array<{quotaId?:string;quotaMetric?:string;description?:string}>;
+  }>;
+ };
+};
+
+export async function readGeminiError(response:Response):Promise<GeminiErrorBody | undefined> {
+ let detail:unknown;const reader=response.body?.getReader();
+ if(reader){
+  let timer:ReturnType<typeof setTimeout>|undefined;
+  const read=async()=>{
+   const chunks:Uint8Array[]=[];let bytes=0;
+   while(true){
+    const part=await reader.read();if(part.done)break;
+    bytes+=part.value.length;if(bytes>65536)return undefined;
+    chunks.push(part.value);
+   }
+   const all=new Uint8Array(bytes);let at=0;
+   for(const chunk of chunks){all.set(chunk,at);at+=chunk.length;}
+   return JSON.parse(new TextDecoder().decode(all)) as unknown;
+  };
+  try {
+   detail=await Promise.race([read(),new Promise<undefined>(resolve=>{timer=setTimeout(resolve,750);})]);
+  }catch{}finally{
+   if(timer!==undefined)clearTimeout(timer);
+   void reader.cancel().catch(()=>undefined);
+   reader.releaseLock();
+  }
+ }
+ if (detail && typeof detail === 'object') return detail as GeminiErrorBody;
+}
+
 export async function geminiCooldown(response:Response,now=Date.now()){
- let detail:unknown={};const reader=response.clone().body?.getReader();
- if(reader)try{const chunks:Uint8Array[]=[];let bytes=0;
-  while(true){const part=await reader.read();if(part.done)break;bytes+=part.value.length;if(bytes>65536){await reader.cancel();break;}chunks.push(part.value);}
-  if(bytes<=65536){const all=new Uint8Array(bytes);let at=0;for(const chunk of chunks){all.set(chunk,at);at+=chunk.length;}detail=JSON.parse(new TextDecoder().decode(all));}
- }catch{}finally{reader.releaseLock();}
- const error=(detail as {error?:{message?:string;details?:Array<{retryDelay?:string;violations?:Array<{quotaId?:string;quotaMetric?:string;description?:string}>}>}})?.error;
+ const error=(await readGeminiError(response.clone()))?.error;
  const daily=response.status===429&&/per.?day|daily/i.test([error?.message,...(error?.details||[]).flatMap(d=>(d.violations||[]).map(v=>[v.quotaId,v.quotaMetric,v.description].join(' ')))].join(' '));
  const retry=response.headers.get('retry-after');
  const header=retry&&/^\d+(?:\.\d+)?$/.test(retry)?Number(retry):retry?(Date.parse(retry)-now)/1000:0;

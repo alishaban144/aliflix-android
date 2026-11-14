@@ -119,7 +119,7 @@ class Talk188StoryDeviceTest {
                 try {
                     withTimeout(25000) { while(withContext(Dispatchers.Main) { player.talkVoice.state.value.phase !in setOf("Listening","Muted") })delay(50) }
                 } finally {
-                    receipt.put("connection",player.talkVoice.debugConnectionIssue).put("readyState",player.talkVoice.debugAudioSnapshot())
+                    receipt.put("connection",player.talkVoice.debugConnectionIssue).put("sessionModel",player.talkVoice.debugModel).put("readyState",player.talkVoice.debugAudioSnapshot())
                 }
                 val baseline=withContext(Dispatchers.Main) { player.talkVoice.state.value.lines.size }
                 val before=android.os.SystemClock.elapsedRealtime()
@@ -147,8 +147,13 @@ class Talk188StoryDeviceTest {
                 }
                 assertEquals("en",player.talkVoice.debugResponseLanguage)
                 assertTrue("No transcript recall supplied",player.talkVoice.debugSceneContext?.optJSONObject("episodeRecall")?.optJSONObject("storyThroughAnchor")?.optInt("includedCues",0)?.let { it > 0 } == true)
-                if(talkNeedsCurrentSceneObservation(receipt.getString("question")))
-                    assertTrue("Missing independent scene observation; see talk188-live-$titleCase.json",player.talkVoice.debugSceneContext?.optJSONObject("groundedObservation")?.optBoolean("titleBlind")==true)
+                // Protocol 16+ compiles evidence before the Live turn instead of
+                // requiring the older title-blind observer for every visual question.
+                val delivered=player.talkVoice.debugSceneContext
+                val story=delivered?.optJSONObject("storyUnderstanding")?:delivered?.optJSONObject("storyResearch")
+                assertTrue("Missing scene evidence; see talk188-live-$titleCase.json",story?.optString("status") in setOf("grounded","research_ready"))
+                if(delivered?.optString("groundingState")=="observed")
+                    assertTrue("Missing independent scene observation; see talk188-live-$titleCase.json",delivered.optJSONObject("groundedObservation")?.optBoolean("titleBlind")==true)
                 assertTrue(answer,answer.length>100)
                 assertFalse(answer,Regex("(?i)trouble.{0,45}retriev|unable to (?:access|see)|cannot (?:access|see)|can't (?:access|see)|don't have.{0,20}(?:scene|details)").containsMatchIn(answer))
                 assertTrue("Scene answer took $first ms: $answer",first in 1..12000)
@@ -175,7 +180,9 @@ class Talk188StoryDeviceTest {
                 .put("observationIssue",nativePlayer!!.talkVoice.debugSceneObservationIssue)
                 .put("inputTrace",JSONArray(nativePlayer!!.talkVoice.debugInputTrace.toList()))
                 .put("allLines",JSONArray(nativePlayer!!.talkVoice.state.value.lines.map { JSONObject().put("role",it.role).put("text",it.text) }))
-            File(context.getExternalFilesDir(null),"talk188-live-$titleCase.json").writeText(receipts.toString(2))
+            val report=receipts.toString(2)
+            android.util.Log.i("Talk188Test",report)
+            File(context.getExternalFilesDir(null),"talk188-live-$titleCase.json").writeText(report)
             i.runOnMainSync { nativePlayer?.closeTalk();nativePlayer?.finish();activity.finish() }
             context.startService(Intent(context,NativePlaybackService::class.java).setAction(NativePlaybackService.ACTION_STOP))
         }

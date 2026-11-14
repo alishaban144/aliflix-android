@@ -57,4 +57,28 @@ class AskProgressiveDeviceTest {
   }}
   File(context.getExternalFilesDir(null),"ask-progressive-176.json").writeText(report.toString(2))
  }
+ @Test fun hydrogenTextModelCompletesOnThePhone() {
+  Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("liveHydrogen")=="true")
+  val context=InstrumentationRegistry.getInstrumentation().targetContext
+  val client=RecommendationAiClient(BuildConfig.RECOMMENDATION_AI_BASE_URL)
+  val report=JSONArray()
+  runBlocking { withTimeout(120000) {
+   for((query,mediaType) in listOf("upbeat heist movies from the 2000s" to "movie","cozy British detective series" to "tv")) {
+    val request=V3RecommendationRequest(UUID.randomUUID().toString(),query=query,mediaType=mediaType,
+     aiModel=RecommendationAiModel.GEMINI_4_HYDROGEN.workerValue,pageSize=5)
+    val started=SystemClock.elapsedRealtime()
+    val result=client.getRecommendations(request)
+    val elapsed=SystemClock.elapsedRealtime()-started
+    assertFalse(result.inProgress)
+    assertTrue("Hydrogen must return verified titles for $query",result.results.isNotEmpty())
+    assertTrue(result.results.all{it.tmdbId>0&&it.title.isNotBlank()})
+    report.put(JSONObject().put("query",query).put("mediaType",mediaType).put("elapsedMs",elapsed)
+     .put("count",result.results.size).put("titles",JSONArray(result.results.map{it.title})))
+    kotlinx.coroutines.delay(4000)
+   }
+  }}
+  val json=report.toString(2)
+  android.util.Log.i("HydrogenTest",json)
+  File(context.getExternalFilesDir(null),"hydrogen-201.json").writeText(json)
+ }
 }

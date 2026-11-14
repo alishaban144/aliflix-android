@@ -1,6 +1,6 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {fetchGemini,geminiProjectRequest,hasGeminiCredentials,redactGeminiKeys} from '../src/geminiKeys';
-const url='https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent';
+import {fetchGemini,geminiProjectRequest,hasGeminiCredentials,raceGeminiGeneration,redactGeminiKeys} from '../src/geminiKeys';
+const url='https://generativelanguage.googleapis.com/v1beta/models/gemini-4-hydrogen:generateContent';
 const credentials=()=>({GEMINI_API_KEY:'test-primary-'+crypto.randomUUID(),GEMINI_API_KEY_SECONDARY:'test-secondary-'+crypto.randomUUID()});
 const used=(init?:RequestInit)=>new Headers(init?.headers).get('x-goog-api-key');
 afterEach(()=>vi.restoreAllMocks());
@@ -49,7 +49,7 @@ it('isolates model quotas and never puts a key in a provider URL',async()=>{
  const env=credentials();vi.spyOn(Math,'random').mockReturnValue(0);
  const fetcher=vi.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response(null,{status:429})).mockImplementation(async()=>Response.json({ok:true}));
  await fetchGemini(env,url,{});
- await fetchGemini(env,url.replace('gemini-3.8-flash:generateContent','gemini-embedding-2:embedContent'),{});
+ await fetchGemini(env,url.replace('gemini-4-hydrogen:generateContent','gemini-embedding-2:embedContent'),{});
  expect(used(fetcher.mock.calls[2][1])).toBe(env.GEMINI_API_KEY);
  expect(fetcher.mock.calls.every(call=>!String(call[0]).includes(env.GEMINI_API_KEY))).toBe(true);
 });
@@ -63,6 +63,104 @@ it('shares the caller deadline across failover and does not retry an aborted req
  const controller=new AbortController();vi.spyOn(Math,'random').mockReturnValue(0);
  const fetcher=vi.spyOn(globalThis,'fetch').mockImplementation(async()=>{controller.abort();return new Response(null,{status:429});});
  await expect(fetchGemini(credentials(),url,{signal:controller.signal})).rejects.toThrow();expect(fetcher).toHaveBeenCalledTimes(1);
+});
+it.each(['headers','body'])('starts both projects together when one stalls before completing %s',async stage=>{
+ const env=credentials();
+ const arrivals = new Map<string, AbortSignal>();
+ let markBothStarted!: () => void;
+ const bothStarted = new Promise<void>(resolve=>{markBothStarted=resolve;});
+ vi.spyOn(globalThis,'fetch').mockImplementation(async (_url,init)=>{
+  const key=used(init)!;
+  const signal=init!.signal!;
+  arrivals.set(key,signal);
+  if(arrivals.size===2) markBothStarted();
+  if(key===env.GEMINI_API_KEY_SECONDARY) {
+   await bothStarted;
+   return Response.json({project:'secondary'});
+  }
+  if(stage==='headers') return new Promise((_,reject)=>{
+   signal.addEventListener('abort',()=>reject(signal.reason),{once:true});
+  });
+  return new Response(new ReadableStream({
+   start(controller){
+    controller.enqueue(new TextEncoder().encode('{"project":'));
+    signal.addEventListener('abort',()=>controller.error(signal.reason),{once:true});
+   },
+  }));
+ });
+ const result=await raceGeminiGeneration(env,url,{body:'{}',signal:AbortSignal.timeout(1500)},response=>response.json());
+ expect(result).toEqual({data:{project:'secondary'},keySlot:'secondary'});
+ expect(arrivals.size).toBe(2);
+ expect(arrivals.get(env.GEMINI_API_KEY)?.aborted).toBe(true);
+});
+it('keeps the caller deadline for the entire race and cancels both pending projects',async()=>{
+ const env={...credentials(),GEMINI_API_KEY_TERTIARY:'owned-third-'+crypto.randomUUID()};
+ const caller=new AbortController();
+ const signals:AbortSignal[]=[];
+ vi.spyOn(globalThis,'fetch').mockImplementation(async (_url,init)=>new Promise((_,reject)=>{
+  const signal=init!.signal!;
+  signals.push(signal);
+  signal.addEventListener('abort',()=>reject(signal.reason),{once:true});
+  if(signals.length===2)caller.abort(new DOMException('Deadline','TimeoutError'));
+ }));
+ await expect(raceGeminiGeneration(env,url,{body:'{}',signal:caller.signal},response=>response.json())).rejects.toMatchObject({name:'TimeoutError'});
+ expect(signals).toHaveLength(2);
+ expect(signals.every(signal=>signal.aborted)).toBe(true);
+});
+it('takes an available third project when either initial project fails without waiting for the other',async()=>{
+ const env={...credentials(),GEMINI_API_KEY_TERTIARY:'owned-third-'+crypto.randomUUID()};
+ vi.spyOn(Math,'random').mockReturnValue(0);
+ const attempted=new Set<string>();
+ const fetcher=vi.spyOn(globalThis,'fetch').mockImplementation(async (_url,init)=>{
+  const key=used(init)!;
+  attempted.add(key);
+  if(key===env.GEMINI_API_KEY) return Response.json({error:{code:429}},{status:429});
+  if(key===env.GEMINI_API_KEY_TERTIARY) return Response.json({project:'tertiary'});
+  const signal=init!.signal!;
+  return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));
+ });
+ await expect(raceGeminiGeneration(env,url,{body:'{}',signal:AbortSignal.timeout(1500)},response=>response.json())).resolves.toEqual({data:{project:'tertiary'},keySlot:'tertiary'});
+ expect(attempted).toEqual(new Set([env.GEMINI_API_KEY,env.GEMINI_API_KEY_SECONDARY,env.GEMINI_API_KEY_TERTIARY]));
+ expect(fetcher).toHaveBeenCalledTimes(3);
+});
+it('honors free-tier admission and releases the cancelled request lease',async()=>{
+ const credentialsForTest={...credentials(),GEMINI_API_KEY_TERTIARY:'owned-third-'+crypto.randomUUID()};
+ const owners = await Promise.all(Object.values(credentialsForTest).map(async key=>{
+  const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(key));
+  return Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('');
+ }));
+ const releaseGeminiBudget=vi.fn(async()=>{});
+ const quota={
+  acquireGeminiBudget:vi.fn(async (owner:string)=>owner===owners[0]
+   ? {allowed:false,status:429,retryAt:Date.now()+60000}
+   : {allowed:true,lease:owner}),
+  releaseGeminiBudget,
+ };
+ const env={...credentialsForTest,GEMINI_FREE_TIER_MODE:'true',
+  TALK_SESSIONS:{getByName:()=>quota} as unknown as NonNullable<Parameters<typeof raceGeminiGeneration>[0]['TALK_SESSIONS']>};
+ vi.spyOn(Math,'random').mockReturnValue(0);
+ const fetcher=vi.spyOn(globalThis,'fetch').mockImplementation(async (_url,init)=>{
+  if(used(init)===env.GEMINI_API_KEY_TERTIARY) return Response.json({project:'tertiary'});
+  const signal=init!.signal!;
+  return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));
+ });
+ await expect(raceGeminiGeneration(env,url,{body:'{}',signal:AbortSignal.timeout(1500)},response=>response.json())).resolves.toEqual({data:{project:'tertiary'},keySlot:'tertiary'});
+ expect(fetcher.mock.calls.map(call=>used(call[1])).sort()).toEqual([env.GEMINI_API_KEY_SECONDARY,env.GEMINI_API_KEY_TERTIARY].sort());
+ expect(quota.acquireGeminiBudget).toHaveBeenCalledTimes(3);
+ await vi.waitFor(()=>expect(releaseGeminiBudget).toHaveBeenCalledWith(owners[1],'gemini-4-hydrogen',owners[1]));
+});
+it('uses a definitive error without retrying the third project or cancelling the error body',async()=>{
+ const env={...credentials(),GEMINI_API_KEY_TERTIARY:'owned-third-'+crypto.randomUUID()};
+ vi.spyOn(Math,'random').mockReturnValue(0);
+ const fetcher=vi.spyOn(globalThis,'fetch').mockImplementation(async (_url,init)=>{
+  if(used(init)===env.GEMINI_API_KEY) return Response.json({error:{code:400}},{status:400});
+  const signal=init!.signal!;
+  return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));
+ });
+ const result=await raceGeminiGeneration(env,url,{body:'{}',signal:AbortSignal.timeout(1500)},response=>response.json());
+ expect('response' in result && result.response.status).toBe(400);
+ if('response' in result) await expect(result.response.json()).resolves.toEqual({error:{code:400}});
+ expect(fetcher.mock.calls.map(call=>used(call[1]))).not.toContain(env.GEMINI_API_KEY_TERTIARY);
 });
 it('uses a secondary-only configuration and deduplicates accidental identical keys',async()=>{
  const env=credentials();expect(hasGeminiCredentials({GEMINI_API_KEY_SECONDARY:env.GEMINI_API_KEY_SECONDARY})).toBe(true);

@@ -31,9 +31,16 @@ class RecommendationAiClient(
 ) {
     private val detailsLocks = Array(32) { kotlinx.coroutines.sync.Mutex() }
     suspend fun getRecommendations(request: V3RecommendationRequest, onPartial: (suspend (V3RecommendationResponse) -> Unit)? = null): V3RecommendationResponse = withContext(ioDispatcher) {
-        if (!com.aliflix.app.BuildConfig.IS_TV && research != null && (request.mode != "filters" || request.query.isNotBlank())) {
+        val generated = request.mode != "filters" || request.query.isNotBlank()
+        val mobile = !com.aliflix.app.BuildConfig.IS_TV
+        val body = request.toJson()
+        if (mobile && generated) {
+            val model = RecommendationAiModel.GEMINI_4_HYDROGEN.workerValue
+            body.put("aiModel", model).put("geminiModel", model)
+        }
+        if (mobile && research != null && generated) {
             val account=research.accountTicket()
-            val body=request.toJson().put("aiModel", "gemini-3.8-flash").put("geminiModel", "gemini-3.8-flash").put("library", researchLibrary())
+            body.put("library",researchLibrary())
             if(onPartial==null)return@withContext V3RecommendationResponse.fromJson(research.request("recommendations",body,account))
             var latest:V3RecommendationResponse?=null
             research.recommendations(body,account).collect{event->
@@ -43,7 +50,7 @@ class RecommendationAiClient(
             }
             return@withContext requireNotNull(latest){"Missing research response"}
         }
-        V3RecommendationResponse.fromJson(JSONObject(postJson("$baseUrl/v3/recommendations", request.toJson())))
+        V3RecommendationResponse.fromJson(JSONObject(postJson("$baseUrl/v3/recommendations", body)))
     }
 
     suspend fun getTitleDetails(mediaType: String, tmdbId: Int): V3TitleDetails = withContext(ioDispatcher) {

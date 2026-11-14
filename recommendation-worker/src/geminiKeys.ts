@@ -1,20 +1,31 @@
+import {waitUntil} from 'cloudflare:workers';
 import {estimateGeminiInput,geminiCooldown} from './geminiQuota';
 import type { RecommendationEnv, SecretBindings } from './types';
 
-export type GeminiKeySlot = 'primary' | 'secondary' | 'tertiary';
-type GeminiCredentials = Pick<SecretBindings, 'GEMINI_API_KEY' | 'GEMINI_API_KEY_SECONDARY' | 'GEMINI_API_KEY_TERTIARY'> & Partial<Pick<RecommendationEnv,'TALK_SESSIONS'|'GEMINI_FREE_TIER_MODE'|'GEMINI_FREE_TIER_RPM'|'GEMINI_FREE_TIER_TPM'>>;
+export type GeminiKeySlot = 'primary' | 'secondary' | 'tertiary' | 'hydrogen-a' | 'hydrogen-b';
+type GeminiCredentials = Pick<SecretBindings, 'GEMINI_API_KEY' | 'GEMINI_API_KEY_SECONDARY' | 'GEMINI_API_KEY_TERTIARY' |
+ 'GEMINI_API_KEY_HYDROGEN_A' | 'GEMINI_API_KEY_HYDROGEN_B'> & Partial<Pick<RecommendationEnv,'TALK_SESSIONS'|'GEMINI_FREE_TIER_MODE'|'GEMINI_FREE_TIER_RPM'|'GEMINI_FREE_TIER_TPM'>>;
 type Key = { slot: GeminiKeySlot; value: string };
 type Cooling = { until: number; status: number };
 type GeminiRequestInit=RequestInit & {geminiInputTokens?:number};
 
 function keys(env: GeminiCredentials): Key[] {
  const result: Key[] = [];
- for (const [slot, value] of [['primary', env.GEMINI_API_KEY], ['secondary', env.GEMINI_API_KEY_SECONDARY], ['tertiary',env.GEMINI_API_KEY_TERTIARY]] as const)
+ for (const [slot, value] of [
+  ['primary', env.GEMINI_API_KEY], ['secondary', env.GEMINI_API_KEY_SECONDARY], ['tertiary',env.GEMINI_API_KEY_TERTIARY],
+  ['hydrogen-a', env.GEMINI_API_KEY_HYDROGEN_A], ['hydrogen-b', env.GEMINI_API_KEY_HYDROGEN_B],
+ ] as const)
   if (value?.trim() && !result.some(key => key.value === value.trim())) result.push({ slot, value: value.trim() });
  return result;
 }
 export const hasGeminiCredentials = (env: GeminiCredentials) => keys(env).length > 0;
 export const configuredGeminiSlots = (env:GeminiCredentials)=>keys(env).map(key=>key.slot);
+const canRotateProject = (status: number) => [401, 403, 408, 429].includes(status) || status >= 500;
+
+function rotateCandidates<T>(candidates: T[]): T[] {
+ const start=candidates.length>1 ? Math.floor(Math.random()*candidates.length) : 0;
+ return [...candidates.slice(start),...candidates.slice(0,start)];
+}
 export function redactGeminiKeys(env: GeminiCredentials, text: string) {
  for (const key of keys(env)) text = text.replaceAll(key.value, '[key]');
  return text;
@@ -55,10 +66,7 @@ export async function geminiProjectRequest(env: GeminiCredentials, url: string, 
  const pool = keys(env), trackHealth = pool.length > 1||free;
  let candidates = pool.filter(key=>!excluded.includes(key.slot));
  if (pinned) candidates = candidates.filter(key => key.slot === pinned);
- else if (candidates.length > 1) {
-  const start=Math.floor(Math.random()*candidates.length);
-  candidates=[...candidates.slice(start),...candidates.slice(0,start)];
- }
+ else candidates = rotateCandidates(candidates);
  if (!candidates.length) throw Error('GEMINI_NOT_CONFIGURED');
  const unavailable: Cooling[] = [];
  for (let index = 0; index < candidates.length; index++) {
@@ -75,13 +83,17 @@ export async function geminiProjectRequest(env: GeminiCredentials, url: string, 
   }
   const headers = new Headers(init.headers); headers.set('x-goog-api-key', key.value);
   let response: Response;
-  try { response = await fetch(url, { ...requestInit, headers }); }
+  try {
+   init.signal?.throwIfAborted();
+   response = await fetch(url, { ...requestInit, headers });
+  }
   catch (error) {
    if (init.signal?.aborted || index === candidates.length - 1) throw error;
    continue;
-  }finally{if(quota&&lease)await quota.releaseGeminiBudget(owner,scope,lease).catch(()=>undefined);}
-  const retryable = [401, 403, 408, 429].includes(response.status) || response.status >= 500;
-  if (!retryable) return { response, keySlot: key.slot };
+  }finally{
+   if(quota&&lease)await quota.releaseGeminiBudget(owner,scope,lease).catch(()=>undefined);
+  }
+  if (!canRotateProject(response.status)) return { response, keySlot: key.slot };
   const blocked=health?await cool(health,response):undefined;
   if(quota&&blocked)await quota.blockGeminiBudget(owner,scope,blocked.until,blocked.status);
   if (index === candidates.length - 1) return { response, keySlot: key.slot };
@@ -97,6 +109,84 @@ export async function geminiProjectRequest(env: GeminiCredentials, url: string, 
 
 export async function fetchGemini(env: GeminiCredentials, url: string, init: GeminiRequestInit) {
  return (await geminiProjectRequest(env, url, init)).response;
+}
+
+type GeminiGenerationResult<T> = {data: T; keySlot?: GeminiKeySlot} | {response: Response};
+
+/** Race replayable generation requests under one deadline. Only a fully
+ * decoded answer or a definitive request error can end the race early. */
+export async function raceGeminiGeneration<T>(env: GeminiCredentials, url: string,
+ init: GeminiRequestInit & {body: string}, decode: (response: Response) => Promise<T>,
+ excluded: GeminiKeySlot[] = [],
+): Promise<GeminiGenerationResult<T>> {
+ const eligible = configuredGeminiSlots(env).filter(slot => !excluded.includes(slot));
+ const preferFresh = url.includes('gemini-4-hydrogen:') || url.endsWith('/auth_tokens');
+ const fresh: GeminiKeySlot[] = preferFresh ? eligible.filter(slot => slot === 'hydrogen-a' || slot === 'hydrogen-b') : [];
+ const slots = [...rotateCandidates(fresh), ...rotateCandidates(eligible.filter(slot => !fresh.includes(slot)))].slice(0,3);
+ const requestInit = {...init, geminiInputTokens: init.geminiInputTokens ?? estimateGeminiInput(init.body)};
+ if (slots.length <= 1) {
+  const {response, keySlot} = await geminiProjectRequest(env, url, requestInit, slots[0], excluded);
+  init.signal?.throwIfAborted();
+  return response.ok ? {data: await decode(response), keySlot} : {response};
+ }
+
+ const controllers: AbortController[] = [];
+ const failures: Array<{response: Response; controller: AbortController; provider: boolean}> = [];
+ let keep: AbortController | undefined;
+ let decodeError: unknown;
+ let stopped = false;
+ const attemptAvailableProjects = async (): Promise<{result: GeminiGenerationResult<T>; controller: AbortController}> => {
+  while (slots.length && !stopped) {
+   init.signal?.throwIfAborted();
+   const controller = new AbortController();
+   controllers.push(controller);
+   const signal = init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal;
+   const slot = slots.shift()!;
+   try {
+    const {response, keySlot} = await geminiProjectRequest(env, url, {...requestInit, signal}, slot);
+    signal.throwIfAborted();
+    if (!response.ok) {
+     if (canRotateProject(response.status)) {
+      failures.push({response, controller, provider: keySlot !== undefined});
+      continue;
+     }
+     stopped = true;
+     return {result: {response}, controller};
+    }
+    try {
+     const data = await decode(response);
+     signal.throwIfAborted();
+     stopped = true;
+     return {result: {data, keySlot}, controller};
+    } catch (error) {
+     if (!signal.aborted) decodeError = error;
+     throw error;
+    }
+   } catch (error) {
+    signal.throwIfAborted();
+    if (!slots.length || stopped) throw error;
+   }
+  }
+  throw Error('No Gemini project produced a usable response');
+ };
+
+ const attempts = [attemptAvailableProjects(), attemptAvailableProjects()];
+ try {
+  const winner = await Promise.any(attempts);
+  keep = winner.controller;
+  return winner.result;
+ } catch (error) {
+  init.signal?.throwIfAborted();
+  if (decodeError !== undefined) throw decodeError;
+  const failure = failures.find(entry => entry.provider) ?? failures[0];
+  if (!failure) throw (error instanceof AggregateError ? error.errors[0] ?? error : error);
+  keep = failure.controller;
+  return {response: failure.response};
+ } finally {
+  stopped = true;
+  for (const controller of controllers) if (controller !== keep) controller.abort();
+  waitUntil(Promise.allSettled(attempts));
+ }
 }
 
 /** Only server-observed provider errors may cool a shared project. Client

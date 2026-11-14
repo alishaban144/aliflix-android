@@ -1,4 +1,4 @@
-import { geminiProjectRequest, hasGeminiCredentials, type GeminiKeySlot } from './geminiKeys';
+import { geminiProjectRequest, hasGeminiCredentials, raceGeminiGeneration, type GeminiKeySlot } from './geminiKeys';
 import { z } from 'zod';
 import type { RecommendationEnv } from './types';
 import type { TalkContext } from './talkEvidence';
@@ -165,11 +165,17 @@ export async function issueLiveToken(env: RecommendationEnv, context: TalkContex
  // session-resumption handle to change on a same-model reconnect.
  const {sessionResumption: _resumption, ...lockedSetup}=setup;
  const mask=Object.keys(setup).filter(k=>k!=='sessionResumption').join(',');
- const {response,keySlot}=await geminiProjectRequest(env,'https://generativelanguage.googleapis.com/v1beta/auth_tokens',{
+ const url='https://generativelanguage.googleapis.com/v1beta/auth_tokens';
+ const init={
   method:'POST',headers:{'content-type':'application/json'},
   body:JSON.stringify({uses:1,expireTime:new Date(expires).toISOString(),newSessionExpireTime:new Date(Math.min(expires-1000,Date.now()+60000)).toISOString(),
-    bidiGenerateContentSetup:lockedSetup,fieldMask:mask}),signal:AbortSignal.timeout(8000) },pinned,excluded);
- if(!response.ok){await response.body?.cancel();console.warn('talk_live_token_status',response.status);throw Error('LIVE_UNAVAILABLE');}
- const result=z.object({name:z.string().min(8).max(4096)}).parse(await boundedJson(response,16384));
- return {keySlot,token:result.name,model:TALK_MODEL,voice:context.voice||TALK_VOICE,expires,inputActivity:(context.companionVersion||0)>=9?'manual':'automatic',setup:{model:setup.model,generationConfig:setup.generationConfig,sessionResumption:{}}};
+    bidiGenerateContentSetup:lockedSetup,fieldMask:mask}),signal:AbortSignal.timeout(8000) };
+ const decode=async(response:Response)=>z.object({name:z.string().min(8).max(4096)}).parse(await boundedJson(response,16384));
+ const grant=pinned||excluded.length ? await geminiProjectRequest(env,url,init,pinned,excluded) :
+  await raceGeminiGeneration(env,url,init,decode,excluded);
+ if('response' in grant&&!grant.response.ok){
+  await grant.response.body?.cancel();console.warn('talk_live_token_status',grant.response.status);throw Error('LIVE_UNAVAILABLE');
+ }
+ const result='data' in grant?grant.data:await decode(grant.response);
+ return {keySlot:'keySlot' in grant?grant.keySlot:undefined,token:result.name,model:TALK_MODEL,voice:context.voice||TALK_VOICE,expires,inputActivity:(context.companionVersion||0)>=9?'manual':'automatic',setup:{model:setup.model,generationConfig:setup.generationConfig,sessionResumption:{}}};
 }

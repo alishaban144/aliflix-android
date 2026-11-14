@@ -195,7 +195,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         frameAttentionTurn = userTurn.get()
         parts.put(JSONObject().put("text","Exact paused player image at ${frame.seconds} seconds, frameId=$frameId. " +
             "Resolve each requested part independently against this image. If any part is about a visible detail, call scene_attention with this frameId before speaking. " +
-            "Include every distinct visible referent you will discuss, including text, partially visible props and locations. Supply its tight normalized box and a short exact phrase you will say, in spoken order. " +
+            "Rehearse the short reply and include a separate target for each visible detail in it, in spoken order. " +
+            "For a question about what lights a subject, target the visible source or light entry if identifiable. Target each requested text, prop or location individually. " +
+            "For each target give its tight box and a short phrase you will say. " +
             "Then answer directly. For every visual claim, inspect the labeled image again before speaking, even if earlier frames, dialogue or plot knowledge suggest a different answer. " +
             "Check specifically requested locations such as on the tabletop versus inside a drawer. Box the described detail itself, including clothing, a sign or a prop; only use the face when you are describing the person. " +
             "Verify the center of each box is inside its referent in this exact image. If a requested detail is absent, occluded or unreadable, say so and omit it from the tool call. " +
@@ -210,13 +212,31 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         return id==null
     }
 
+    private fun preloadAttentionFrame() {
+        if(state.value.textMode||conversationContext.optInt("companionVersion")<18)return
+        val frame=TalkPlayerConnection.current()?.talkAttentionFrame()?:return
+        if(sentAttentionFrame===frame)return
+        val parts=JSONArray()
+        if(!addAttentionFrame(parts))return
+        emit(JSONObject().put("clientContent",JSONObject()
+            .put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",parts)))
+            .put("turnComplete",false)))
+        if(BuildConfig.DEBUG)debugSceneFrames++
+    }
+
     private fun acceptFrameAttention(callId: String, args: JSONObject?): Boolean {
-        val id = frameAttentionId ?: return false
+        fun reject(reason: String): Boolean {
+            if(BuildConfig.DEBUG)debugToolCalls.merge("scene_attention_rejected_"+reason,1){a,b->a+b}
+            return false
+        }
+        val id = frameAttentionId ?: return reject("frame_missing")
         if(args==null || quietTurn || frameAttention!=null || discardInterruptedGeneration ||
-            state.value.textMode || frameAttentionTurn!=userTurn.get() ||
-            frameAttentionFrame!==TalkPlayerConnection.current()?.talkAttentionFrame())return false
+            state.value.textMode || frameAttentionTurn!=userTurn.get())return reject("turn")
+        if(frameAttentionFrame!==TalkPlayerConnection.current()?.talkAttentionFrame())return reject("frame_changed")
+        if(args.optString("frameId")!=id)return reject("frame_id")
         val plan = TalkFrameAttention(args,id)
-        if(!plan.available)return false
+        if(!plan.available)return reject("targets")
+        if(BuildConfig.DEBUG)debugToolCalls["scene_attention_planned_targets"]=plan.targetCount
         plan.update(outputText)
         if(firstAttentionSample>=0)plan.receive(receivedAttentionSamples,firstAttentionSample)
         if(attentionAudioComplete)plan.finish()
@@ -1253,7 +1273,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 else scope.launch {
                     delay(750)
                     if(ticket==epoch&&permitted&&turn==userTurn.get()&&!speaking&&!generationOpen&&!remoteSpeechActive){
-                        sendTurnContext()
+                        sendTurnContext(userOwned=true)
                         emitContinuation(talkPendingContinuation(lastQuestion,pendingToolReply,state.value.cards.snapshot()))
                         answerDeadline.awaiting(if(pendingToolReply!=null)15000 else 45000)
                     }
@@ -1796,7 +1816,20 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 frameAttention?.finish()
                 endOfAudio=true;if(turnHasAudio&&!pendingAnswerNeedsTitle&&!recommendationLookup&&researchNote==null)answerDeadline.clear()
                 if(!pendingAnswerNeedsTitle&&!recommendationLookup&&researchNote==null&&(turnHasAudio||outputText.isNotBlank())&&(tools.isEmpty()||awaitingToolAnswer))update{it.copy(answerComplete=true)}
-
+                val visualPlan = frameAttention
+                if (visualPlan != null && !turnHasAudio && outputText.isBlank() && tools.isEmpty() && !awaitingToolAnswer) {
+                    val turn = userTurn.get()
+                    scope.launch {
+                        delay(900)
+                        if(ticket!=epoch||turn!=userTurn.get()||!permitted||!socketReady||remoteSpeechActive||speaking||
+                            frameAttention!==visualPlan||turnHasAudio||outputText.isNotBlank()||tools.isNotEmpty()||
+                            awaitingToolAnswer||silentReplyNudges>0)return@launch
+                        silentReplyNudges++
+                        if(BuildConfig.DEBUG)debugToolCalls.merge("scene_attention_silent_continuation",1){a,b->a+b}
+                        continueSilentReply()
+                        answerDeadline.awaiting(12000)
+                    }
+                }
             }
             if(content.optBoolean("turnComplete")&&inputTurnActive&&!awaitingToolAnswer&&!turnHasAudio&&outputText.isBlank()&&tools.isEmpty()) {
                 // WHEN_IDLE tool replies may start their answer AFTER this
@@ -2055,7 +2088,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if(interrupted)debugLocalBarges++
                 if(BuildConfig.DEBUG)debugActivityEvents.add(JSONObject().put("start",SystemClock.elapsedRealtime()).put("barge",interrupted).put("probability",probability))
                 emit(JSONObject().put("realtimeInput",JSONObject().put("activityStart",JSONObject())))
-                sendTurnContext(userOwned=true)
+                preloadAttentionFrame()
             }
             for(bytes in decision.frames)emitPcm(bytes)
             if(decision.end&&remoteSpeechActive){

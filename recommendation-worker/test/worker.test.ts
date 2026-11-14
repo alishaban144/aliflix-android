@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { env as workerBindings } from 'cloudflare:test';
 import worker, { expandGeneratedContinuation } from '../src/index';
 
 describe('Cloudflare Worker', () => {
@@ -15,6 +16,59 @@ describe('Cloudflare Worker', () => {
     waitUntil: () => {},
     passThroughOnException: () => {}
   };
+
+  it.each([
+    {mediaType: 'movie', query: 'First-contact films about language', title: 'Arrival', id: 329865, year: 2016},
+    {mediaType: 'tv', query: 'Science fiction series about memory and corporate control', title: 'Severance', id: 95396, year: 2022},
+  ])('keeps the mobile $mediaType recommendation route moving while Gemini sends no headers', async ({mediaType, query, title, id, year}) => {
+    const stalledKey = 'stalled-' + crypto.randomUUID();
+    const availableKey = 'available-' + crypto.randomUUID();
+    const projectSignals = new Map<string, AbortSignal>();
+    let markBothStarted!: () => void;
+    const bothStarted = new Promise<void>(resolve => {markBothStarted = resolve;});
+    vi.stubGlobal('fetch', async (input: string | URL, init?: RequestInit) => {
+      const url = new URL(input);
+      if (url.hostname === 'generativelanguage.googleapis.com') {
+        const key = new Headers(init?.headers).get('x-goog-api-key')!;
+        const signal = init!.signal!;
+        projectSignals.set(key, signal);
+        if (projectSignals.size === 2) markBothStarted();
+        if (key === stalledKey) {
+          return new Promise((_, reject) => {
+            signal.addEventListener('abort', () => reject(signal.reason), {once: true});
+          });
+        }
+        await bothStarted;
+        const text = JSON.stringify({recommendations: [{title, releaseYear: year, rating: 9}]});
+        return Response.json({candidates: [{content: {parts: [{text}]}}]});
+      }
+      if (url.pathname === '/3/search/' + mediaType && url.searchParams.get('query') === title) {
+        const date = year + '-01-01';
+        const match = mediaType === 'movie' ? {title, release_date: date} : {name: title, first_air_date: date};
+        return Response.json({results: [{id, ...match}]});
+      }
+      throw new Error('Unexpected upstream route ' + url.pathname);
+    });
+    try {
+      const response = await worker.fetch(new Request('https://worker.test/v3/recommendations', {
+        method: 'POST',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify({requestId: crypto.randomUUID(), mode: 'describe', mediaType, query, pageSize: 1, aiModel: 'gemini-4-hydrogen'}),
+      }), {
+        ...env,
+        RECOMMENDATION_SESSIONS: workerBindings.RECOMMENDATION_SESSIONS,
+        GEMINI_API_KEY: stalledKey,
+        GEMINI_API_KEY_SECONDARY: availableKey,
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({results: [{title, tmdbId: id, mediaType}]});
+      expect(projectSignals.size).toBe(2);
+      expect(projectSignals.get(stalledKey)?.aborted).toBe(true);
+      expect(projectSignals.get(availableKey)?.aborted).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 3000);
 
   it('should return 200 OK for GET /health', async () => {
     const request = new Request('http://localhost/health', { method: 'GET' });

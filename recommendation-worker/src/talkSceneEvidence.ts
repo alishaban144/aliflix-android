@@ -1,5 +1,5 @@
 import { geminiSceneConfig, geminiSceneSchema } from './geminiSceneConfig';
-import { fetchGemini, hasGeminiCredentials } from './geminiKeys';
+import { fetchGemini, hasGeminiCredentials, raceGeminiGeneration } from './geminiKeys';
 import { z } from 'zod';
 import type { RecommendationEnv } from './types';
 import { TALK_MODEL, boundedJson } from './talkProviders';
@@ -90,14 +90,18 @@ async function structuredSceneObservation(scene:ScenePacket,env:RecommendationEn
  body.contents[0].parts[body.contents[0].parts.length-1]={text:'Observe this sequence now. Return only concise, evidence-supported observations in the required JSON schema. No film identification or remembered plot.'};
  const schema=z.toJSONSchema(SceneObservationSchema);delete schema.$schema;
  const {model,thinkingLevel}=geminiSceneConfig(env);
- const response=await fetchGemini(env,`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
+ const result=await raceGeminiGeneration(env,`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
   method:'POST',headers:{'content-type':'application/json'},
-  body:JSON.stringify({...body,generationConfig:{maxOutputTokens:3072,thinkingConfig:{thinkingLevel},responseMimeType:'application/json',responseJsonSchema:geminiSceneSchema(schema)}}),signal});
- if(!response.ok){console.warn('talk_structured_scene_failed',response.status);await response.body?.cancel();throw Error('SCENE_UNAVAILABLE');}
- const data=await boundedJson(response,32768) as {candidates?:Array<{content?:{parts?:Array<{text?:string;thought?:boolean}>}}>};
- const text=data.candidates?.[0]?.content?.parts?.filter(part=>!part.thought).map(part=>part.text||'').join('');
- if(!text)throw Error('SCENE_UNAVAILABLE');
- return validateSceneObservation(JSON.parse(text),{...scene,audio:undefined});
+  body:JSON.stringify({...body,generationConfig:{maxOutputTokens:4096,thinkingConfig:{thinkingLevel},responseMimeType:'application/json',responseJsonSchema:geminiSceneSchema(schema)}}),signal},async(response)=>{
+  const data=await boundedJson(response,32768) as {candidates?:Array<{content?:{parts?:Array<{text?:string;thought?:boolean}>}}>};
+  const text=data.candidates?.[0]?.content?.parts?.filter(part=>!part.thought).map(part=>part.text||'').join('');
+  if(!text)throw Error('SCENE_UNAVAILABLE');
+  return validateSceneObservation(JSON.parse(text),{...scene,audio:undefined});
+ });
+ if('data' in result)return result.data;
+ console.warn('talk_structured_scene_failed',result.response.status);
+ void result.response.body?.cancel().catch(()=>{});
+ throw Error('SCENE_UNAVAILABLE');
 }
 
 function observationDelay(milliseconds:number,signal:AbortSignal) {
@@ -114,12 +118,14 @@ export async function observePlayerScene(scene:ScenePacket,env:RecommendationEnv
  if(!hasGeminiCredentials(env))throw Error('SCENE_UNAVAILABLE');
  const began=Date.now();
  console.info('talk_scene_observation_start',scene.frames.length,Boolean(scene.audio));
- const owner=new AbortController();const deadline=AbortSignal.any([owner.signal,AbortSignal.timeout(10000)]);
+ const owner=new AbortController();
+ const {model}=geminiSceneConfig(env);
+ const deadline=AbortSignal.any([owner.signal,AbortSignal.timeout(model==='gemini-4-hydrogen'?15000:10000)]);
  try {
   const heardDialogue=await scenePlayedSpeech(scene,env,deadline);
   const observedScene={...scene,heardDialogue};
   const structured=structuredSceneObservation(observedScene,env,deadline).then(observation=>({engine:'structured',observation}));
-  const result=hedgeAfterMs===undefined ? await structured : await Promise.any([structured,
+  const result=hedgeAfterMs===undefined || model==='gemini-4-hydrogen' ? await structured : await Promise.any([structured,
    observationDelay(hedgeAfterMs,deadline).then(()=>liveSceneObservation(observedScene,env,deadline))
     .then(observation=>({engine:'realtime',observation}))]);
   console.info('talk_scene_observation_complete',Date.now()-began,result.engine);

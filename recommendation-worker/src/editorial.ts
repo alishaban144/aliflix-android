@@ -1,4 +1,4 @@
-import { recommendDescribeTitles, recommendSimilarTitles } from './ai';
+import { isRetryableAiProviderError, recommendDescribeTitles, recommendSimilarTitles } from './ai';
 import type { EngineDependencies } from './engine';
 import type { ParsedRecommendationRequest } from './schemas';
 import { RecommendationEnv, RecommendationResult, ServiceError, SimilarAnchorDocument } from './types';
@@ -25,9 +25,14 @@ export async function editorialRecommendations(env: RecommendationEnv, request: 
   // when TMDB cannot resolve enough identities, preserving quality without
   // routinely doubling model usage.
   for (let pass = 0; pass < 2 && results.length < Math.min(20, targetCount) && tmdb.callsRemaining > 0; pass++) {
-    const generated = request.mode === 'similar'
-      ? await (dependencies.recommendSimilar || recommendSimilarTitles)(env, anchors, request.mediaType, query, request.filters, excludedTitles, targetCount)
-      : await (dependencies.recommendDescribe || recommendDescribeTitles)(env, query, request.mediaType, request.filters, excludedTitles, targetCount);
+    const generation = request.mode === 'similar'
+      ? (dependencies.recommendSimilar || recommendSimilarTitles)(env, anchors, request.mediaType, query, request.filters, excludedTitles, targetCount)
+      : (dependencies.recommendDescribe || recommendDescribeTitles)(env, query, request.mediaType, request.filters, excludedTitles, targetCount);
+    const generated = await generation.catch(error => {
+      if (results.length === 0 || !isRetryableAiProviderError(error)) throw error;
+      console.warn(JSON.stringify({event:'editorial_top_up_unavailable',code:error.code,verified:results.length}));
+      return [];
+    });
     const excludedBeforePass = new Set(excludedTitles.map(title => title.trim().toLocaleLowerCase()));
     const freshGenerated = generated.filter(g => !excludedBeforePass.has(g.title.trim().toLocaleLowerCase()));
     excludedTitles.push(...freshGenerated.map(g => g.title));

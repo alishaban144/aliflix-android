@@ -229,6 +229,22 @@ class Talk187SceneDeviceTest {
         assertEquals(.02f,plan.at(220_000)?.left ?: -1f,0.001f)
         assertNull(plan.at(240_000))
     }
+
+    @Test fun validatedSceneCuesStillAppearWhenNarrationParaphrasesThePlan() {
+        fun target(mention: String, left: Int) = JSONObject().put("mention", mention)
+            .put("box", JSONArray(listOf(100, left, 340, left + 110)))
+        val args = JSONObject().put("frameId", "pause")
+            .put("targets", JSONArray(listOf(target("amber lamp", 100), target("building’s vent", 650))))
+        val plan = TalkFrameAttention(args, "pause")
+        plan.update("A streetlight casts the glow, and steam partly hides the opening.")
+        plan.receive(120_000, 0)
+        plan.finish()
+        assertNull(plan.at(0))
+        assertEquals(.1f, plan.at(32_000)?.left ?: -1f, .001f)
+        assertEquals(.1f, plan.at(40_000)?.left ?: -1f, .001f)
+        assertEquals(.65f, plan.at(83_000)?.left ?: -1f, .001f)
+        assertNull(plan.at(120_000))
+    }
     @Test fun paletteRetainsTheOrbAnchorAndRealTargetsAcrossBothOrientations()=fixture { player ->
         withContext(Dispatchers.Main) { player.openTalk() }
         for((orientation,name) in listOf(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT to "portrait",android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE to "landscape")) {

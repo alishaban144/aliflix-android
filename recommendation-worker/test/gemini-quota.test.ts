@@ -61,6 +61,33 @@ it('cools an overloaded project instead of repeatedly spending free requests on 
  expect((await geminiCooldown(new Response('overloaded',{status:503}),now)).until).toBe(now+30000);
  expect((await geminiCooldown(new Response('overloaded',{status:503,headers:{'retry-after':'45'}}),now)).until).toBe(now+45000);
 });
+it('does not wait for the caller to consume an oversized Gemini error body',async()=>{
+ const now=Date.now();
+ const response=new Response(new ReadableStream<Uint8Array>({
+  start(controller){controller.enqueue(new Uint8Array(65537));},
+ }),{status:503});
+ let timer:ReturnType<typeof setTimeout>|undefined;
+ try {
+  const value=await Promise.race([geminiCooldown(response,now),new Promise<never>((_,reject)=>{
+   timer=setTimeout(()=>reject(Error('Cooldown blocked on the unread response')),500);
+  })]);
+  expect(value).toEqual({until:now+30000,status:503});
+ } finally {
+  if(timer!==undefined)clearTimeout(timer);
+  await response.body?.cancel();
+ }
+});
+it('uses the retry header when the Gemini error body stops arriving',async()=>{
+ const now=Date.now();
+ const response=new Response(new ReadableStream<Uint8Array>({
+  start(controller){controller.enqueue(new TextEncoder().encode('{"error":'));},
+ }),{status:429,headers:{'retry-after':'53'}});
+ try {
+  expect(await geminiCooldown(response,now)).toEqual({until:now+53000,status:429});
+ } finally {
+  await response.body?.cancel();
+ }
+});
 it('spends no inference on opening and never sends a future plot paragraph in the deferred packet',async()=>{
  const fetcher=vi.spyOn(globalThis,'fetch');
  const result=await understandPlayerStory({...q(),question:''},sources,{GEMINI_FREE_TIER_MODE:'true'} as RecommendationEnv);

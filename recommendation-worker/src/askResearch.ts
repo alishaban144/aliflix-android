@@ -1,4 +1,4 @@
-import { liveRecommendationPicks, tavilyCandidatePicks } from './fastRecommendations';
+import { hydrogenRecommendationPicks, liveRecommendationPicks } from './fastRecommendations';
 import { candidateEvidence } from "./askEvidence";
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
@@ -52,9 +52,14 @@ export const WebResearchSchema = z
   })
   .strict();
 type AskRequest = z.infer<typeof AskRequestSchema>;
-// Research models are pinned server-side; legacy client aliases must not
-// fragment identical researched requests between Android and Talk.
+// Equivalent legacy provider aliases share research. The actual Hydrogen
+// pipeline has its own result identity so older cached results cannot win.
 export const researchCacheIdentity=(request:AskRequest)=>({...request,requestId:undefined,cursor:undefined,aiModel:undefined,geminiModel:undefined});
+const usesHydrogen=(request:AskRequest)=>(request.aiModel||request.geminiModel)==='gemini-4-hydrogen'&&!request.candidateHints?.length;
+const generationIdentity=(request:AskRequest)=>({
+  ...researchCacheIdentity(request),
+  ...(usesHydrogen(request)?{generationModel:'gemini-4-hydrogen'}:{}),
+});
 
 export type WebFinding = {
   title: string;
@@ -811,7 +816,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
   }
   private async recommendationPage(owner:string,raw:unknown,onProgress?:(value:ResearchResult)=>void,signal?:AbortSignal):Promise<ResearchResult> {
     const request=AskRequestSchema.parse(raw);
-    const fingerprint=await digest({...researchCacheIdentity(request),library:undefined});
+    const fingerprint=await digest({...generationIdentity(request),library:undefined});
     const sessionId=await digest(['ask-page-v1',owner,request.requestId]);
     let seen:number[]=[],offset=0;
     if(request.cursor){
@@ -870,7 +875,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     const request = AskRequestSchema.parse(raw),
       controller = new AbortController(),
       job = owner + ":" + request.requestId;
-    const key = await digest(researchCacheIdentity(request));
+    const key = await digest(generationIdentity(request));
     const shared =
       this.recommendationControllers.get(key) || new AbortController();
     this.recommendationControllers.set(key, shared);
@@ -919,7 +924,8 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     }
   }
   private async build(request: AskRequest, signal: AbortSignal, _editorial=false):Promise<ResearchResult> {
-    const started=Date.now(), key='stable-results-v14:'+await digest(researchCacheIdentity(request));
+    const started=Date.now();
+    const key='stable-results-v14:'+await digest(generationIdentity(request));
     const cached=this.read<ResearchResult>(key);
     if(cached?.results.length)return {...cached,cached:true};
     return this.single(key,async()=>{
@@ -928,14 +934,15 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       const anchorPromise=Promise.all(anchors.map(a=>this.env.ASK_RESEARCH.getByName(`anchor:${a.mediaType}:${a.tmdbId}`).anchorContext(a.mediaType,a.tmdbId).catch(()=>({...a,year:'',creators:[] as string[],originalTitle:a.title}))));
       const query=[request.previousQuery,request.query,request.refinementQuery].filter(Boolean).join('\n');
       const effectiveFilters=researchFilters(request.mediaType,request.filters,RecommendationFiltersSchema.parse({}),query);
-      const canonicalAnchors=await anchorPromise;
       const relatedPromise=request.mode==='similar'?Promise.all(anchors.map(async a=>{
         try{return await this.env.ASK_RESEARCH.getByName(`anchor:${a.mediaType}:${a.tmdbId}`).relatedPicks(a.mediaType,a.tmdbId);}catch{return [] as RelatedPick[];}
       })).then(rows=>rows.flat().sort((a,b)=>Number(!!b.sharedCreator)-Number(!!a.sharedCreator)).slice(0,16)):Promise.resolve([] as RelatedPick[]);
+      const canonicalAnchors=await anchorPromise;
       const searchQuery=[anchors.length?'Best '+(request.mediaType==='tv'?'TV series':'films')+' similar to '+canonicalAnchors.map(a=>'"'+a.title+'" '+a.year+(a.originalTitle!==a.title?' '+a.originalTitle:'')+' '+(a.creators||[]).join(' ')).join(' and '):query||'Excellent distinctive films and series',anchors.length?query:'',anchors.length?'same creator tone atmosphere strongest related recommendations with release years':request.mediaType==='tv'?'released TV series recommendations with release years':'released film recommendations titles and release years',!request.filters.minimumYear&&!request.filters.maximumYear?'best matches across decades, not upcoming releases':'',request.filters.includedGenres.join(' '),request.filters.minimumYear?'since '+request.filters.minimumYear:'',request.filters.maximumYear?'before '+request.filters.maximumYear:'',...request.filters.excludedTitles.slice(0,3).map(t=>'-"'+t+'"')].filter(Boolean).join(' ').slice(0,600);
       const tastePromise=Promise.all(researchTaste(request.library).filter(v=>v.kind==='favorite').slice(0,4).map(v=>this.env.ASK_RESEARCH.getByName('taste:'+v.type+':'+v.id).identity(v.type,'',0,v.id,started+6500).catch(()=>null)));
       let research:Research={evidence:[],cached:false,credits:0,retrievedAt:Date.now()};
-      try{research=await this.web({query:searchQuery,recent:false},signal);}
+      const searchSignal=usesHydrogen(request)?AbortSignal.any([signal,AbortSignal.timeout(2300)]):signal;
+      try{research=await this.web({query:searchQuery,recent:false},searchSignal);}
       catch(error){remaining(signal);console.warn(JSON.stringify({event:'ask_search_unavailable',code:researchFailure(error)?.code||'SEARCH_UNAVAILABLE'}));}
       remaining(signal);
       const filmFindings=research.evidence.filter(e=>!/complaints|reportfraud|robocalls/i.test(e.url)&&/\b(?:films?|movies?|cinema|director|television|series|thriller|comedy|drama|sci.fi)\b|أفلام|فيلم|مسلسل|Filme/i.test(e.title+' '+e.text));
@@ -987,13 +994,31 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         if(pick.id)catalogueSources.set(index,`https://www.themoviedb.org/${request.mediaType}/${pick.id}`);
         pending.push({pick,index});if(!scheduled){scheduled=true;queueMicrotask(flush);}
       };
-      const sourcePicks=tavilyCandidatePicks(research.answer||'',research.evidence);
-      const related=await relatedPromise;
+      const hydrogen=usesHydrogen(request);
+      const related=hydrogen?[]:await relatedPromise;
       related.forEach((pick,index)=>enqueue(pick,pick.sharedCreator&&!query.trim()?-1000+index:100+index));
-      // Tavily's actual titles remain eligible when proposed candidates are
-      // unavailable, excluded or unmatched; reuse this same search, no extra AI.
       let picks:Array<{title:string;year:number;why?:string}>;
-      try {if(request.candidateHints?.length){picks=request.candidateHints;picks.forEach(enqueue);usage.geminiCalls=0;usage.pipeline='tavily-gemini-live-tmdb';}else picks=await liveRecommendationPicks(this.env,{query,mode:request.mode,mediaType:request.mediaType,anchors:await anchorPromise,filters:effectiveFilters,favorites,count:Math.min(24,request.pageSize),searchAnswer:research.answer,sources:research.evidence.map(e=>({...e,text:e.text.slice(0,1200)}))},signal,enqueue);}
+      try {
+        if(request.candidateHints?.length){
+          picks=request.candidateHints;
+          usage.geminiCalls=0;
+          usage.pipeline='tavily-gemini-live-tmdb';
+        } else {
+          const input={query,mode:request.mode,mediaType:request.mediaType,anchors:canonicalAnchors,filters:effectiveFilters,
+            favorites,count:Math.min(24,request.pageSize),searchAnswer:research.answer,
+            sources:research.evidence.map(e=>({...e,text:e.text.slice(0,1200)}))};
+          if(hydrogen){
+            usage.pipeline='tavily-hydrogen-tmdb';
+            picks=await hydrogenRecommendationPicks(this.env,{...input,searchAnswer:input.searchAnswer?.slice(0,1200),
+              sources:input.sources.slice(0,5).map(e=>({title:e.title,text:e.text.slice(0,440)})),
+              catalogueConnections:(await boundedInference(relatedPromise,signal,900).catch(()=>[]))
+                .slice(0,8).map(({title,year,why})=>({title,year,why}))},signal);
+          } else {
+            picks=await liveRecommendationPicks(this.env,input,signal);
+          }
+        }
+        picks.forEach(enqueue);
+      }
       catch(error){
         remaining(signal);
         // A search-page mention is not a curated match. Only the actual

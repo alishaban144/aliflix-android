@@ -54,19 +54,24 @@ function fakeTmdb(options: { fail?: boolean; authFail?: boolean; empty?: boolean
 }
 
 describe('AI-generated, TMDB-grounded recommendation engine', () => {
-  it('accepts Cloudflare GPT-OSS, Gemini 3.8 Flash and optional Groq', () => {
+  it('accepts Cloudflare GPT-OSS, Gemini 4 Hydrogen and optional Groq', () => {
     expect(RecommendationRequestSchema.parse({
       ...request,
       aiModel: 'cloudflare-gpt-oss-120b',
     }).aiModel).toBe('cloudflare-gpt-oss-120b');
     expect(RecommendationRequestSchema.parse({
       ...request,
-      geminiModel: 'gemini-3.8-flash',
-    }).geminiModel).toBe('gemini-3.8-flash');
+      geminiModel: 'gemini-4-hydrogen',
+    }).geminiModel).toBe('gemini-4-hydrogen');
+    expect(RecommendationRequestSchema.parse({
+      ...request,
+      aiModel: 'gemini-4-hydrogen',
+    }).aiModel).toBe('gemini-4-hydrogen');
+    // Persisted by older Android builds; route it to the replacement model.
     expect(RecommendationRequestSchema.parse({
       ...request,
       aiModel: 'gemini-3.8-flash',
-    }).aiModel).toBe('gemini-3.8-flash');
+    }).aiModel).toBe('gemini-4-hydrogen');
     expect(RecommendationRequestSchema.parse({
       ...request,
       aiModel: 'groq-gpt-oss-120b',
@@ -91,7 +96,7 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
 
   it('routes one request through the explicitly selected model', async () => {
     let routedModel: string | undefined;
-    await processRecommendation({ GEMINI_GENERATION_MODEL: 'gemini-3.8-flash' } as any, {
+    await processRecommendation({ GEMINI_GENERATION_MODEL: 'gemini-4-hydrogen' } as any, {
       ...request,
       aiModel: 'groq-gpt-oss-120b',
     }, {

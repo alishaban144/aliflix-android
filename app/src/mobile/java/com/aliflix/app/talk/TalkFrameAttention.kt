@@ -32,9 +32,9 @@ internal class TalkFrameAttention(args: JSONObject, frameId: String) {
                 (0 until minOf(rows.length(), 3)).map { rows.optString(it) }
             }.orEmpty()
             val terms = (listOf(phrase) + aliases)
-                .map(String::trim).filter { it.length in 2..80 }.distinct()
+                .map(::normalizeTalkAttentionText).filter { it.length in 2..80 }.distinct()
             val patterns = terms.map { term ->
-                val words = term.split(Regex("[\\s\\p{Pd}]+")).joinToString("[\\s\\p{Pd}]+") { Regex.escape(it) }
+                val words = Regex.escape(term)
                 Regex("(?<![\\p{L}\\p{N}])$words(?![\\p{L}\\p{N}])", RegexOption.IGNORE_CASE)
             }
             val fallback = Regex("[\\p{L}]{4,}").findAll(phrase).lastOrNull()?.value
@@ -43,6 +43,7 @@ internal class TalkFrameAttention(args: JSONObject, frameId: String) {
         }
     }
     val available get() = cues.isNotEmpty()
+    val targetCount get() = cues.size
     private var mentions = emptyList<Mention>()
     private var narration = ""
     private var firstSample = -1L
@@ -50,16 +51,18 @@ internal class TalkFrameAttention(args: JSONObject, frameId: String) {
     private var complete = false
     private var currentCue = -1
     private var currentTarget: TalkFrameTarget? = null
+    private var currentSince = -1L
     private var estimatedDuration = 0L
 
     @Synchronized fun update(text: String) {
-        narration = text
+        // Live transcription can alter punctuation, casing, and Unicode typography.
+        narration = normalizeTalkAttentionText(text)
         var cursor = 0
         mentions = cues.mapIndexedNotNull { index, cue ->
-            val exact = cue.phrases.mapNotNull { it.find(text, cursor) }.minByOrNull { it.range.first }
+            val exact = cue.phrases.mapNotNull { it.find(narration, cursor) }.minByOrNull { it.range.first }
             val fallback = cue.fallback?.takeIf { word -> cues.count { it.fallback.equals(word, true) } == 1 }
             val match = exact ?: fallback?.let { word ->
-                Regex("(?<![\\p{L}\\p{N}])${Regex.escape(word)}(?![\\p{L}\\p{N}])",RegexOption.IGNORE_CASE).find(text,cursor)
+                Regex("(?<![\\p{L}\\p{N}])${Regex.escape(word)}(?![\\p{L}\\p{N}])",RegexOption.IGNORE_CASE).find(narration,cursor)
             }
             match?.let {
                 cursor = it.range.last + 1
@@ -80,15 +83,37 @@ internal class TalkFrameAttention(args: JSONObject, frameId: String) {
 
     @Synchronized fun at(rendered: Long): TalkFrameTarget? {
         if (firstSample < 0 || samples == 0L || rendered < firstSample || rendered >= firstSample + samples) return null
+        if (narration.isBlank()) return null
         val duration = if (complete) samples else maxOf(samples, estimatedDuration)
-        val cursor = ((rendered - firstSample + 12_000L).toDouble() / duration * narration.length).toInt()
-        mentions.lastOrNull { it.index <= cursor && it.cue > currentCue }?.let {
-            currentCue = it.cue
-            currentTarget = it.target
+        val elapsed = rendered - firstSample
+        val lead = 10_800L
+        if (currentSince >= 0 && rendered - currentSince < 16_800L) return currentTarget
+        val index = currentCue + 1
+        val cue = cues.getOrNull(index) ?: return currentTarget
+        val prior = mentions.lastOrNull { it.cue < index }
+        val next = mentions.firstOrNull { it.cue >= index }
+        val position = if (next?.cue == index) next.index else {
+            // The validated tool supplies spoken order. Interpolate unmatched
+            // phrases between known mentions when spoken wording has changed.
+            val previousCue = prior?.cue ?: -1
+            val previousPosition = prior?.index ?: 0
+            val nextCue = next?.cue ?: cues.size
+            val nextPosition = next?.index ?: narration.length
+            previousPosition + (nextPosition - previousPosition) * (index - previousCue) / (nextCue - previousCue)
+        }
+        if (elapsed + lead >= position.toDouble() / narration.length * duration) {
+            currentCue = index
+            currentTarget = cue.target
+            currentSince = rendered
         }
         return currentTarget
     }
 }
+
+private val talkAttentionSpacing = Regex("[^\\p{L}\\p{M}\\p{N}]+")
+private fun normalizeTalkAttentionText(text: String) =
+    java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFKC)
+        .replace(talkAttentionSpacing, " ").trim()
 
 internal fun talkOrbGlideControl(from: Offset, to: Offset, viewport: Rect, radius: Float, target: Rect?, captions: Rect?): Offset {
     val travel = to - from

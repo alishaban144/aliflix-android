@@ -13,7 +13,7 @@ function catalogue() {
 }
 describe('LLM editorial recommendations', () => {
   it.each([
-    ['gemini-3.8-flash', 'describe'],
+    ['gemini-4-hydrogen', 'describe'],
     ['cloudflare-gpt-oss-120b', 'describe'],
     ['cloudflare-gpt-oss-120b', 'similar'],
   ] as const)('keeps 24 distinct identity-verified editorial picks without semantic over-filtering (%s/%s)', async (aiModel, mode) => {
@@ -42,5 +42,16 @@ describe('LLM editorial recommendations', () => {
       throw new ServiceError('CLOUDFLARE_AI_UNAVAILABLE', 'Capacity', 503, true);
     }})).rejects.toMatchObject({code: 'CLOUDFLARE_AI_UNAVAILABLE'});
     expect(tmdb.searchTitle).not.toHaveBeenCalled(); expect(tmdb.discover).not.toHaveBeenCalled();
+  });
+  it('returns verified recommendations when the optional second Gemini batch times out', async () => {
+    const request = RecommendationRequestSchema.parse({requestId: crypto.randomUUID(), mode:'describe',
+      mediaType:'movie', query:'aliens', aiModel:'gemini-4-hydrogen', pageSize:5});
+    const generate = vi.fn().mockResolvedValueOnce(picks.slice(0,2))
+      .mockRejectedValueOnce(new ServiceError('GEMINI_UNAVAILABLE','Gemini candidate generation timed out',504,true));
+    const tmdb = catalogue();
+    const results = await processRecommendation({} as any, request, {tmdb,recommendDescribe:generate});
+    expect(results.map(item=>item.tmdbId)).toEqual([1,2]);
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(tmdb.searchTitle).toHaveBeenCalledTimes(2);
   });
 });

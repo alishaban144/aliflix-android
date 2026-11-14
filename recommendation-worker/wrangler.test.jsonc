@@ -18,7 +18,7 @@
   },
   "vars": {
     "AI_GENERATION_MODEL": "cloudflare-gpt-oss-120b",
-    "GEMINI_GENERATION_MODEL": "gemini-3.8-flash",
+    "GEMINI_GENERATION_MODEL": "gemini-4-hydrogen",
     "GEMINI_EMBEDDING_MODEL": "gemini-embedding-2",
     "CURSOR_SIGNING_SECRET": "test-only-cursor-signing-key"
   },

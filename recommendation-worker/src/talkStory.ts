@@ -1,7 +1,8 @@
 import { geminiSceneConfig, geminiSceneSchema } from './geminiSceneConfig';
 import {geminiLiveStructured} from './geminiLiveStructured';
 import {budgetStoryEvidence,storyPriorEncounter,storyPriorIntent,storySupportingDialogue} from './storyBudget';
-import { fetchGemini, hasGeminiCredentials, redactGeminiKeys } from './geminiKeys';
+import { hasGeminiCredentials, raceGeminiGeneration, redactGeminiKeys } from './geminiKeys';
+import { readGeminiError } from './geminiQuota';
 import {z} from 'zod';
 import {TmdbClient} from './tmdb';
 import {retrieveKnowledge, type Evidence, type TalkContext} from './talkEvidence';
@@ -182,22 +183,26 @@ export async function understandPlayerStory(q:StoryRequest,sources:StorySources,
  const {model,thinkingLevel}=geminiSceneConfig(env);
  const gemini=async()=>{
   if(!hasGeminiCredentials(env))throw Error('provider_unavailable');
-  if(env.GEMINI_FREE_TIER_MODE==='true'&&!model.includes('flash-lite')){
+  if(env.GEMINI_FREE_TIER_MODE==='true'&&model!=='gemini-4-hydrogen'&&!model.includes('flash-lite')){
    provider='gemini-live-structured';
-   return geminiLiveStructured(env,STORY_ANALYSIS_INSTRUCTIONS,parts,geminiSceneSchema(schema));
+   return validateStoryUnderstanding(await geminiLiveStructured(env,STORY_ANALYSIS_INSTRUCTIONS,parts,geminiSceneSchema(schema)),q,sources,true);
   }
-  const response=await fetchGemini(env,`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
+  const result=await raceGeminiGeneration(env,`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
    method:'POST',headers:{'content-type':'application/json'},
    body:JSON.stringify({systemInstruction:{parts:[{text:STORY_ANALYSIS_INSTRUCTIONS}]},contents:[{role:'user',parts}],
-    generationConfig:{maxOutputTokens:3072,thinkingConfig:{thinkingLevel},responseMimeType:'application/json',responseJsonSchema:geminiSceneSchema(schema)}}),signal:AbortSignal.timeout(model.includes('flash-lite')?7000:15000)});
-  if(!response.ok){preferredStatus=response.status;
-   try{const failure=await boundedJson(response,8192) as {error?:{message?:string}};preferredMessage=redactGeminiKeys(env,failure.error?.message||'').slice(0,240);}catch{await response.body?.cancel().catch(()=>undefined);}
-   throw Error('provider_unavailable');}
-  const body=await boundedJson(response,64000) as {candidates?:Array<{content?:{parts?:Array<{text?:string;thought?:boolean}>}}>};
-  return JSON.parse(body.candidates?.[0]?.content?.parts?.filter(p=>!p.thought).map(p=>p.text||'').join('')||'');
+    generationConfig:{maxOutputTokens:model==='gemini-4-hydrogen'?4096:3072,thinkingConfig:{thinkingLevel},responseMimeType:'application/json',responseJsonSchema:geminiSceneSchema(schema)}}),signal:AbortSignal.timeout(model.includes('flash-lite')?7000:15000)},async response=>{
+   const body=await boundedJson(response,64000) as {candidates?:Array<{content?:{parts?:Array<{text?:string;thought?:boolean}>}}>};
+   const value=JSON.parse(body.candidates?.[0]?.content?.parts?.filter(p=>!p.thought).map(p=>p.text||'').join('')||'');
+   return validateStoryUnderstanding(value,q,sources,true);
+  });
+  if('data' in result)return result.data;
+  preferredStatus=result.response.status;
+  const failure=await readGeminiError(result.response);
+  preferredMessage=redactGeminiKeys(env,failure?.error?.message||'').slice(0,240);
+  throw Error('provider_unavailable');
  };
  let preferredStatus=0,preferredFailure='',preferredMessage='';
- try{raw=validateStoryUnderstanding(await gemini(),q,sources,true);}
+ try{raw=await gemini();}
  catch(error){
   if(error instanceof Error&&/^SCENE_HTTP_\d+$/.test(error.message))preferredStatus=Number(error.message.slice(11));
   preferredFailure=error instanceof z.ZodError?'schema':error instanceof SyntaxError?'json':error instanceof Error&&error.message==='SCENE_UNSUPPORTED'?'evidence':error instanceof Error&&/timeout|abort/i.test(error.name)?'timeout':'request';

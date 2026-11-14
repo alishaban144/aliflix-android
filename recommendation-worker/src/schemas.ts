@@ -5,10 +5,15 @@ const trimmed = z.string().trim();
 export const RecommendationAiModelSchema = z.preprocess(
   // Older Android builds persisted the retired Qwen id. Normalize it so every
   // Groq request runs on GPT-OSS 120B instead of failing or switching provider.
-  value => value === 'groq-qwen-3.8-27b' ? 'groq-gpt-oss-120b' : value,
+  // Released clients still send the older Flash selection.
+  value => value === 'groq-qwen-3.8-27b'
+    ? 'groq-gpt-oss-120b'
+    : value === 'gemini-3.8-flash'
+      ? 'gemini-4-hydrogen'
+      : value,
   z.enum([
     'cloudflare-gpt-oss-120b',
-    'gemini-3.8-flash',
+    'gemini-4-hydrogen',
     'groq-gpt-oss-120b',
   ]),
 );

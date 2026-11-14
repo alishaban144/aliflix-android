@@ -60,21 +60,23 @@ enum class RecommendationAiModel(
         workerValue = "groq-gpt-oss-120b",
         supportingText = "GPT-OSS 120B",
     ),
-    GEMINI_3_8_FLASH(
-        label = "Gemini 3.8 Flash",
-        workerValue = "gemini-3.8-flash",
+    GEMINI_4_HYDROGEN(
+        label = "Gemini 4 Hydrogen",
+        workerValue = "gemini-4-hydrogen",
         supportingText = "",
     );
 
     companion object {
         private const val LEGACY_GROQ_QWEN_3_8_27B = "groq-qwen-3.8-27b"
+        private const val LEGACY_GEMINI_3_8_FLASH = "gemini-3.8-flash"
 
         fun fromWorkerValue(value: String?): RecommendationAiModel = when (value) {
             CLOUDFLARE_GPT_OSS_120B.workerValue -> CLOUDFLARE_GPT_OSS_120B
             // Preserve explicit legacy provider choices while making Cloudflare
-            // the default for fresh or unknown settings.
+            // the default for fresh or unknown settings. Gemini 3.8 Flash was
+            // replaced by 4 Hydrogen, so migrate the persisted id in place.
             GROQ_GPT_OSS_120B.workerValue, LEGACY_GROQ_QWEN_3_8_27B -> GROQ_GPT_OSS_120B
-            GEMINI_3_8_FLASH.workerValue -> GEMINI_3_8_FLASH
+            GEMINI_4_HYDROGEN.workerValue, LEGACY_GEMINI_3_8_FLASH -> GEMINI_4_HYDROGEN
             else -> CLOUDFLARE_GPT_OSS_120B
         }
     }

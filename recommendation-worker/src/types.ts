@@ -2,7 +2,7 @@ export type MediaType = 'movie' | 'tv';
 export type RequestMode = 'describe' | 'similar' | 'filters';
 export type RecommendationSort = 'most_popular' | 'highest_rated' | 'most_voted' | 'newest_first' | 'oldest_first' | 'runtime_short_to_long';
 export type CloudflareAiModel = 'cloudflare-gpt-oss-120b';
-export type GeminiAiModel = 'gemini-3.8-flash';
+export type GeminiAiModel = 'gemini-4-hydrogen';
 export type GroqAiModel = 'groq-gpt-oss-120b';
 export type RecommendationAiModel = CloudflareAiModel | GeminiAiModel | GroqAiModel;
 
@@ -206,6 +206,8 @@ export interface SecretBindings {
   GEMINI_API_KEY?: string;
   GEMINI_API_KEY_SECONDARY?: string;
   GEMINI_API_KEY_TERTIARY?: string;
+  GEMINI_API_KEY_HYDROGEN_A?: string;
+  GEMINI_API_KEY_HYDROGEN_B?: string;
   GROQ_API_KEY?: string;
   FISH_AUDIO_API_KEY?: string;
   TAVILY_API_KEY?: string;

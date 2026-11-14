@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { embedForSearch, recommendDescribeTitles, recommendSimilarTitles } from '../src/gemini';
+import { hydrogenRecommendationPicks } from '../src/fastRecommendations';
 import { EDITORIAL_RECOMMENDATIONS_PROMPT } from '../src/prompts';
 
 describe('Gemini editorial contract', () => {
   afterEach(() => vi.unstubAllGlobals());
-  it.each(['describe', 'similar'])('uses only 3.8 Flash and requests twenty rated titles for %s', async mode => {
+  it.each(['describe', 'similar'])('uses only 4 Hydrogen and requests twenty rated titles for %s', async mode => {
     const recommendations = Array.from({length: 20}, (_, i) => ({title: `Title ${i}`, releaseYear: 2025, rating: 10 - i / 10}));
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({
       candidates: [{content: {parts: [{text: JSON.stringify({recommendations})}]}}]}));
@@ -14,10 +15,11 @@ describe('Gemini editorial contract', () => {
       : await recommendSimilarTitles(env, [], 'movie', '', {});
     expect(result).toHaveLength(20); expect(fetchMock).toHaveBeenCalledOnce();
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toContain('/gemini-3.8-flash:generateContent');
+    expect(url).toContain('/gemini-4-hydrogen:generateContent');
     const body = JSON.parse(String(init?.body));
     expect(body.systemInstruction.parts[0].text).toBe(EDITORIAL_RECOMMENDATIONS_PROMPT);
     expect(JSON.parse(body.contents[0].parts[0].text).targetCount).toBe(20);
+    expect(body.generationConfig.responseJsonSchema.properties.recommendations.maxItems).toBe(20);
     expect(body.generationConfig.maxOutputTokens).toBe(8192);
   });
   it('does not silently retry with an older model after a quota failure', async () => {
@@ -26,6 +28,70 @@ describe('Gemini editorial contract', () => {
     await expect(recommendDescribeTitles({GEMINI_API_KEY: 'fixture'} as any, 'aliens', 'movie', {})).rejects.toMatchObject({code: 'GEMINI_UNAVAILABLE'});
     expect(fetchMock).toHaveBeenCalledOnce();
   });
+  it.each([
+    ['malformed JSON', '{'],
+    ['invalid schema', '{"recommendations":[{"title":"Missing year and rating"}]}'],
+  ])('ignores an early 200 with %s and uses the validated recommendation', async (_failure, invalid) => {
+    const primary = 'primary-' + crypto.randomUUID();
+    const secondary = 'secondary-' + crypto.randomUUID();
+    let markRejected!: () => void;
+    const rejected = new Promise<void>(resolve => {markRejected = resolve;});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(message => {
+      if (String(message).includes('gemini_json_parse_failed') || String(message).includes('gemini_describe_schema_failed')) {
+        markRejected();
+      }
+    });
+    const recommendations = [{title: 'Arrival', releaseYear: 2016, rating: 9}];
+    const envelope = (text: string) => Response.json({candidates: [{content: {parts: [{text}]}}]});
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (new Headers(init?.headers).get('x-goog-api-key') === primary) return envelope(invalid);
+      await rejected;
+      return envelope(JSON.stringify({recommendations}));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const result = await recommendDescribeTitles({
+        GEMINI_API_KEY: primary, GEMINI_API_KEY_SECONDARY: secondary,
+      } as any, 'Films about first contact', 'movie', {}, [], 1);
+      expect(result).toMatchObject(recommendations);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+      expect(body.generationConfig.responseJsonSchema.properties.recommendations.maxItems).toBe(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+it('uses the new key pool for bounded Hydrogen curation and ignores thought parts', async () => {
+  const a = 'fixture-a-' + crypto.randomUUID();
+  const b = 'fixture-b-' + crypto.randomUUID();
+  const keys: string[] = [];
+  let started!: () => void;
+  const both = new Promise<void>(resolve => {started = resolve;});
+  const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    expect(String(input)).toContain('/gemini-4-hydrogen:generateContent');
+    const key = new Headers(init?.headers).get('x-goog-api-key')!;
+    keys.push(key);
+    if (keys.length === 2) started();
+    await both;
+    const request = JSON.parse(String(init?.body));
+    expect(request.generationConfig.thinkingConfig.thinkingLevel).toBe('low');
+    expect(request.generationConfig.responseJsonSchema.properties.candidates.maxItems).toBe(5);
+    const pick = {title: 'The Assistant', year: 2019, why: 'A junior employee navigating workplace pressure'};
+    return Response.json({candidates: [{content: {parts: [
+      {thought: true, text: 'internal'}, {text: JSON.stringify({candidates: [pick]})},
+    ]}}]});
+  });
+  try {
+    const picks = await hydrogenRecommendationPicks({
+      GEMINI_API_KEY: 'fixture-legacy', GEMINI_API_KEY_HYDROGEN_A: a, GEMINI_API_KEY_HYDROGEN_B: b,
+    } as any, {count: 1}, AbortSignal.timeout(1500));
+    expect(picks).toMatchObject([{title: 'The Assistant', year: 2019}]);
+    expect(new Set(keys)).toEqual(new Set([a, b]));
+  } finally {
+    fetcher.mockRestore();
+  }
 });
 
 describe('Gemini Embedding 2 retrieval', () => {

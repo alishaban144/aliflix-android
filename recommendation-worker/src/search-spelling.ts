@@ -18,7 +18,8 @@ export function titleSimilarity(a: string, b: string): number {
 export async function correctedTitles(env: RecommendationEnv, query: string): Promise<string[]> {
   if (!hasGeminiCredentials(env) || query.length < 4) return [];
   try {
-    const response = await fetchGemini(env,'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent', {
+    const model=env.GEMINI_GENERATION_MODEL||'gemini-4-hydrogen';
+    const response = await fetchGemini(env,`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
       method: 'POST', signal: AbortSignal.timeout(3500),
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({

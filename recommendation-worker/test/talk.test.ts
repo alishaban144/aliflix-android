@@ -94,6 +94,29 @@ describe('Gemini-only live identity and security',()=>{
  it('requires authenticated identity for token issuance and tools',async()=>{
   for(const path of ['session','knowledge','close','viewing'])expect((await talkRoute(new Request('https://test/v1/talk/'+path,{method:'POST',body:'{}'}),config))?.status).toBe(401);
  });
+ it('uses the fastest valid new project for cold Talk without exposing either credential',async()=>{
+  const a='fixture-fresh-a-'+crypto.randomUUID(),b='fixture-fresh-b-'+crypto.randomUUID();
+  let started!:()=>void;
+  const both=new Promise<void>(resolve=>{started=resolve;});
+  let stalled:AbortSignal|undefined;
+  const fetcher=vi.spyOn(globalThis,'fetch').mockImplementation(async(_,init)=>{
+   const key=new Headers(init?.headers).get('x-goog-api-key');
+   if(key===a){
+    stalled=init?.signal||undefined;
+    started();
+    return new Promise((_,reject)=>stalled!.addEventListener('abort',()=>reject(stalled!.reason),{once:true}));
+   }
+   expect(key).toBe(b);
+   await both;
+   return Response.json({name:'auth_tokens/fixture-fresh-b'});
+  });
+  const result=await issueLiveToken({...config,GEMINI_API_KEY_HYDROGEN_A:a,GEMINI_API_KEY_HYDROGEN_B:b},TalkContextSchema.parse({}),Date.now()+120000);
+  expect(result).toMatchObject({keySlot:'hydrogen-b',token:'auth_tokens/fixture-fresh-b'});
+  expect(stalled?.aborted).toBe(true);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(JSON.stringify(result)).not.toContain(a);
+  expect(JSON.stringify(result)).not.toContain(b);
+ });
  it('ignores obsolete shared-network counters while preserving the global daily bound',async()=>{
   const sub='shared-network-'+crypto.randomUUID(),ip='192.0.2.44';
   const token=await issueIdentity({sub,kind:'guest',exp:Date.now()+60000},config.CURSOR_SIGNING_SECRET);
