@@ -196,7 +196,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   this.put('live:'+session,state,state.expires);
   const failed=rotateProject?[...new Set([...(state.keyFailures||[]),state.keySlot||'primary'])]:[];
   if(rotateProject&&!configuredGeminiSlots(this.env).some(slot=>!failed.includes(slot)))throw Error('LIVE_UNAVAILABLE');
-  const {keySlot,...token}=await issueLiveToken(this.env,state.context,state.expires,rotateProject?undefined:state.keySlot||'primary',failed);
+  const {keySlot,...token}=await issueLiveToken(this.env,state.context,state.expires,rotateProject?undefined:state.keySlot||'primary',failed,pending=>this.ctx.waitUntil(pending));
   const latest=this.read<Session>('live:'+session);if(!latest)throw Error('SESSION_EXPIRED');
   latest.keySlot=keySlot;latest.keyFailures=failed;this.put('live:'+session,latest,latest.expires);
   // No expiry extension, new voice/model or reset of knowledge/search budgets.

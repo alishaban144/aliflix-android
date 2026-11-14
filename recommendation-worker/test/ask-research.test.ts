@@ -17,6 +17,8 @@ import {
 } from "../src/askResearch";
 import { liveSetup, liveInstructions } from "../src/talkProviders";
 import { TalkContextSchema } from "../src/talkEvidence";
+import { issueIdentity } from "../src/watchParty";
+import type { RecommendationEnv } from "../src/types";
 afterEach(() => vi.restoreAllMocks());
 const request = (extra: Record<string, unknown> = {}) => ({
   requestId: crypto.randomUUID(),
@@ -71,6 +73,14 @@ describe("unified authenticated research", () => {
       { ...env, CURSOR_SIGNING_SECRET: "test" },
     );
     expect(r?.status).toBe(401);
+  });
+  it("blocks briefly for the local scene gaze only when the client supports it", () => {
+    const tool=(companionVersion:number)=>liveSetup(TalkContextSchema.parse({
+      companionVersion, activePlayer:{id:1,type:'movie'},
+    })).tools[0].functionDeclarations.find(declaration=>declaration.name==='scene_attention');
+    expect(tool(18)?.behavior).toBe('NON_BLOCKING');
+    expect(tool(19)?.behavior).toBeUndefined();
+    expect(tool(19)?.description).toContain('immediately deliver the full spoken answer');
   });
   it.each([
     "http://example.com",
@@ -370,15 +380,28 @@ describe("unified authenticated research", () => {
           tmdbId:p.title==='Local Hero'?1:2,title:p.title,mediaType:'movie',releaseDate:'1983-01-01',originCountries:['GB'],genres:['Comedy'],
         }))})}});
       try{
-        const common={query:'Distinctive ensemble films set at a remote hotel',pageSize:1};
-        const legacy=await service.recommend(scope,request({...common,aiModel:'cloudflare-gpt-oss-120b'}));
+        const common=request({query:'Distinctive ensemble films set at a remote hotel',pageSize:1,aiModel:'cloudflare-gpt-oss-120b'});
+        const legacy=await service.recommend(scope,common);
         expect(legacy.results.map(r=>r.title)).toEqual(['Old Movie']);
         generated.mockClear();
-        const hydrogen=await service.recommend(scope,request({...common,aiModel:'gemini-4-hydrogen'}));
+        const config={...e,GEMINI_GENERATION_MODEL:'gemini-4-hydrogen',ASK_RESEARCH:{getByName:()=>service},
+          RECOMMENDATION_RATE_LIMITER:{limit:async()=>({success:true})}};
+        const token=await issueIdentity({sub:scope,kind:'account',exp:Date.now()+60_000},e.CURSOR_SIGNING_SECRET);
+        const call=(stream=false)=>askRoute(new Request('https://example.com/v4/ask/recommendations'+(stream?'?stream=1':''),{
+          method:'POST',headers:{authorization:'Bearer '+token},
+          body:JSON.stringify({...common,candidateHints:[{title:'Old Movie',year:1983}]}),
+        }),config);
+        const response=await call();
+        expect(response?.status).toBe(200);
+        const hydrogen=await response!.json() as typeof legacy;
         expect(hydrogen.results.map(r=>r.title)).toEqual(['Local Hero']);
-        expect(hydrogen.metrics.pipeline).toBe('tavily-hydrogen-tmdb');
+        expect(hydrogen.metrics).toMatchObject({pipeline:'tavily-hydrogen-tmdb',generationModel:'gemini-4-hydrogen'});
+        expect(['hydrogen-a','hydrogen-b']).toContain(hydrogen.metrics.generationProject);
         expect(generated.mock.calls.every(([url])=>url.includes('gemini-4-hydrogen:generateContent'))).toBe(true);
         expect(generated).toHaveBeenCalled();
+        const streamed=await call(true);
+        const event=JSON.parse((await streamed!.text()).trim().split('\n').at(-1)!);
+        expect(event).toMatchObject({type:'results',results:[{title:'Local Hero'}],metrics:{generationModel:'gemini-4-hydrogen'}});
       }finally{Object.assign(e,old);}
     });
   });
@@ -567,6 +590,28 @@ describe('progressive research transport',()=>{
   const response=new Response(await stub.recommendStream('owner',input));
   const events=(await response.text()).trim().split('\n').map(line=>JSON.parse(line));
   expect(events.at(-1)).toMatchObject({requestId:input.requestId,type:'results',inProgress:false,cached:true,results:value(24).results});
+ });
+ it('streams authenticated Hydrogen results over the real Durable Object RPC',async()=>{
+  const stub=env.ASK_RESEARCH.getByName('hydrogen-stream-rpc');
+  const input=AskRequestSchema.parse(request());
+  const model='gemini-4-hydrogen';
+  const identity={...researchCacheIdentity(input),generationModel:model};
+  const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(identity)));
+  const key='stable-results-v14:'+Array.from(new Uint8Array(bytes)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  const payload={...value(24),metrics:{generationModel:model,generationProject:'hydrogen-b'},cachedAt:Date.now()};
+  await runInDurableObject(stub,async(_instance,state)=>{
+   state.storage.sql.exec('INSERT INTO ask_cache VALUES(?,?,?)',key,JSON.stringify(payload),Date.now()+86400000);
+  });
+  const config={...env,GEMINI_GENERATION_MODEL:model,ASK_RESEARCH:{getByName:()=>stub},
+   RECOMMENDATION_RATE_LIMITER:{limit:async()=>({success:true})}} as unknown as RecommendationEnv;
+  const token=await issueIdentity({sub:'account:stream-test',kind:'account',exp:Date.now()+60000},config.CURSOR_SIGNING_SECRET);
+  const response=await askRoute(new Request('https://example.com/v4/ask/recommendations?stream=1',{
+   method:'POST',headers:{authorization:'Bearer '+token},body:JSON.stringify(input),
+  }),config);
+  expect(response?.headers.get('content-type')).toContain('application/x-ndjson');
+  const events=(await response!.text()).trim().split('\n').map(line=>JSON.parse(line));
+  expect(events.at(-1)).toMatchObject({type:'results',requestId:input.requestId,inProgress:false,cached:true,
+   metrics:payload.metrics,results:payload.results});
  });
  it('delivers an evaluated batch while the rest is pending and conflates slow readers',async()=>{
   await runInDurableObject(env.ASK_RESEARCH.getByName('stream-batches'),async instance=>{

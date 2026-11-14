@@ -87,7 +87,8 @@ it('uses the new key pool for bounded Hydrogen curation and ignores thought part
     const picks = await hydrogenRecommendationPicks({
       GEMINI_API_KEY: 'fixture-legacy', GEMINI_API_KEY_HYDROGEN_A: a, GEMINI_API_KEY_HYDROGEN_B: b,
     } as any, {count: 1}, AbortSignal.timeout(1500));
-    expect(picks).toMatchObject([{title: 'The Assistant', year: 2019}]);
+    expect(picks).toMatchObject({model:'gemini-4-hydrogen',picks:[{title: 'The Assistant', year: 2019}]});
+    expect(['hydrogen-a','hydrogen-b']).toContain(picks.keySlot);
     expect(new Set(keys)).toEqual(new Set([a, b]));
   } finally {
     fetcher.mockRestore();

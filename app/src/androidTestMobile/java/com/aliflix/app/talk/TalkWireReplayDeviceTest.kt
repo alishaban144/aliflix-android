@@ -43,6 +43,29 @@ class TalkWireReplayDeviceTest {
             deadline.clear()
         }
     }
+    @Test fun visualToolBoundaryKeepsDelayedAudioInTheOriginalTurn(){
+        val session=compose.activity.voice
+        compose.runOnUiThread {
+            session.debugPreviewUserQuestion("What is she holding?")
+            val epoch=session.debugAudioSnapshot().getLong("epoch")
+            val turn=session.debugAudioSnapshot().getLong("userTurn")
+            TalkVoiceSession::class.java.getDeclaredField("ephemeral").apply{isAccessible=true}
+                .set(session,JSONObject().put("sceneAttentionContinuation","blocking"))
+            session.debugReplayServerMessage(JSONObject("""{"toolCall":{"functionCalls":[{"id":"gaze","name":"scene_attention","args":{}}]}}"""))
+            session.debugReplayServerMessage(JSONObject("""{"serverContent":{"generationComplete":true,"turnComplete":true}}"""))
+            assertEquals(1,session.debugToolCalls["scene_attention_reply_owned"])
+            assertFalse(session.state.value.answerComplete)
+            session.debugReplayServerMessage(JSONObject("""{"serverContent":{"outputTranscription":{"text":"She is holding a folded letter."},"turnComplete":true}}"""))
+            assertFalse("Transcription can precede the audio",session.state.value.answerComplete)
+            session.debugReplayServerMessage(JSONObject("""{"serverContent":{"modelTurn":{"parts":[{"inlineData":{"mimeType":"audio/pcm;rate=24000","data":"AAAAAA=="}}]}}}"""))
+            session.debugReplayServerMessage(JSONObject("""{"serverContent":{"outputTranscription":{"text":" The envelope is in her other hand."},"generationComplete":true,"turnComplete":true}}"""))
+            assertTrue(session.state.value.answerComplete)
+            assertEquals(epoch,session.debugAudioSnapshot().getLong("epoch"))
+            assertEquals(turn,session.debugAudioSnapshot().getLong("userTurn"))
+            assertEquals(0,session.debugInterruptions)
+            assertEquals("She is holding a folded letter. The envelope is in her other hand.",session.state.value.lines.last{it.role=="assistant"}.text)
+        }
+    }
     @Test fun lateInputFragmentsUpdateOneUtteranceWithoutRevivingFinishedWriting() {
         val session=compose.activity.voice
         compose.runOnUiThread {

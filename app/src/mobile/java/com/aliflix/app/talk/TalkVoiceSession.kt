@@ -165,6 +165,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private var sentSceneAt = 0L
     private var frameAttentionId: String? = null
     private var frameAttentionTurn = -1L
+    // A local visual tool returns on the same websocket and owns continuation.
+    private var sceneReplyTurn = -1L
+    private val awaitingSceneAudio get() = sceneReplyTurn == userTurn.get() && !turnHasAudio
     private var frameAttentionFrame: TalkSceneFrame? = null
     private var sentAttentionFrame: TalkSceneFrame? = null
     private var sentAttentionId: String? = null
@@ -575,7 +578,12 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private var readyWatchdog: Job? = null
     private val answerDeadline:TalkResponseDeadline=TalkResponseDeadline(scope) {
         if(permitted) {
-            if(talkResearchNoteNeedsRecovery(researchNote,userTurn.get(),SystemClock.elapsedRealtime(),speaking)){
+            if(awaitingSceneAudio&&tools.isEmpty()&&!awaitingToolAnswer&&!remoteSpeechActive) {
+                // Keep the session eligible to play late PCM. A new client turn
+                // or a socket reset here could interrupt speech already in flight.
+                update{it.copy(sending=false,phase=if(muted)"Muted" else "Listening")}
+            }
+            else if(talkResearchNoteNeedsRecovery(researchNote,userTurn.get(),SystemClock.elapsedRealtime(),speaking)){
                 val stale=epoch;researchNote=null;recommendationDelivery.clear();continueAfterReconnect=true
                 scope.launch(start=CoroutineStart.UNDISPATCHED){disconnected(stale,false)}
             }
@@ -847,7 +855,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         }
         if(closed||sessionOwner!=account||attempt!=connectAttempt)return
         reconnects = 0; projectFailovers=0; permitted = true; startedAt = SystemClock.elapsedRealtime()
-        conversationContext = buildConversationContext(if(player) 18 else 17)
+        conversationContext = buildConversationContext(if(player) 19 else 17)
         val ticket = ++epoch
         if(player && !state.value.textMode) {
             initialAudio = scope.launch(Dispatchers.Main, start=CoroutineStart.LAZY) {
@@ -900,7 +908,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }
 
     private suspend fun resumeParkedPlayer(): Boolean {
-        val key = playerConnectionKey(buildConversationContext(18))
+        val key = playerConnectionKey(buildConversationContext(19))
         val owned = runCatching { accountTicket() }.isSuccess
         if(!owned || key!=parkedPlayerKey || state.value.textMode || !socketReady) {
             suspendSession()
@@ -997,7 +1005,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         if(closed || permitted || playerPreparation?.isActive==true || state.value.textMode ||
             debugOfflineConnection || BuildConfig.DEBUG && debugSkipPlayerPreparation)return
         runCatching { accountTicket() }.getOrNull() ?: return
-        val current = buildConversationContext(18)
+        val current = buildConversationContext(19)
         val key = playerConnectionKey(current) ?: return
         if(playerPreparationKey==key)return
         val now = SystemClock.elapsedRealtime()
@@ -1070,13 +1078,16 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         return true
     }
 
-    private suspend fun mintLiveSession(value: JSONObject): JSONObject =
-        try { post("session", JSONObject().put("context", value)) }
-        catch(error: TalkHttpException) {
-            if(error.status!=400 || error.code!="INVALID_REQUEST" || value.optInt("companionVersion")!=18)throw error
-            value.put("companionVersion",17)
-            post("session", JSONObject().put("context", value))
+    private suspend fun mintLiveSession(value: JSONObject): JSONObject {
+        var version=value.optInt("companionVersion")
+        while(true) {
+            try { return post("session", JSONObject().put("context", value)) }
+            catch(error: TalkHttpException) {
+                if(error.status!=400 || error.code!="INVALID_REQUEST" || version<=17)throw error
+                value.put("companionVersion",--version)
+            }
         }
+    }
     private val accountSnapshots by lazy{com.aliflix.app.account.AccountLocalSnapshotStore(context)}
     private fun accountTicket()=com.aliflix.app.recommendation.AskAccountTicket(FirebaseAuth.getInstance().currentUser?.uid?:"guest",accountSnapshots.activeScope,accountSnapshots.scopeRevision).also{
         it.requireCurrent(it);if(it.owner!=sessionOwner)throw CancellationException("Account changed")
@@ -1380,8 +1391,14 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     val id=original.getString("id")
                     val accepted=acceptFrameAttention(id,original.optJSONObject("args"))
                     if(BuildConfig.DEBUG)debugToolCalls.merge(if(accepted)wireName else "scene_attention_rejected",1){a,b->a+b}
-                    val scheduling=talkControlScheduling(names,i,turnHasAudio||outputText.isNotBlank(),
-                        tools.isNotEmpty()||awaitingToolAnswer)
+                    val blocking=ephemeral?.optString("sceneAttentionContinuation")=="blocking"
+                    val pendingLookup=tools.isNotEmpty()||awaitingToolAnswer||recommendationLookup
+                    val scheduling=if(blocking)null else talkControlScheduling(names,i,turnHasAudio||outputText.isNotBlank(),pendingLookup)
+                    if(!pendingLookup&&!turnHasAudio&&(blocking||scheduling=="WHEN_IDLE")) {
+                        sceneReplyTurn=userTurn.get()
+                        answerDeadline.awaiting()
+                        if(BuildConfig.DEBUG)debugToolCalls.merge("scene_attention_reply_owned",1){a,b->a+b}
+                    }
                     val result=talkFunctionResponse(id,wireName,JSONObject().put("accepted",accepted),scheduling)
                     emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(result))))
                     continue
@@ -1742,7 +1759,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 generationOpen=true
                 val newChatSegment=responseTurn!=userTurn.get()
                 responseTurn=userTurn.get()
-                inputTurnActive=false;if(!pendingAnswerNeedsTitle&&!recommendationLookup&&researchNote==null)answerDeadline.clear()
+                inputTurnActive=false;if(!awaitingSceneAudio&&!pendingAnswerNeedsTitle&&!recommendationLookup&&researchNote==null)answerDeadline.clear()
                 outputText=appendTranscript(outputText,text)
                 researchNote?.let { note ->
                     if(!note.streaming&&talkResearchNoteCanStream(outputText,note.text)) {
@@ -1810,34 +1827,21 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 answerDeadline.awaiting(12000)
                 return
             }
-            if(content.optBoolean("generationComplete")){
+            val sceneAudioPending=awaitingSceneAudio&&!awaitingToolAnswer&&!recommendationLookup&&tools.isEmpty()
+            if(content.optBoolean("generationComplete")&&!sceneAudioPending){
                 spokenAttention?.complete()
                 attentionAudioComplete=true
                 frameAttention?.finish()
                 endOfAudio=true;if(turnHasAudio&&!pendingAnswerNeedsTitle&&!recommendationLookup&&researchNote==null)answerDeadline.clear()
                 if(!pendingAnswerNeedsTitle&&!recommendationLookup&&researchNote==null&&(turnHasAudio||outputText.isNotBlank())&&(tools.isEmpty()||awaitingToolAnswer))update{it.copy(answerComplete=true)}
-                val visualPlan = frameAttention
-                if (visualPlan != null && !turnHasAudio && outputText.isBlank() && tools.isEmpty() && !awaitingToolAnswer) {
-                    val turn = userTurn.get()
-                    scope.launch {
-                        delay(2200)
-                        if(ticket!=epoch||turn!=userTurn.get()||!permitted||!socketReady||remoteSpeechActive||speaking||
-                            frameAttention!==visualPlan||turnHasAudio||outputText.isNotBlank()||tools.isNotEmpty()||
-                            awaitingToolAnswer||silentReplyNudges>0)return@launch
-                        silentReplyNudges++
-                        if(BuildConfig.DEBUG)debugToolCalls.merge("scene_attention_silent_continuation",1){a,b->a+b}
-                        continueSilentReply()
-                        answerDeadline.awaiting(12000)
-                    }
-                }
             }
-            if(content.optBoolean("turnComplete")&&inputTurnActive&&!awaitingToolAnswer&&!turnHasAudio&&outputText.isBlank()&&tools.isEmpty()) {
+            if(content.optBoolean("turnComplete")&&!sceneAudioPending&&inputTurnActive&&!awaitingToolAnswer&&!turnHasAudio&&outputText.isBlank()&&tools.isEmpty()) {
                 // WHEN_IDLE tool replies may start their answer AFTER this
                 // completion. Injecting a new clientContent here races that
                 // answer and makes the assistant cut itself off without echo.
-                if(!startNativeRecommendations())answerDeadline.awaiting(if(frameAttentionId!=null)3500 else 10000)
+                if(!startNativeRecommendations())answerDeadline.awaiting(10000)
             }
-            if(content.optBoolean("turnComplete")&&responseTurn==userTurn.get()&&(turnHasAudio||outputText.isNotBlank())) {
+            if(content.optBoolean("turnComplete")&&!sceneAudioPending&&responseTurn==userTurn.get()&&(turnHasAudio||outputText.isNotBlank())) {
                 generationOpen=false
                 if(recommendationReply?.has("speechText")==true&&!recommendationLookup)presentationDelivered=true
                 val note=researchNote
@@ -1890,6 +1894,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 }
                 update{it.copy(words=completedTalkTopic(outputText,it.words,synchronized(knownFilmTopics){knownFilmTopics.toList()}))}
                 if(awaitingToolAnswer) {awaitingToolAnswer=false;pendingToolReply=null}
+                sceneReplyTurn=-1
                 val pending=tools.isNotEmpty()||awaitingToolAnswer
                 inputTurnActive=false;update { it.copy(sending=pending,answerComplete=it.answerComplete||!pending,phase=if(pending)"Thinking" else if(speaking)it.phase else if(it.textMode||!muted)"Listening" else "Muted") }
                 if(!pending&&state.value.textMode)reconcileAnswerCards()

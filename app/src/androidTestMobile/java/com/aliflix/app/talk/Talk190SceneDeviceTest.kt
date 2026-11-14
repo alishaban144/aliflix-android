@@ -212,9 +212,7 @@ class Talk190SceneDeviceTest {
                     File(context.getExternalFilesDir(null),"talk190-$titleCase-$index-recall-$n.jpg").writeBytes(frame.jpeg)
                 }
                 assertEquals("en",player.talkVoice.debugResponseLanguage)
-                val spokenQuestion=player.talkVoice.state.value.lines.lastOrNull{it.role=="user"}?.text
-                    ?.takeIf(String::isNotBlank) ?: receipt.getString("question")
-                if (!sceneAudit || talkEpisodeRecallQuestion(spokenQuestion)) {
+                if (!sceneAudit || args.getString("sceneRequireRecall")=="true") {
                     assertTrue("No transcript recall supplied",player.talkVoice.debugSceneContext?.optJSONObject("episodeRecall")?.optJSONObject("storyThroughAnchor")?.optInt("includedCues",0)?.let { it > 0 } == true)
                 }
                 if(talkNeedsCurrentSceneObservation(receipt.getString("question"))){

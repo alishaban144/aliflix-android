@@ -89,6 +89,8 @@ type Usage = {
   researchCached: boolean;
   gptCalls: number;
   geminiCalls?: number;
+  generationModel?: string;
+  generationProject?: string;
   pipeline?: string;
   clefCalls: number;
   generated: number;
@@ -817,7 +819,9 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
   private async recommendationPage(owner:string,raw:unknown,onProgress?:(value:ResearchResult)=>void,signal?:AbortSignal):Promise<ResearchResult> {
     const request=AskRequestSchema.parse(raw);
     const fingerprint=await digest({...generationIdentity(request),library:undefined});
-    const sessionId=await digest(['ask-page-v1',owner,request.requestId]);
+    const sessionId=await digest(usesHydrogen(request)
+      ? ['ask-page-hydrogen',owner,request.requestId,fingerprint]
+      : ['ask-page-v1',owner,request.requestId]);
     let seen:number[]=[],offset=0;
     if(request.cursor){
       const cursor=await parseCursor(this.env.CURSOR_SIGNING_SECRET,request.cursor);
@@ -845,6 +849,12 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     });
   }
   async recommend(owner:string,raw:unknown):Promise<ResearchResult>{return this.recommendationPage(owner,raw);}
+  async recommendHydrogen(owner:string,raw:unknown,stream:boolean):Promise<ResearchResult|ReadableStream<Uint8Array>> {
+    const request=AskRequestSchema.parse(raw);
+    request.aiModel='gemini-4-hydrogen';
+    delete request.candidateHints;
+    return stream?this.recommendStream(owner,request):this.recommendationPage(owner,request);
+  }
   async recommendStream(owner:string,raw:unknown):Promise<ReadableStream<Uint8Array>> {
     const request=AskRequestSchema.parse(raw),abort=new AbortController(),encoder=new TextEncoder();
     let controller:ReadableByteStreamController,pending:Uint8Array|undefined,done=false,closed=false,revision=0;
@@ -1009,11 +1019,15 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
             sources:research.evidence.map(e=>({...e,text:e.text.slice(0,1200)}))};
           if(hydrogen){
             usage.pipeline='tavily-hydrogen-tmdb';
-            picks=await hydrogenRecommendationPicks(this.env,{...input,searchAnswer:input.searchAnswer?.slice(0,1200),
+            const generation=await hydrogenRecommendationPicks(this.env,{...input,searchAnswer:input.searchAnswer?.slice(0,1200),
               sources:input.sources.slice(0,5).map(e=>({title:e.title,text:e.text.slice(0,440)})),
               catalogueConnections:(await boundedInference(relatedPromise,signal,900).catch(()=>[]))
                 .slice(0,8).map(({title,year,why})=>({title,year,why}))},signal,
               pending=>this.ctx.waitUntil(pending));
+            picks=generation.picks;
+            usage.generationModel=generation.model;
+            usage.generationProject=generation.keySlot;
+            usage.geminiCalls=1;
           } else {
             picks=await liveRecommendationPicks(this.env,input,signal);
           }
@@ -1203,8 +1217,13 @@ export async function askRoute(
     }
     if (url.pathname.endsWith("/recommendations")) {
       const b = AskRequestSchema.parse(raw);
-      if(url.searchParams.get('stream')==='1')return new Response(await service.recommendStream(owner.sub,b),{headers:{'content-type':'application/x-ndjson; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});
-      const result = await service.recommend(owner.sub, b);
+      const stream=url.searchParams.get('stream')==='1';
+      const hydrogen=env.GEMINI_GENERATION_MODEL==='gemini-4-hydrogen'||usesHydrogen(b);
+      // An older object cannot answer this RPC with legacy recommendations.
+      const result=hydrogen
+        ? await service.recommendHydrogen(owner.sub,b,stream)
+        : stream?await service.recommendStream(owner.sub,b):await service.recommend(owner.sub,b);
+      if(result instanceof ReadableStream)return new Response(result,{headers:{'content-type':'application/x-ndjson; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});
       return Response.json(
         {
           requestId: b.requestId,

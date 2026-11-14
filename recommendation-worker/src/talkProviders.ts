@@ -128,8 +128,8 @@ export function liveSetup(context: TalkContext) {
   systemInstruction: { parts: [{ text: liveInstructions(context) }] },
   // Legacy installed clients cannot answer the new local topic/history tools.
   tools: [{functionDeclarations:[...tools,...((context.companionVersion||0)>=18&&context.activePlayer&&!context.textMode?[{
-   name:'scene_attention',behavior:'NON_BLOCKING',
-   description:'Direct the orb beside visible details in the labeled paused frame only when the viewer asks about a person, object, place, action or detail actually visible there. Call once immediately before the answer, after any necessary evidence lookup. Use the current frameId. Never use earlier images, off-screen speakers, cast lists, imagined objects, unrelated questions or guesses. For multiple visible referents, list them in the order you will discuss them; include a return to an earlier referent only when the answer actually returns to it. Give a tight box around the relevant face or object/detail and a short verbatim phrase that you will say at that point in the answer, in the spoken response language. Do not speak about the tool, coordinates or movement. Continue speaking without waiting for a result.',
+   name:'scene_attention',...((context.companionVersion||0)<19?{behavior:'NON_BLOCKING'}:{}),
+   description:'Direct the orb beside visible details in the labeled paused frame only when the viewer asks about a person, object, place, action or detail actually visible there. Call once immediately before the answer, after any necessary evidence lookup. Use the current frameId. Never use earlier images, off-screen speakers, cast lists, imagined objects, unrelated questions or guesses. For multiple visible referents, list them in the order you will discuss them; include a return to an earlier referent only when the answer actually returns to it. Give a tight box around the relevant face or object/detail and a short verbatim phrase that you will say at that point in the answer, in the spoken response language. Do not speak about the tool, coordinates or movement. '+((context.companionVersion||0)>=19?'On receiving the tool result, immediately deliver the full spoken answer to the current question, whether the visual plan was accepted or declined.':'Continue speaking without waiting for a result.'),
    parameters:{type:'OBJECT',properties:{frameId:{type:'STRING'},targets:{type:'ARRAY',minItems:1,maxItems:8,items:{type:'OBJECT',properties:{
     mention:{type:'STRING',description:'Short verbatim spoken phrase, preferably unique in the answer.'},
     aliases:{type:'ARRAY',maxItems:3,items:{type:'STRING'},description:'Short alternate names for the same visible detail if wording varies while speaking. Omit generic words shared with another target.'},
@@ -178,5 +178,7 @@ export async function issueLiveToken(env: RecommendationEnv, context: TalkContex
   await grant.response.body?.cancel();console.warn('talk_live_token_status',grant.response.status);throw Error('LIVE_UNAVAILABLE');
  }
  const result='data' in grant?grant.data:await decode(grant.response);
- return {keySlot:'keySlot' in grant?grant.keySlot:undefined,token:result.name,model:TALK_MODEL,voice:context.voice||TALK_VOICE,expires,inputActivity:(context.companionVersion||0)>=9?'manual':'automatic',setup:{model:setup.model,generationConfig:setup.generationConfig,sessionResumption:{}}};
+ return {keySlot:'keySlot' in grant?grant.keySlot:undefined,token:result.name,model:TALK_MODEL,voice:context.voice||TALK_VOICE,expires,inputActivity:(context.companionVersion||0)>=9?'manual':'automatic',
+  ...((context.companionVersion||0)>=19&&context.activePlayer&&!context.textMode?{sceneAttentionContinuation:'blocking' as const}:{}),
+  setup:{model:setup.model,generationConfig:setup.generationConfig,sessionResumption:{}}};
 }

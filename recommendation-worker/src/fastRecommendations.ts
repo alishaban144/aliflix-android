@@ -30,13 +30,14 @@ export async function hydrogenRecommendationPicks<T extends {count: number}>(env
     }}},required:['candidates']}},
   }),
  },async upstream=>{
-  const data=await boundedJson(upstream,32_768) as {candidates?:Array<{content?:{parts?:Array<{text?:string;thought?:boolean}>}}>};
+  const data=await boundedJson(upstream,32_768) as {modelVersion?:string;candidates?:Array<{content?:{parts?:Array<{text?:string;thought?:boolean}>}}>};
+  if(data.modelVersion&&data.modelVersion!==model)throw Error('GEMINI_UNEXPECTED_MODEL');
   const text=data.candidates?.[0]?.content?.parts?.filter(part=>!part.thought).map(part=>part.text||'').join('')||'';
   const picks=FastPicksSchema.parse(JSON.parse(text)).candidates;
   if(!picks.length)throw Error('GEMINI_EMPTY_RECOMMENDATIONS');
   return picks.slice(0,maxItems);
  },[],retain);
- if('data' in response)return response.data;
+ if('data' in response)return {picks:response.data,model,keySlot:response.keySlot};
  void response.response.body?.cancel().catch(()=>{});
  throw new ServiceError(response.response.status===429?'AI_QUOTA':'GEMINI_UNAVAILABLE','Recommendations unavailable',response.response.status===429?429:503,true);
 }
