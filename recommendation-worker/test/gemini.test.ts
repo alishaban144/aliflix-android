@@ -78,7 +78,7 @@ it('uses the new key pool for bounded Hydrogen curation and ignores thought part
     const request = JSON.parse(String(init?.body));
     expect(request.generationConfig.thinkingConfig.thinkingLevel).toBe('low');
     expect(request.generationConfig.responseJsonSchema.properties.candidates.maxItems).toBe(5);
-    const pick = {title: 'The Assistant', year: 2019, why: 'A junior employee navigating workplace pressure'};
+    const pick = {title: 'The Assistant', year: 2019, why: 'A junior employee navigating workplace pressure '.repeat(6)};
     return Response.json({candidates: [{content: {parts: [
       {thought: true, text: 'internal'}, {text: JSON.stringify({candidates: [pick]})},
     ]}}]});
@@ -87,7 +87,8 @@ it('uses the new key pool for bounded Hydrogen curation and ignores thought part
     const picks = await hydrogenRecommendationPicks({
       GEMINI_API_KEY: 'fixture-legacy', GEMINI_API_KEY_HYDROGEN_A: a, GEMINI_API_KEY_HYDROGEN_B: b,
     } as any, {count: 1}, AbortSignal.timeout(1500));
-    expect(picks).toMatchObject({model:'gemini-4-hydrogen',picks:[{title: 'The Assistant', year: 2019}]});
+    expect(picks).toMatchObject({model:'gemini-4-hydrogen',picks:[{title: 'The Assistant', year: 2019, why:expect.stringMatching(/^A junior employee/)}]});
+    expect(picks.picks[0].why).toHaveLength(180);
     expect(['hydrogen-a','hydrogen-b']).toContain(picks.keySlot);
     expect(new Set(keys)).toEqual(new Set([a, b]));
   } finally {
