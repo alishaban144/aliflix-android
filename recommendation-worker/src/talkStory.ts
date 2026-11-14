@@ -156,7 +156,8 @@ export function preparePlayerStoryEvidence(q:StoryRequest,sources:StorySources){
   scope:'Only actual selected-edition dialogue through the pause is quoted here. Public plot prose and future revelations are withheld. Preserve beliefs versus facts and who knows what: do not call a belief mistaken or false until the viewer has seen evidence disproving it. Never substitute a static-frame description for the requested cause or earlier setup.'};
 }
 
-export async function understandPlayerStory(q:StoryRequest,sources:StorySources,env:RecommendationEnv){
+export async function understandPlayerStory(q:StoryRequest,sources:StorySources,env:RecommendationEnv,
+ retain?: (promise: Promise<unknown>)=>void){
  let establishedSearchTerms:string[]=[];
  if(env.GEMINI_FREE_TIER_MODE==='true'){
   if(!q.question.trim()||/^(?:hi|hello|hey|thanks|thank you|ok|okay)[.! ,]*$/i.test(q.question.trim()))return {...limitedStoryContext(q,sources),status:'research_ready',deferred:true,completed:true,unknowns:[],
@@ -194,7 +195,7 @@ export async function understandPlayerStory(q:StoryRequest,sources:StorySources,
    const body=await boundedJson(response,64000) as {candidates?:Array<{content?:{parts?:Array<{text?:string;thought?:boolean}>}}>};
    const value=JSON.parse(body.candidates?.[0]?.content?.parts?.filter(p=>!p.thought).map(p=>p.text||'').join('')||'');
    return validateStoryUnderstanding(value,q,sources,true);
-  });
+  },[],retain);
   if('data' in result)return result.data;
   preferredStatus=result.response.status;
   const failure=await readGeminiError(result.response);

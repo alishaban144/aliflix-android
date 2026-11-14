@@ -118,6 +118,7 @@ type GeminiGenerationResult<T> = {data: T; keySlot?: GeminiKeySlot} | {response:
 export async function raceGeminiGeneration<T>(env: GeminiCredentials, url: string,
  init: GeminiRequestInit & {body: string}, decode: (response: Response) => Promise<T>,
  excluded: GeminiKeySlot[] = [],
+ retain: (promise: Promise<unknown>)=>void = waitUntil,
 ): Promise<GeminiGenerationResult<T>> {
  const eligible = configuredGeminiSlots(env).filter(slot => !excluded.includes(slot));
  const preferFresh = url.includes('gemini-4-hydrogen:') || url.endsWith('/auth_tokens');
@@ -185,7 +186,7 @@ export async function raceGeminiGeneration<T>(env: GeminiCredentials, url: strin
  } finally {
   stopped = true;
   for (const controller of controllers) if (controller !== keep) controller.abort();
-  waitUntil(Promise.allSettled(attempts));
+  retain(Promise.allSettled(attempts));
  }
 }
 

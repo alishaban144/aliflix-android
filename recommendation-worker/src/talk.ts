@@ -138,7 +138,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   const work=(async()=>{
    const sources=await this.env.TALK_SESSIONS.getByName('public-story-sources-v1').storySources(q);
    const result=q.mode==='sources'&&(state.context.companionVersion||0)>=17?preparePlayerStoryEvidence(q,sources):
-    !free&&q.mode==='sources'?playerStoryResearch(q,sources):await understandPlayerStory(q,sources,this.env);
+    !free&&q.mode==='sources'?playerStoryResearch(q,sources):await understandPlayerStory(q,sources,this.env,pending=>this.ctx.waitUntil(pending));
    if(!this.read<Session>('live:'+session))throw Error('SESSION_EXPIRED');
    if(free&&result.status==='grounded')this.put(memoryKey,result,Math.min(state.expires,Date.now()+20*MINUTE));
    return result as Record<string,unknown>;
@@ -183,7 +183,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
  async reserve(amount:number,limit:number):Promise<boolean>{const day=Math.floor(Date.now()/DAY),key='quota:'+day;this.ctx.storage.sql.exec('DELETE FROM memory WHERE expires<?',Date.now());
   const r=this.ctx.storage.sql.exec<{value:string}>('SELECT value FROM memory WHERE key=?',key).toArray()[0];const n=Number(r?.value||0);if(n+amount>limit)return false;
   this.ctx.storage.sql.exec('INSERT OR REPLACE INTO memory VALUES(?,?,?)',key,String(n+amount),(day+2)*DAY);await this.ctx.storage.setAlarm((day+2)*DAY);return true;}
- async open(context:TalkContext) {const expires=Date.now()+20*MINUTE,session=crypto.randomUUID();const {keySlot,...token}=await issueLiveToken(this.env,context,expires);
+ async open(context:TalkContext) {const expires=Date.now()+20*MINUTE,session=crypto.randomUUID();const {keySlot,...token}=await issueLiveToken(this.env,context,expires,undefined,[],pending=>this.ctx.waitUntil(pending));
   this.ctx.storage.sql.exec('DELETE FROM memory WHERE expires<?',Date.now());
   this.put('live:'+session,{keySlot,context,expires,calls:0,searches:0,grants:[]} satisfies Session,expires);
   // A new player/text connection must not invalidate another in-flight session.

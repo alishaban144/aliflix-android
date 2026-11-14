@@ -13,7 +13,8 @@ export const FastPicksSchema = z.object({ candidates: z.array(z.unknown()).max(3
   const pick=Pick.safeParse(item);return pick.success?[pick.data]:[];
 })) });
 
-export async function hydrogenRecommendationPicks<T extends {count: number}>(env: RecommendationEnv, input: T, signal: AbortSignal) {
+export async function hydrogenRecommendationPicks<T extends {count: number}>(env: RecommendationEnv, input: T, signal: AbortSignal,
+ retain?: (promise: Promise<unknown>)=>void) {
  const model='gemini-4-hydrogen';
  const maxItems=Math.min(24,input.count+4);
  const response=await raceGeminiGeneration(env,`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
@@ -34,7 +35,7 @@ export async function hydrogenRecommendationPicks<T extends {count: number}>(env
   const picks=FastPicksSchema.parse(JSON.parse(text)).candidates;
   if(!picks.length)throw Error('GEMINI_EMPTY_RECOMMENDATIONS');
   return picks.slice(0,maxItems);
- });
+ },[],retain);
  if('data' in response)return response.data;
  void response.response.body?.cancel().catch(()=>{});
  throw new ServiceError(response.response.status===429?'AI_QUOTA':'GEMINI_UNAVAILABLE','Recommendations unavailable',response.response.status===429?429:503,true);

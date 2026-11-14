@@ -337,6 +337,51 @@ describe("unified authenticated research", () => {
       },
     );
   });
+  it('uses Hydrogen for a fresh mobile recommendation even if the legacy result is cached',async()=>{
+    const scope='hydrogen-test-'+crypto.randomUUID();
+    const generated=vi.fn();
+    vi.spyOn(globalThis,'fetch').mockImplementation(async(url,init)=>{
+      const headers=new Headers(init?.headers);
+      if(headers.get('authorization')==='Bearer '+scope)return Response.json({
+        results:[{title:'Film research',url:'https://www.bfi.org.uk/list',content:'Released movies about isolated hotels.'}],
+      });
+      const key=headers.get('x-goog-api-key');
+      if(!key?.startsWith(scope))return new Response(null,{status:503});
+      generated(String(url));
+      if(String(url).includes(':generateContent'))return Response.json({candidates:[{content:{parts:[{
+        text:JSON.stringify({candidates:[{title:'Local Hero',year:1983,why:'A remote village and its inn'}]}),
+      }]}}]});
+      const pair=new WebSocketPair();pair[1].accept();
+      pair[1].addEventListener('message',event=>{
+        const data=JSON.parse(String(event.data));
+        if(data.setup)pair[1].send(JSON.stringify({setupComplete:{}}));
+        if(data.clientContent)pair[1].send(JSON.stringify({toolCall:{functionCalls:[{name:'recommend_titles',args:{
+          candidates:[{title:'Old Movie',year:1983}],
+        }}]}}));
+      });
+      return new Response(null,{status:101,webSocket:pair[0]});
+    });
+    await runInDurableObject(env.ASK_RESEARCH.getByName(scope),async instance=>{
+      const service=instance as unknown as AskResearch,e=(instance as any).env;
+      const old={ASK_RESEARCH:e.ASK_RESEARCH,TAVILY_API_KEY:e.TAVILY_API_KEY,GEMINI_API_KEY:e.GEMINI_API_KEY,
+        GEMINI_API_KEY_HYDROGEN_A:e.GEMINI_API_KEY_HYDROGEN_A,GEMINI_API_KEY_HYDROGEN_B:e.GEMINI_API_KEY_HYDROGEN_B};
+      Object.assign(e,{TAVILY_API_KEY:scope,GEMINI_API_KEY:scope,GEMINI_API_KEY_HYDROGEN_A:scope+'-a',GEMINI_API_KEY_HYDROGEN_B:scope+'-b',
+        ASK_RESEARCH:{getByName:()=>({resolveBatch:async(_type:string,items:Array<{title:string}>)=>items.map(p=>({
+          tmdbId:p.title==='Local Hero'?1:2,title:p.title,mediaType:'movie',releaseDate:'1983-01-01',originCountries:['GB'],genres:['Comedy'],
+        }))})}});
+      try{
+        const common={query:'Distinctive ensemble films set at a remote hotel',pageSize:1};
+        const legacy=await service.recommend(scope,request({...common,aiModel:'cloudflare-gpt-oss-120b'}));
+        expect(legacy.results.map(r=>r.title)).toEqual(['Old Movie']);
+        generated.mockClear();
+        const hydrogen=await service.recommend(scope,request({...common,aiModel:'gemini-4-hydrogen'}));
+        expect(hydrogen.results.map(r=>r.title)).toEqual(['Local Hero']);
+        expect(hydrogen.metrics.pipeline).toBe('tavily-hydrogen-tmdb');
+        expect(generated.mock.calls.every(([url])=>url.includes('gemini-4-hydrogen:generateContent'))).toBe(true);
+        expect(generated).toHaveBeenCalled();
+      }finally{Object.assign(e,old);}
+    });
+  });
   it.each(["movie","tv"] as const)("streams %s matches from one Tavily search and Gemini selection without Clef",async(mediaType)=>{
     const titles=Array.from({length:28},(_,i)=>({title:'Film '+i,year:2025}));
     const calls:string[]=[];

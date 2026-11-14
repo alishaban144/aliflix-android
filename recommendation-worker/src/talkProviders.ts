@@ -157,7 +157,8 @@ export async function boundedJson(response: Response, limit = 256000): Promise<u
  const bytes=new Uint8Array(length);let at=0;for(const c of chunks){bytes.set(c,at);at+=c.length;}
  return JSON.parse(new TextDecoder().decode(bytes));
 }
-export async function issueLiveToken(env: RecommendationEnv, context: TalkContext, expires: number, pinned?:GeminiKeySlot,excluded:GeminiKeySlot[]=[]) {
+export async function issueLiveToken(env: RecommendationEnv, context: TalkContext, expires: number, pinned?:GeminiKeySlot,excluded:GeminiKeySlot[]=[],
+ retain?: (promise: Promise<unknown>)=>void) {
  if(!hasGeminiCredentials(env))throw Error('LIVE_UNAVAILABLE');
  const setup=liveSetup(context);
  if(env.GEMINI_FREE_TIER_MODE==='true'&&(context.companionVersion||0)===16)setup.systemInstruction.parts[0].text+='\nFree-tier scene memory: public-source readiness is NOT compiled scene understanding. When player evidence has storyResearch.deferred=true and the viewer asks a scene question about identity, causes, relationships, motives or earlier setup, you MUST call app_control(scene_story) once with the actual complete question BEFORE answering, unless storyUnderstanding for this pause already covers that question. A list of names or completed=true on the public lookup is not compiled understanding. Reuse evidence-linked facts on follow-ups. Use scene_recall for any specifically missing earlier passage; do not repeatedly compile unchanged evidence. Greetings, ordinary catalogue questions and playback commands need no scene-analysis call. This rule applies if player context arrives after the connection opened.';
@@ -172,7 +173,7 @@ export async function issueLiveToken(env: RecommendationEnv, context: TalkContex
     bidiGenerateContentSetup:lockedSetup,fieldMask:mask}),signal:AbortSignal.timeout(8000) };
  const decode=async(response:Response)=>z.object({name:z.string().min(8).max(4096)}).parse(await boundedJson(response,16384));
  const grant=pinned||excluded.length ? await geminiProjectRequest(env,url,init,pinned,excluded) :
-  await raceGeminiGeneration(env,url,init,decode,excluded);
+  await raceGeminiGeneration(env,url,init,decode,excluded,retain);
  if('response' in grant&&!grant.response.ok){
   await grant.response.body?.cancel();console.warn('talk_live_token_status',grant.response.status);throw Error('LIVE_UNAVAILABLE');
  }

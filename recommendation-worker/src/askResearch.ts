@@ -1012,7 +1012,8 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
             picks=await hydrogenRecommendationPicks(this.env,{...input,searchAnswer:input.searchAnswer?.slice(0,1200),
               sources:input.sources.slice(0,5).map(e=>({title:e.title,text:e.text.slice(0,440)})),
               catalogueConnections:(await boundedInference(relatedPromise,signal,900).catch(()=>[]))
-                .slice(0,8).map(({title,year,why})=>({title,year,why}))},signal);
+                .slice(0,8).map(({title,year,why})=>({title,year,why}))},signal,
+              pending=>this.ctx.waitUntil(pending));
           } else {
             picks=await liveRecommendationPicks(this.env,input,signal);
           }

@@ -1820,7 +1820,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if (visualPlan != null && !turnHasAudio && outputText.isBlank() && tools.isEmpty() && !awaitingToolAnswer) {
                     val turn = userTurn.get()
                     scope.launch {
-                        delay(900)
+                        delay(2200)
                         if(ticket!=epoch||turn!=userTurn.get()||!permitted||!socketReady||remoteSpeechActive||speaking||
                             frameAttention!==visualPlan||turnHasAudio||outputText.isNotBlank()||tools.isNotEmpty()||
                             awaitingToolAnswer||silentReplyNudges>0)return@launch
