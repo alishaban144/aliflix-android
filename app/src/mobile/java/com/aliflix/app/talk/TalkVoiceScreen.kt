@@ -421,12 +421,15 @@ private class TalkParticleField(private val width: Int, private val height: Int,
     activity:TalkOrbActivity?=null,haloStyle:TalkHaloStyle=TalkHaloStyle.SOFT,haloReady:Boolean=true,playerThinking:Boolean=false,
     eyesClosed:Boolean=false,blinkOnConnect:Boolean=false,sceneFocus:Boolean=false,faceFloat:Boolean=true) {
     val appearance=remember(activity,phase) { talkOrbAppearance(activity ?: talkOrbPhaseActivity(phase)) }
+    val context=LocalContext.current
+    val lowRam=remember(context){context.getSystemService(android.app.ActivityManager::class.java)?.isLowRamDevice==true}
     val animate=motion&&android.animation.ValueAnimator.areAnimatorsEnabled()
     val seconds=rememberMobileAnimationClock(animate)
+    val thoughtStart=remember(playerThinking){seconds.value}
     val currentLevel by rememberUpdatedState(level)
     var energy by remember{mutableFloatStateOf(0f)}
     var lightRotation by remember { mutableFloatStateOf(0f) }
-    val glow=animateFloatAsState(if(haloStyle==TalkHaloStyle.LED){if(haloReady)1f else 0f}else appearance.glow,tween(if(animate)240 else 0),label="orb-activity-light")
+    val glow=animateFloatAsState(if(haloStyle==TalkHaloStyle.LED){if(haloReady)1f else if(eyesClosed).18f else 0f}else appearance.glow,tween(if(animate)240 else 0),label="orb-activity-light")
     val flow=animateFloatAsState(appearance.flow,tween(if(animate)320 else 0),label="orb-activity-flow")
     val tilt=animateFloatAsState(if(sceneFocus)appearance.tilt*.35f else appearance.tilt,
         if(animate)tween(if(sceneFocus)540 else 360,easing=FastOutSlowInEasing)else tween(0),label="orb-attention-tilt")
@@ -467,7 +470,7 @@ private class TalkParticleField(private val width: Int, private val height: Int,
     val led=remember(bounds,haloStyle){if(haloStyle==TalkHaloStyle.LED&&bounds.width>0)TalkLedHaloField(bounds.width.toFloat(),bounds.height.toFloat())else null}
     Box(modifier.onSizeChanged{bounds=it}.semantics {contentDescription="Aliflix voice: ${appearance.label}";stateDescription=appearance.label},contentAlignment=Alignment.Center){
         Canvas(Modifier.fillMaxSize().clip(androidx.compose.foundation.shape.CircleShape).then(
-            if(haloStyle==TalkHaloStyle.LED)Modifier.blur(16.dp,androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded)else Modifier)){
+            if(haloStyle==TalkHaloStyle.LED&&!lowRam)Modifier.blur(16.dp,androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded)else Modifier)){
             val extent=size.minDimension*.475f;val breath=1f+sin(seconds.value*.82f)*appearance.breath+energy*.02f
             if(haloStyle==TalkHaloStyle.LED)led?.draw(this,glow.value,if(animate)energy else currentLevel().coerceIn(0f,1f),seconds.value,animate)
             else lights?.let{(aura,rim,lobes)->
@@ -482,18 +485,29 @@ private class TalkParticleField(private val width: Int, private val height: Int,
                 rotate(-lightRotation*.43f+38f){scale(1f+energy*.012f){drawCircle(rim,extent,alpha=glow.value*(.23f+energy*.36f))}}
             }
         }
+        if(playerThinking) Canvas(Modifier.fillMaxSize()) {
+            val age=(seconds.value-thoughtStart).coerceAtLeast(0f)
+            val t=if(animate)(age%3.8f)/3.8f else .42f
+            val pulse=sin(t*PI.toFloat()).coerceAtLeast(0f)
+            val diameter=size.minDimension*.78f
+            val oval=androidx.compose.ui.geometry.Size(diameter,diameter)
+            val corner=center-Offset(diameter/2f,diameter/2f)
+            val stroke=Stroke(width=1.15.dp.toPx(),cap=androidx.compose.ui.graphics.StrokeCap.Round)
+            drawArc(Color(0xFFE8D9FF).copy(alpha=.23f+.50f*pulse),-128f+360f*t,28f+62f*pulse,
+                false,topLeft=corner,size=oval,style=stroke)
+            drawArc(Color(0xFFEEC4FA).copy(alpha=.14f+.25f*pulse),76f+360f*t,18f+22f*pulse,
+                false,topLeft=corner,size=oval,style=stroke)
+        }
         DiscoverLiveOrb(tracker,Modifier.fillMaxSize(.66f).graphicsLayer{
-            val thought=if(playerThinking&&animate)sin(seconds.value*2f*PI.toFloat()/6.4f)else 0f
+            val thought=if(playerThinking&&animate)sin((seconds.value-thoughtStart)*2f*PI.toFloat()/3.8f)else 0f
             scaleX=1f+energy*.012f+thought*.007f;scaleY=1f-energy*.004f-thought*.005f
             rotationZ=tilt.value+thought*if(playerThinking)1.8f else 0f
             val drift=if(faceFloat)sin(seconds.value*.95f)*.65f else 0f
             translationY=if(animate)(drift+thought*if(playerThinking)1.2f else 0f).dp.toPx() else 0f
         },conversing=phase=="Speaking",voiceCompanion=true,voiceEnergy={energy},attention=attention,
-            expression=when {
-                sceneFocus -> appearance.face.copy(openness=.9f,asymmetry=0f)
-                playerThinking&&animate -> playerThinkingExpression(seconds.value,activity?:TalkOrbActivity.THINK)
-                else -> appearance.face
-            },
+            expression=if(sceneFocus)appearance.face.copy(openness=.9f,asymmetry=0f)else appearance.face,
+            expressionAtFrame=if(playerThinking&&animate&&!sceneFocus)
+                ({playerThinkingExpression(seconds.value-thoughtStart,activity?:TalkOrbActivity.THINK)}) else null,
             motionEnabled=animate,eyesClosed=eyesClosed,blinkOnConnect=blinkOnConnect)
     }
 }

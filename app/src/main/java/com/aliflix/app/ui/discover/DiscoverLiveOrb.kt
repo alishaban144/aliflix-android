@@ -69,7 +69,7 @@ internal data class OrbExpression(val gaze: Offset, val openness: Float, val asy
 @Composable
 internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier = Modifier, conversing: Boolean = false, voiceCompanion: Boolean = false, voiceEnergy:()->Float={0f},attention:Offset?=null,
     expression: OrbExpression? = null, motionEnabled: Boolean = true, eyesClosed: Boolean = false,
-    blinkOnConnect: Boolean = false) {
+    blinkOnConnect: Boolean = false, expressionAtFrame: (() -> OrbExpression)? = null) {
     val motion = rememberMobileMotionEnabled() && motionEnabled
     val resumed = rememberMobileResumed()
     var bounds by remember { mutableStateOf(Rect.Zero) }
@@ -81,6 +81,7 @@ internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier =
     val speechEnergy by rememberUpdatedState(voiceEnergy)
     val contentAttention by rememberUpdatedState(attention)
     val expressionTarget by rememberUpdatedState(expression)
+    val activeExpression by rememberUpdatedState(expressionAtFrame)
     var openness by remember { mutableFloatStateOf(expression?.openness ?: 1f) }
     var asymmetry by remember { mutableFloatStateOf(expression?.asymmetry ?: 0f) }
     val paths = remember { arrayOf(Path(),Path()) }
@@ -123,13 +124,14 @@ internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier =
             while (true) withInfiniteAnimationFrameNanos { now ->
                 val idle = SystemClock.uptimeMillis() - tracker.lastTouchMillis > 1800L
                 val point=contentAttention ?: if(!idle)tracker.point else null
-                val target = if(point==null||bounds.width<=0f)expressionTarget?.gaze ?: idleLook else boundedOrbLook(point,bounds.center,bounds.width/2f)
+                val face = activeExpression?.invoke() ?: expressionTarget
+                val target = if(point==null||bounds.width<=0f)face?.gaze ?: idleLook else boundedOrbLook(point,bounds.center,bounds.width/2f)
                 if (previous != 0L) {
                     val dt=((now-previous)/1_000_000_000f).coerceIn(0f,.05f)
-                    look = dampOrbLook(look,target,dt,idle && point==null && expressionTarget==null)
+                    look = dampOrbLook(look,target,dt,idle && point==null && face==null)
                     val blend=1f-exp(-12f*dt)
-                    openness+=((expressionTarget?.openness ?: 1f)-openness)*blend
-                    asymmetry+=((expressionTarget?.asymmetry ?: 0f)-asymmetry)*blend
+                    openness+=((face?.openness ?: 1f)-openness)*blend
+                    asymmetry+=((face?.asymmetry ?: 0f)-asymmetry)*blend
                 }
                 previous = now
                 val t = seconds.value % if(voiceCompanion)2.9f else 4.2f

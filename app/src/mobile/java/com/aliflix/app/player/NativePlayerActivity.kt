@@ -65,7 +65,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     private var talkVideoBounds by mutableStateOf<androidx.compose.ui.geometry.Rect?>(null)
     private var talkCaptionBounds by mutableStateOf<androidx.compose.ui.geometry.Rect?>(null)
     internal val talkTouches = com.aliflix.app.ui.discover.DiscoverTouchTracker()
-    private val sceneMemory by lazy { PlayerSceneMemory({ if (::video.isInitialized) video else null }, ::talkSnapshot) }
+    private val sceneMemory by lazy { PlayerSceneMemory({ if (::video.isInitialized) video else null }, ::talkSceneSnapshot) }
     private var sceneCaptureJob: Job? = null
     override fun talkScene() = sceneMemory.current()
     override fun talkAttentionFrame() = sceneMemory.attentionFrame()
@@ -163,23 +163,33 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         talkSceneJob?.cancel()
         talkSceneJob = lifecycleScope.launch {
             sceneMemory.capture(includeAudio = true)
+            if (sceneMemory.attentionFrame() == null && controller?.playWhenReady == false) {
+                delay(32)
+                sceneMemory.capture(includeAudio = true)
+            }
             prepareTalkRecall("What is happening in the current scene?")
             if (talkVisible) talkVoice.inspectPlayerScene()
         }
     }
 
     internal fun openTalk() {
+        val opening = !talkVisible
+        talkVisible = true
+        if (opening) talkOpening++
         talkPreparationJob?.cancel()
         controller?.pause()
-        val opening = !talkVisible
         talkCreated = true
-        if(opening) { talkVoice.startPlayerOpening();talkOpening++ }
-        talkVisible = true
-        updateTalkCaptionBounds()
-        if (talkVoice.state.value.textMode || ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED)
-            connectPlayerTalk()
-        else talkPermission.launch(android.Manifest.permission.RECORD_AUDIO)
-        if (opening) preparePlayerTalkFrame()
+        val revision = talkOpening
+        val start = Runnable {
+            if (!talkVisible || revision != talkOpening || isDestroyed) return@Runnable
+            if (opening) talkVoice.startPlayerOpening()
+            updateTalkCaptionBounds()
+            if (talkVoice.state.value.textMode || ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED)
+                connectPlayerTalk()
+            else talkPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+            if (opening) preparePlayerTalkFrame()
+        }
+        if (opening) video.postOnAnimation { video.post(start) } else start.run()
     }
     internal fun closeTalk() = closeTalk(keepTransport = true)
 
@@ -214,6 +224,23 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
             (location[0] + video.width).toFloat(), (location[1] + video.height).toFloat(),
         ).takeIf { it.width > 0f && it.height > 0f }
     }
+    private fun talkSceneSnapshot(): JSONObject {
+        val current = selection
+        val player = controller
+        return JSONObject()
+            .put("title", current?.media?.title ?: player?.mediaMetadata?.title?.toString())
+            .put("requestId", NativePlaybackService.activeRequestId)
+            .put("videoReleaseNs", NativePlaybackService.sceneFrameReleaseNs)
+            .put("sceneSurfaceReady", ::video.isInitialized && video.holder.surface.isValid && NativePlaybackService.canRecordProgress && !ui.external && player?.playbackState in setOf(Player.STATE_READY, Player.STATE_ENDED))
+            .put("contentKey", current?.key?.substringBefore(":via:") ?: player?.currentMediaItem?.mediaId?.substringBefore(":via:")?.takeIf { it.isNotBlank() } ?: NativePlaybackService.activeRequestId)
+            .put("id", current?.media?.id).put("type", current?.media?.type?.routeName).put("season", current?.seasonNumber).put("episode", current?.episodeNumber)
+            .put("positionSeconds", (player?.currentPosition ?: 0L) / 1000.0)
+            .put("durationSeconds", player?.duration?.takeIf { it > 0 }?.div(1000.0))
+            .put("playWhenReady", player?.playWhenReady == true)
+            .put("audioLanguage", ui.sourceAudioLanguage)
+            .put("subtitles", ui.activeSubtitleTrack?.languageCode).put("subtitleEdition", ui.activeSubtitleTrack?.id)
+    }
+
     override fun talkSnapshot(): JSONObject {
         val current = selection
         val player = controller
@@ -222,21 +249,14 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
             JSONObject().put("kind", when (group.type) { C.TRACK_TYPE_AUDIO -> "audio"; C.TRACK_TYPE_TEXT -> "subtitle"; else -> "video" })
                 .put("language", format.language).put("label", format.label).put("height", format.height).put("selected", group.isTrackSelected(index))
         } }
-        return JSONObject().put("status", if (player == null) "no_active_playback" else "current")
-            .put("title", current?.media?.title ?: player?.mediaMetadata?.title?.toString())
-            .put("requestId", NativePlaybackService.activeRequestId)
-            .put("sceneSurfaceReady", ::video.isInitialized && video.holder.surface.isValid && NativePlaybackService.canRecordProgress && !ui.external && player?.playbackState in setOf(Player.STATE_READY, Player.STATE_ENDED))
+        return talkSceneSnapshot().put("status", if (player == null) "no_active_playback" else "current")
             .put("launchTaskId",intent.getStringExtra("talkTaskId"))
-            .put("contentKey", current?.key?.substringBefore(":via:") ?: player?.currentMediaItem?.mediaId?.substringBefore(":via:")?.takeIf { it.isNotBlank() } ?: NativePlaybackService.activeRequestId)
-            .put("id", current?.media?.id).put("type", current?.media?.type?.routeName).put("season", current?.seasonNumber).put("episode", current?.episodeNumber)
-            .put("position", (player?.currentPosition ?: 0L) / 1000.0).put("positionSeconds", (player?.currentPosition ?: 0L) / 1000.0)
-            .put("durationSeconds", player?.duration?.takeIf { it > 0 }?.div(1000.0)).put("playing", player?.isPlaying == true)
-            .put("playWhenReady", player?.playWhenReady == true).put("playbackState", player?.playbackState).put("completed", player?.playbackState == Player.STATE_ENDED)
+            .put("position", (player?.currentPosition ?: 0L) / 1000.0).put("playing", player?.isPlaying == true)
+            .put("playbackState", player?.playbackState).put("completed", player?.playbackState == Player.STATE_ENDED)
             .put("provider", current?.source?.identity?.name).put("server", ui.server).put("servers", JSONArray(ui.availableServers))
             .put("providers", JSONArray(ui.availableProviders.map { it.name })).put("tracks", JSONArray(tracks))
-            .put("audioLanguage", ui.sourceAudioLanguage).put("sourceAudio", JSONArray(ui.sourceAudioOptions.map { JSONObject().put("language", it.language).put("label", it.label) }))
-            .put("subtitles", ui.activeSubtitleTrack?.languageCode).put("subtitleLoading", ui.subtitleLoading).put("syncState", ui.audioSyncState)
-            .put("subtitleEdition", ui.activeSubtitleTrack?.id)
+            .put("sourceAudio", JSONArray(ui.sourceAudioOptions.map { JSONObject().put("language", it.language).put("label", it.label) }))
+            .put("subtitleLoading", ui.subtitleLoading).put("syncState", ui.audioSyncState)
             .put("syncAvailable", ui.audioSyncAvailable).put("verificationRequired", ui.verificationRequired).put("error", ui.error ?: player?.playerError?.errorCodeName)
             .put("volume", audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toDouble() / audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1))
             .put("brightness", window.attributes.screenBrightness).put("speed", player?.playbackParameters?.speed)
@@ -574,7 +594,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     private val listener = object : Player.Listener {
         override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
             sceneMemory.invalidate()
-            if (talkCreated) talkVoice.clearFrameAttention()
+            if (talkCreated && talkVoice.abandonPlayerFrame() && talkVisible) connectPlayerTalk()
             lifecycleScope.launch {
                 delay(250)
                 if (talkVisible && controller?.isPlaying != true) preparePlayerTalkFrame() else sceneMemory.capture()
@@ -779,7 +799,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                 )
                 val talkMotion=com.aliflix.app.ui.common.rememberMobileMotionEnabled()&&com.aliflix.app.ui.common.rememberMobileResumed()
                 androidx.compose.animation.AnimatedVisibility(talkVisible,
-                    enter=androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(if(talkMotion)180 else 0)),
+                    enter=androidx.compose.animation.EnterTransition.None,
                     exit=androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(if(talkMotion)360 else 0))) {
                     key(talkOpening) {
                         com.aliflix.app.talk.TalkPlayerBubble(talkVoice,onStart=::openTalk,onClose=::closeTalk,tracker=talkTouches,
@@ -2467,7 +2487,8 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         sceneCaptureJob = lifecycleScope.launch {
             var warmedRequest: String? = null
             while (isActive) {
-                if (controller?.isPlaying == true || talkVisible && sceneMemory.current() == null) sceneMemory.capture()
+                if (controller?.isPlaying == true || talkVisible &&
+                    (sceneMemory.current() == null || sceneMemory.attentionFrame() == null)) sceneMemory.capture()
                 val requestId = NativePlaybackService.activeRequestId
                 if (controller?.isPlaying == true && selection != null && requestId != null && requestId != warmedRequest) {
                     warmedRequest = requestId

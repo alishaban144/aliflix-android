@@ -13,7 +13,6 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
-import org.json.JSONObject
 
 sealed interface LibraryMutation {
     data class MyListChanged(val media: Media, val added: Boolean, val metadataOnly:Boolean=false) : LibraryMutation
@@ -126,10 +125,14 @@ class LibraryStore(context: Context) {
     fun applySyncedSnapshot(snapshot: LibrarySnapshot) {
         val myList = snapshot.myList.distinctBy(Media::key)
         val favorites = snapshot.favorites.distinctBy(Media::key)
-        _myList.value = myList
-        _likes.value = favorites
-        write("my_list", myList)
-        write("liked_titles", favorites)
+        if (_myList.value != myList) {
+            _myList.value = myList
+            write("my_list", myList)
+        }
+        if (_likes.value != favorites) {
+            _likes.value = favorites
+            write("liked_titles", favorites)
+        }
         applyRecent(
             snapshot.recent
                 .distinctBy { it.media.key }
@@ -177,13 +180,13 @@ class LibraryStore(context: Context) {
     }.getOrDefault(emptyList())
 
     private fun applyRecent(entries: List<RecentMediaEntry>) {
+        if (_recentEntries.value == entries) return
         _recentEntries.value = entries
         _recent.value = entries.map(RecentMediaEntry::media)
         val array = JSONArray()
         entries.forEach { entry ->
             array.put(
-                JSONObject(entry.media.toJson().toString())
-                    .put(RECENT_TIMESTAMP_KEY, entry.lastPlayedAtMillis),
+                entry.media.toJson().put(RECENT_TIMESTAMP_KEY, entry.lastPlayedAtMillis),
             )
         }
         preferences.edit { putString("recently_played", array.toString()) }

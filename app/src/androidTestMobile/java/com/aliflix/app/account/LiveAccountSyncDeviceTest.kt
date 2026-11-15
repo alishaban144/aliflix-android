@@ -85,8 +85,31 @@ class LiveAccountSyncDeviceTest {
             val media=Media(2147482905,MediaType.MOVIE,"Account sync fixture",year="2026")
             val started=android.os.SystemClock.elapsedRealtime()
             withContext(Dispatchers.Main) { libraryA.toggleLike(media);libraryA.toggleMyList(media);libraryA.markPlayed(media) }
+            until { libraryB.recent.value.firstOrNull()?.key==media.key }
+            receipt.put("recentPushMs",android.os.SystemClock.elapsedRealtime()-started)
             until { libraryB.likes.value.any { it.key==media.key }&&libraryB.myList.value.any { it.key==media.key }&&libraryB.recent.value.any { it.key==media.key } }
             receipt.put("libraryMs",android.os.SystemClock.elapsedRealtime()-started)
+            val whileClosed=Media(2147482906,MediaType.MOVIE,"Played while the receiving app was closed",year="2026")
+            withContext(Dispatchers.Main) {
+                syncB!!.close()
+                syncB=null
+                libraryA.markPlayed(whileClosed)
+            }
+            assertTrue(libraryB.recent.value.none { it.key==whileClosed.key })
+            withTimeout(25_000) {
+                while(!dbA.collection("users").document(testUser.uid).collection("recent").document(whileClosed.key)
+                    .get(Source.SERVER).await().exists())delay(80)
+            }
+            val restarted=android.os.SystemClock.elapsedRealtime()
+            withContext(Dispatchers.Main) {
+                syncB=FirebaseAccountSyncRepository(b,account,libraryB,PlaybackProviderRepository(b),progressB,RecommendationStore(b),scope,dbB)
+            }
+            until { libraryB.recent.value.firstOrNull()?.key==whileClosed.key }
+            receipt.put("recentReloadMs",android.os.SystemClock.elapsedRealtime()-restarted)
+            val replayed=android.os.SystemClock.elapsedRealtime()
+            withContext(Dispatchers.Main) { libraryB.markPlayed(media) }
+            until { libraryA.recent.value.firstOrNull()?.key==media.key }
+            receipt.put("recentReplayMs",android.os.SystemClock.elapsedRealtime()-replayed)
             withContext(Dispatchers.Main) { libraryB.toggleLike(media) }
             until { libraryA.likes.value.none { it.key==media.key } }
             receipt.put("remoteRemoval",true)

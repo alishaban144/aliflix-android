@@ -44,6 +44,7 @@ internal class TalkFrameAttention(args: JSONObject, frameId: String) {
     }
     val available get() = cues.isNotEmpty()
     val targetCount get() = cues.size
+    val firstTarget get() = cues.firstOrNull()?.target
     private var mentions = emptyList<Mention>()
     private var narration = ""
     private var firstSample = -1L
@@ -83,7 +84,17 @@ internal class TalkFrameAttention(args: JSONObject, frameId: String) {
 
     @Synchronized fun at(rendered: Long): TalkFrameTarget? {
         if (firstSample < 0 || samples == 0L || rendered < firstSample || rendered >= firstSample + samples) return null
-        if (narration.isBlank()) return null
+        if (narration.isBlank()) {
+            val elapsed = rendered - firstSample
+            val duration = if (complete) samples else maxOf(samples, cues.size * 24_000L)
+            val index = (elapsed * cues.size / duration).toInt().coerceIn(0, cues.lastIndex)
+            if (index > currentCue) {
+                currentCue = index
+                currentTarget = cues[index].target
+                currentSince = rendered
+            }
+            return currentTarget
+        }
         val duration = if (complete) samples else maxOf(samples, estimatedDuration)
         val elapsed = rendered - firstSample
         val lead = 10_800L

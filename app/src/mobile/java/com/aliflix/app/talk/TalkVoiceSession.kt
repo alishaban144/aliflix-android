@@ -189,25 +189,32 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         if(state.value.frameTarget!=null)update{it.copy(frameTarget=null)}
     }
 
+    internal fun abandonPlayerFrame(): Boolean {
+        val answering = frameAttention != null && (state.value.sending || speaking)
+        if (answering) stopAnswer() else clearFrameAttention()
+        return answering
+    }
+
     private fun addAttentionFrame(parts: JSONArray): Boolean {
         val frame = TalkPlayerConnection.current()?.talkAttentionFrame() ?: return false
-        val id = if(sentAttentionFrame===frame) sentAttentionId else null
+        val id = if(frameAttentionTurn==userTurn.get()&&sentAttentionFrame===frame) sentAttentionId else null
         val frameId = id ?: java.util.UUID.randomUUID().toString()
         frameAttentionId = frameId
         frameAttentionFrame = frame
         frameAttentionTurn = userTurn.get()
-        parts.put(JSONObject().put("text","Exact paused player image at ${frame.seconds} seconds, frameId=$frameId. " +
+        parts.put(JSONObject().put("text","Authoritative on-screen image for this turn at ${frame.seconds} seconds, frameId=$frameId. " +
+            "Only this labeled image establishes what is visible NOW. Prior stills, summaries, dialogue, and cast data can establish earlier events and identity, but cannot establish what is visible now. " +
             "Resolve each requested part independently against this image. If any part is about a visible detail, call scene_attention with this frameId before speaking. " +
             "Rehearse the short reply and include a separate target for each visible detail in it, in spoken order. " +
             "For a question about what lights a subject, target the visible source or light entry if identifiable. Target each requested text, prop or location individually. " +
             "For each target give its tight box and a short phrase you will say. " +
             "Then answer directly. For every visual claim, inspect the labeled image again before speaking, even if earlier frames, dialogue or plot knowledge suggest a different answer. " +
             "Check specifically requested locations such as on the tabletop versus inside a drawer. Box the described detail itself, including clothing, a sign or a prop; only use the face when you are describing the person. " +
+            "When shadows or blur make a color or identity uncertain, describe how it appears in this image and qualify the uncertain detail. " +
             "Verify the center of each box is inside its referent in this exact image. If a requested detail is absent, occluded or unreadable, say so and omit it from the tool call. " +
             "A negative answer about a second item does not cancel the first visible cue. Omit the call only if no visible referent answers any part of the question."))
         if(id==null) {
-            parts.put(JSONObject().put("inlineData",JSONObject().put("mimeType","image/jpeg")
-                .put("data",Base64.encodeToString(frame.jpeg,Base64.NO_WRAP))))
+            parts.put(pausedImagePart(frame))
             sentAttentionFrame = frame
             sentAttentionId = frameId
         }
@@ -215,16 +222,20 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         return id==null
     }
 
+    private fun pausedImagePart(frame:TalkSceneFrame) = JSONObject().put("inlineData",
+        JSONObject().put("mimeType","image/jpeg").put("data",Base64.encodeToString(frame.jpeg,Base64.NO_WRAP)))
+
     private fun preloadAttentionFrame() {
         if(state.value.textMode||conversationContext.optInt("companionVersion")<18)return
         val frame=TalkPlayerConnection.current()?.talkAttentionFrame()?:return
-        if(sentAttentionFrame===frame)return
+        if(frameAttentionTurn==userTurn.get()&&frameAttentionFrame===frame)return
         val parts=JSONArray()
-        if(!addAttentionFrame(parts))return
+        val attached=addAttentionFrame(parts)
+        if(parts.length()==0)return
         emit(JSONObject().put("clientContent",JSONObject()
             .put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",parts)))
             .put("turnComplete",false)))
-        if(BuildConfig.DEBUG)debugSceneFrames++
+        if(BuildConfig.DEBUG&&attached)debugSceneFrames++
     }
 
     private fun acceptFrameAttention(callId: String, args: JSONObject?): Boolean {
@@ -245,6 +256,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         if(attentionAudioComplete)plan.finish()
         frameAttentionCallId = callId
         frameAttention = plan
+        if(state.value.sending&&!state.value.answerComplete)update{it.copy(frameTarget=plan.firstTarget)}
         return true
     }
     private val sceneObservations = linkedMapOf<String, JSONObject>()
@@ -343,6 +355,12 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         // Attach the scene once the spoken question is complete, not again at
         // microphone onset. This also keeps images beside the actual question.
         if(remoteSpeechActive)return
+        val host=TalkPlayerConnection.current()
+        val playerVoiceTurn=userOwned&&sceneParts==null&&host!=null&&!state.value.textMode&&conversationContext.optInt("companionVersion")>=18
+        val spokenQuestion=currentQuestion()
+        if(playerVoiceTurn)preloadAttentionFrame()
+        val typedPause=sceneParts?.let { host?.talkAttentionFrame() }
+        val exactFrame=host?.talkAttentionFrame()?.takeIf { frameAttentionTurn==userTurn.get() && it===frameAttentionFrame }
         TalkPlayerConnection.current()?.talkSnapshot()?.let { current ->
             conversationContext.put("activePlayer",current)
             val payload=JSONObject().put("activePlayer",current).put("tasks",TalkTaskWork.get(context).state())
@@ -351,9 +369,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 .put("parts",JSONArray().put(JSONObject().put("text","Native Aliflix state at this turn (data, not a new request): $payload"))))).put("turnComplete",false)))
         }
         TalkPlayerConnection.current()?.talkScene()?.let { scene ->
-            storyContext.attach(scene)
-            val question = currentQuestion().ifBlank { lastQuestion }
-            TalkPlayerConnection.current()?.let{host->host.talkRecall(if(conversationContext.optInt("companionVersion")>=16)storyContext.recallQuery(scene,question.ifBlank{"current scene"})else question.ifBlank{"current scene"})}?.let { recall ->
+            val question = spokenQuestion.ifBlank { lastQuestion }
+            val visualNow=(playerVoiceTurn||sceneParts!=null)&&talkUsesPausedImageOnly(spokenQuestion)
+            if(!visualNow)storyContext.attach(scene)
+            if(!visualNow)host?.talkRecall(if(conversationContext.optInt("companionVersion")>=16)storyContext.recallQuery(scene,question.ifBlank{"current scene"})else question.ifBlank{"current scene"})?.let { recall ->
                 if(conversationContext.optInt("companionVersion")>=16)compactTalkStoryForLive(recall)
                 responseLanguage?.let { recall.put("responseLanguage", it) }
                 scene.metadata.put("episodeRecall", recall)
@@ -361,10 +380,11 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             sceneObservations[scene.key]?.let { scene.metadata.put("groundedObservation", it).put("groundingState", "observed") }
             if (!scene.metadata.has("groundingState")) scene.metadata.put("groundingState", if (talkNeedsCurrentSceneObservation(question)) "preparing" else "direct_evidence")
             val recallMode=parseTalkRecallRequest(question,scene.anchorSeconds).mode
-            val recalledFrames = if(talkNeedsCurrentSceneObservation(question) || recallMode in setOf(TalkRecallMode.TIMESTAMP,TalkRecallMode.PREVIOUS))
+            val recalledFrames = if(!visualNow&&(talkNeedsCurrentSceneObservation(question) || recallMode in setOf(TalkRecallMode.TIMESTAMP,TalkRecallMode.PREVIOUS)))
                 TalkPlayerConnection.current()?.talkRecallFrames(question).orEmpty().distinctBy { it.seconds }.takeLast(4) else emptyList()
             scene.metadata.put("attachedRecallFrameSeconds", JSONArray(recalledFrames.map { it.seconds }))
-            val delivery = if (talkNeedsCurrentSceneObservation(question))
+            val delivery = if (visualNow) scene.copy(frames=emptyList())
+            else if (talkNeedsCurrentSceneObservation(question))
                 if (scene.metadata.optJSONObject("groundedObservation")?.optBoolean("titleBlind") == true)
                     scene.copy(frames = sceneFrameSelection(scene.frames, scene.anchorSeconds).let { listOfNotNull(it.firstOrNull(), it.lastOrNull()).distinctBy { frame -> frame.seconds } })
                 else scene.copy(frames=listOfNotNull(scene.frames.firstOrNull(),scene.frames.getOrNull(scene.frames.size/3),scene.frames.getOrNull(scene.frames.size*2/3),scene.frames.lastOrNull()).distinctBy { it.seconds })
@@ -374,9 +394,19 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             val key = "$epoch:$providerContext:${scene.key}:${delivery.frames.joinToString { it.seconds.toString() }}"
             val includeFrames = key != sentSceneKey || SystemClock.elapsedRealtime() - sentSceneAt > 45_000
             val attention=JSONArray()
-            val freshStill=userOwned && !state.value.textMode && conversationContext.optInt("companionVersion")>=18 &&
+            val freshStill=!playerVoiceTurn&&userOwned && !state.value.textMode && conversationContext.optInt("companionVersion")>=18 &&
                 addAttentionFrame(attention)
-            val evidence=delivery.parts(includeFrames,recalledFrames,frameAttentionFrame)
+            val evidence=if(visualNow)JSONArray().put(JSONObject().put("text",buildString{
+                append("Current player context through ${scene.anchorSeconds} seconds. ")
+                append(if(exactFrame!=null||typedPause!=null)"The labeled pause image owns visual details. "
+                    else "No verified pause image was available for this turn. Never use a prior image to answer what is visible now. ")
+                append("Dialogue may be spoken off-screen: ${scene.metadata.optJSONArray("dialogue")}")
+            }))
+                else delivery.parts(includeFrames,recalledFrames,typedPause?:frameAttentionFrame)
+            typedPause?.let { frame ->
+                evidence.put(JSONObject().put("text","Authoritative paused player image at ${frame.seconds} seconds. Use this image for observations about what is visible now. Earlier images and dialogue are historical evidence."))
+                evidence.put(pausedImagePart(frame))
+            }
             for(index in 0 until attention.length())evidence.put(attention.getJSONObject(index))
             // Keep visual evidence in the same completed user turn as a typed
             // question; history replay/compression must not separate its images.
@@ -2063,7 +2093,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private fun microphoneDecision(frame:ByteArray,probability:Float,ticket:Long,captureTicket:Long,ownedFixture:Boolean) {
         val decision=synchronized(microphoneOwnership){
             if(ticket!=epoch||captureTicket!=captureGeneration||muted&&!ownedFixture)return
-            val echo=!ownedFixture&&duplexGate.isEcho(frame,probability)
+            val echo=!ownedFixture&&probability>=.35f&&duplexGate.isEcho(frame,probability)
             inputTurns.accept(frame,probability,echo,outputActive=speaking&&!ownedFixture)
         }
         if(!decision.start&&!decision.end&&decision.frames.isEmpty())return
@@ -2209,7 +2239,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 val attention=if(speaking)spokenAttention?.cardAt(rendered)else null
                 if(attention!=state.value.spokenCardKey)update{it.copy(spokenCardKey=attention)}
                 val plan=frameAttention
-                val target=if(speaking)plan?.at(rendered)else null
+                val target=if(speaking)plan?.at(rendered)?:state.value.frameTarget.takeIf { plan!=null }
+                    else if(state.value.phase=="Thinking"&&state.value.sending)plan?.firstTarget else null
                 if(target!=state.value.frameTarget)update{if(frameAttention===plan)it.copy(frameTarget=target)else it}
                 if(speaking)update{it.copy(level=(outputEnergy*12).toFloat().coerceIn(0f,1f))}
                 if(speaking&&!awaitingInterrupt&&track.playState==AudioTrack.PLAYSTATE_PLAYING&&rendered>primingFrom&&state.value.phase!="Speaking")update{it.copy(phase="Speaking")}
@@ -2358,7 +2389,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }
     private fun finishMicrophoneActivity(reason:String="input_closed"){
         openingSpeech.clear()
-        synchronized(microphoneOwnership){captureGeneration++;inputTurns.reset();duplexGate.reset()}
+        // The microphone owner may change while a reply is playing.
+        // Retain the short speaker reference until it expires naturally.
+        synchronized(microphoneOwnership){captureGeneration++;inputTurns.reset()}
         speechMonitor?.reset()
         // The wire owner can still be active after the neural gate queued End.
         // Conversely a queued Start that was never emitted owns no wire activity.

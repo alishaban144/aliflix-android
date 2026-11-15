@@ -651,7 +651,7 @@ internal fun NativePlayerScreen(
                         sheet = "Quality"
                         interaction++
                     },
-                    onTalk = { player?.pause(); interaction++; onTalk() },
+                    onTalk = { interaction++; onTalk() },
                     onRotate = {
                         onRotate()
                         interaction++

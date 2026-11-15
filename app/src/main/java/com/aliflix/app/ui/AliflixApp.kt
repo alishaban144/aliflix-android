@@ -532,11 +532,9 @@ fun AliflixApp(
     val person by viewModel.person.collectAsState()
     val myList by viewModel.myList.collectAsState()
     val recent by viewModel.recent.collectAsState()
-    LaunchedEffect(recent.take(3).map { it.key }) { viewModel.preloadRecentlyWatchedEpisodes() }
     val savedLikes by viewModel.likes.collectAsState()
     val matchMetadata by viewModel.personalizationMetadata.collectAsState()
     val likes = if (BuildConfig.IS_TV) savedLikes else savedLikes.map { matchMetadata[it.key] ?: it }
-    LaunchedEffect(myList.map { it.key }, recent.map { it.key }, likes.map { it.key }) { viewModel.refreshLibraryMetadata() }
     val aiRecommendationsEnabled by viewModel.aiRecommendationsEnabled.collectAsState()
     val recommendationAiModel by viewModel.recommendationAiModel.collectAsState()
     val askUiState by viewModel.askUiState.collectAsState()
@@ -608,7 +606,17 @@ fun AliflixApp(
     }
     var accountNotice by rememberSaveable { mutableStateOf<String?>(null) }
     var launchCompleted by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(launchCompleted, recent.take(3).map { it.key }) {
+        if (launchCompleted) viewModel.preloadRecentlyWatchedEpisodes()
+    }
+    LaunchedEffect(launchCompleted, myList.map { it.key }.toSet(), recent.map { it.key }.toSet(), likes.map { it.key }.toSet()) {
+        if (launchCompleted) viewModel.refreshLibraryMetadata()
+    }
     val isHomeReady = com.aliflix.app.ui.launch.isLaunchHomeReady(home.loading, home.content != null, home.error != null)
+    LaunchedEffect(launchCompleted, isHomeReady) {
+        if (launchCompleted && isHomeReady && initialMedia == null && assistantAction == null)
+            activity.reportFullyDrawn()
+    }
     val requestedDetailProvider = PlaybackProvider.fromStoredValue(detailProviderName)
     val detailProvider = requestedDetailProvider?.takeIf { provider ->
         detail.item?.let(provider::isAvailableFor) == true

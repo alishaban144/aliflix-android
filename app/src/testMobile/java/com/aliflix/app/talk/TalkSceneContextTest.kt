@@ -4,6 +4,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkSceneContextTest {
+    @Test fun currentDetailsUseThePauseWhileStoryAndIdentityKeepEvidence() {
+        assertTrue(talkUsesPausedImageOnly("What is the red object next to the mug?"))
+        assertTrue(talkUsesPausedImageOnly("Describe the car and the sign to its left"))
+        assertFalse(talkUsesPausedImageOnly("Who plays the woman in the blue shirt?"))
+        assertFalse(talkUsesPausedImageOnly("Why did she leave, and is the door open?"))
+        assertFalse(talkUsesPausedImageOnly("What happened at 4:30?"))
+    }
     @Test fun visualReferentsRequireImageEvidenceEvenInUnusualQuestionForms() {
         for(question in listOf("Is she wearing red?", "Could the woman in red actually see the door?", "Is that cup empty?", "Which person on the left is holding the bag?")) {
             assertTrue(question,talkSceneQuestion(question));assertTrue(question,talkNeedsCurrentSceneObservation(question))

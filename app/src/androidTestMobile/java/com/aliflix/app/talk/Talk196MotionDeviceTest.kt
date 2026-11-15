@@ -6,6 +6,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -49,5 +51,27 @@ class Talk196MotionDeviceTest {
    assertNotEquals(playerThinkingExpression(1.5f,TalkOrbActivity.THINK),playerThinkingExpression(4.6f,TalkOrbActivity.THINK))
    save("talk196-player-thinking.png",compose.onRoot().captureToImage().asAndroidBitmap())
   }finally{session.close();scope.cancel()}
+ }
+ @Test fun thinkingHaloMovesAroundTheFace(){
+  compose.mainClock.autoAdvance=false
+  compose.setContent {
+   AliflixMobileTheme {
+    Box(Modifier.fillMaxSize().background(Color.Black),contentAlignment=androidx.compose.ui.Alignment.Center) {
+     TalkLiveOrb("Thinking",{0f},true,Modifier.size(96.dp).testTag("player-thinking-face"),
+         activity=TalkOrbActivity.THINK,haloStyle=TalkHaloStyle.LED,playerThinking=true)
+    }
+   }
+  }
+  val face=compose.onNodeWithTag("player-thinking-face",useUnmergedTree=true)
+  compose.mainClock.advanceTimeBy(280)
+  val start=face.captureToImage().asAndroidBitmap()
+  compose.mainClock.advanceTimeBy(1_000)
+  val next=face.captureToImage().asAndroidBitmap()
+  save("talk202-player-thinking.png",next)
+  var changed=0
+  for(y in 0 until start.height step 4)for(x in 0 until start.width step 4){
+   if(start.getPixel(x,y)!=next.getPixel(x,y))changed++
+  }
+  assertTrue("The waiting gesture should change as the clock advances",changed>40)
  }
 }

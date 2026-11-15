@@ -245,6 +245,19 @@ class Talk187SceneDeviceTest {
         assertEquals(.65f, plan.at(83_000)?.left ?: -1f, .001f)
         assertNull(plan.at(120_000))
     }
+    @Test fun sceneMotionCanStartBeforeTranscriptionArrives() {
+        fun target(mention:String, left:Int) = JSONObject().put("mention",mention)
+            .put("box",JSONArray(listOf(100,left,300,left+150)))
+        val args=JSONObject().put("frameId","pause").put("targets",
+            JSONArray(listOf(target("shirt",100),target("cup",500))))
+        val plan=TalkFrameAttention(args,"pause")
+        assertEquals(.1f,plan.firstTarget!!.left,.001f)
+        plan.receive(96_000,0)
+        plan.finish()
+        assertEquals(.1f,plan.at(8_000)!!.left,.001f)
+        assertEquals(.5f,plan.at(55_000)!!.left,.001f)
+        assertNull(plan.at(96_000))
+    }
     @Test fun paletteRetainsTheOrbAnchorAndRealTargetsAcrossBothOrientations()=fixture { player ->
         withContext(Dispatchers.Main) { player.openTalk() }
         for((orientation,name) in listOf(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT to "portrait",android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE to "landscape")) {

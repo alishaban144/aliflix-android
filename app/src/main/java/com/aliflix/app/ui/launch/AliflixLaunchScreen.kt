@@ -195,7 +195,11 @@ fun AliflixLaunchOverlay(
         content()
         return
     }
-    val isReducedMotion = !rememberMobileMotionEnabled()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val lowRam = remember(context) {
+        context.getSystemService(android.app.ActivityManager::class.java)?.isLowRamDevice == true
+    }
+    val isReducedMotion = lowRam || !rememberMobileMotionEnabled()
     val resumed = rememberMobileResumed()
     var clockFinished by remember { mutableStateOf(false) }
     var homeFrameReady by remember { mutableStateOf(false) }

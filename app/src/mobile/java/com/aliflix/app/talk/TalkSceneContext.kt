@@ -82,6 +82,14 @@ internal fun talkCurrentIdentityQuestion(question:String):Boolean = Regex("(?i)\
 
 internal fun talkVisualReference(question:String):Boolean = talkCurrentIdentityQuestion(question) || Regex("(?i)\\b(?:wearing|dressed in) (?:a |an |the )?(?:red|blue|green|yellow|white|black|pink|purple|orange)\\b|\\b(?:red|blue|green|yellow|white|black|pink|purple|orange) (?:dress|shirt|coat|jacket|woman|man|one)|\\b(?:woman|man|girl|boy|person|one) (?:in|wearing|on the|beside|next to)\\b|\\b(?:that|this|the) (?:cup|glass|watch|phone|bag|suitcase|shoe|hat|ring|photograph|photo|door|window)|\\b(?:left|right) (?:side|hand|corner)\\b").containsMatchIn(question)
 
+private val talkNarrativeIntent = Regex("(?i)\\b(?:why|because|whose|who|before|earlier|previous|remember|said|say|mean|know|learn|after|led to|happened|story|recap|plot|actor|actress|plays)\\b|warum|vorher|المشهد السابق|لماذا")
+
+internal fun talkUsesPausedImageOnly(question: String): Boolean =
+    (question.isBlank() || !talkNarrativeIntent.containsMatchIn(question)) &&
+        (question.isBlank() || parseTalkRecallRequest(question, Double.MAX_VALUE).mode !in setOf(
+            TalkRecallMode.PREVIOUS, TalkRecallMode.TIMESTAMP, TalkRecallMode.RECAP,
+        ))
+
 /** Narrative recall already has timed text and relevant footage. It must not wait for
  * a second observer of the unrelated paused still before answering an earlier event. */
 internal fun talkNeedsCurrentSceneObservation(question: String): Boolean {

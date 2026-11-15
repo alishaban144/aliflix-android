@@ -743,8 +743,6 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                     if(previous!=account.uid){previous=account.uid;resetAskAliflix()}
                 }
             }
-            // Starts before the launch overlay finishes; Firebase already owns startup retry.
-            accountServices.syncRepository.retry()
             viewModelScope.launch(Dispatchers.Default) {
                 val accounts=com.aliflix.app.recommendation.AskAccountScope(application)
                 var picksOwner: com.aliflix.app.recommendation.AskAccountTicket? = null
@@ -1477,9 +1475,10 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     fun refreshLibraryMetadata() {
         val context = getApplication<android.app.Application>()
         if (!context.hasInternetConnection()) return
+        val likedKeys = likes.value.mapTo(HashSet(), Media::key)
         val missing = (myList.value + recent.value + likes.value).distinctBy { it.key }
             .filter { ((!BuildConfig.IS_TV && it.genres.isEmpty()) || it.runtime.isBlank() || it.rating <= 0 ||
-                    (it.key in likes.value.map { liked -> liked.key } &&
+                    (it.key in likedKeys &&
                         (it.keywords.isEmpty() || (!BuildConfig.IS_TV && it.creators.isEmpty())))) && libraryMetadataRequested.add(it.key) }
         viewModelScope.launch {
             for (item in missing) {

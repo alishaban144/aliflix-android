@@ -239,7 +239,7 @@ class NativePlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
-        localPlayer.setVideoFrameMetadataListener { timeUs, _, _, _ -> videoClock.frame(timeUs) }
+        localPlayer.setVideoFrameMetadataListener { timeUs, releaseNs, _, _ -> videoClock.frame(timeUs, releaseNs) }
         localPlayer.addListener(object : Player.Listener {
             override fun onAudioSessionIdChanged(audioSessionId: Int) { updateBoost() }
             override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
@@ -858,6 +858,7 @@ class NativePlaybackService : MediaSessionService() {
         }
 
         internal fun speechEvidence(): List<SpeechWindow> = activeService?.let { it.speechCapture.windows(it.playedUntil) }.orEmpty()
+        internal val sceneFrameReleaseNs: Long get() = activeService?.videoClock?.releaseTimeNs ?: 0L
         internal val canRecordProgress: Boolean get() = activeService?.let {
             it.pendingResumeMs == null && (renderedStreamUrl == activeStreamUrl ||
                 it.player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE)

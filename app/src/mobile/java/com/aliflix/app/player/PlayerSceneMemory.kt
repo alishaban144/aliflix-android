@@ -3,6 +3,7 @@ package com.aliflix.app.player
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.PixelCopy
 import android.view.SurfaceView
 import com.aliflix.app.talk.buildTalkRecallPacket
@@ -36,6 +37,8 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
     private var copying = false
     private var cached: TalkSceneContext? = null
     private var pausedFrame: TalkSceneFrame? = null
+    private var pausedFrameReleaseNs = 0L
+    private var surfaceSettlesAt = 0L
     private var lastCaptionText = ""
     private val captureMutex = Mutex()
     private var retrievedTranscript: TalkTranscript? = null
@@ -66,6 +69,7 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
     /** A seek keeps the episode transcript and prior visual journal; only the live window is stale. */
     fun invalidate() {
         revision++; frames.clear(); cached = null; pausedFrame = null; lastPosition = Double.NaN; lastCaptionText = ""; lastWatchedPosition = Double.NaN
+        surfaceSettlesAt = SystemClock.uptimeMillis() + 100
     }
 
     private fun resetEpisode() {
@@ -73,6 +77,7 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
         cached = null; pausedFrame = null; lastPosition = Double.NaN; lastWatchedPosition = Double.NaN; lastBeatPosition = Double.NaN
         lastCaptionText = ""; identity = ""
         retrievedTranscript = null
+        surfaceSettlesAt = SystemClock.uptimeMillis() + 100
     }
 
     private fun observe(state: JSONObject): Double {
@@ -171,7 +176,8 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
         val position = observe(state)
         return pausedFrame?.takeIf {
             state.optBoolean("sceneSurfaceReady") && !state.optBoolean("playWhenReady") &&
-                abs(position-it.seconds)<.15
+                abs(position-it.seconds)<.05 && SystemClock.uptimeMillis() >= surfaceSettlesAt &&
+                state.optLong("videoReleaseNs")==pausedFrameReleaseNs
         }
     }
 
@@ -180,20 +186,33 @@ internal class PlayerSceneMemory(private val video: () -> SurfaceView?, private 
         if (state.optString("contentKey").isBlank()) return null
         rememberWatched(position)
         val owner = identity; val generation = revision
-        if (!copying && state.optBoolean("sceneSurfaceReady")) {
-            val paused = !state.optBoolean("playWhenReady")
+        val paused = !state.optBoolean("playWhenReady")
+        val existingStill = pausedFrame?.takeIf {
+            paused && abs(position - it.seconds) < .05 && state.optLong("videoReleaseNs")==pausedFrameReleaseNs
+        }
+        if (!copying && existingStill == null && state.optBoolean("sceneSurfaceReady")) {
+            val settle = surfaceSettlesAt - SystemClock.uptimeMillis()
+            if (settle > 0) delay(settle)
+            val ready = snapshot()
+            observe(ready)
+            val releaseNs = ready.optLong("videoReleaseNs")
+            if (owner != identity || generation != revision || !ready.optBoolean("sceneSurfaceReady") ||
+                paused && (ready.optBoolean("playWhenReady") || abs(ready.optDouble("positionSeconds") - position) >= .05 ||
+                    releaseNs > System.nanoTime())) return null
             copying = true
             try {
-                val frame = withTimeoutOrNull(900) { copyVideo(if (paused) 1080 else 640) }
+                val frame = withTimeoutOrNull(900) { copyVideo(if (paused) 960 else 640) }
                 val after = snapshot()
                 observe(after)
                 if (frame != null && owner == identity && generation == revision && abs(after.optDouble("positionSeconds") - position) < 1.2) {
                     if (frames.lastOrNull()?.let { abs(it.seconds - position) <= 1.5 } == true) frames.removeLast()
                     val captured = TalkSceneFrame(position, frame)
                     frames.addLast(captured)
-                    if (!state.optBoolean("playWhenReady") && !after.optBoolean("playWhenReady") &&
-                        abs(after.optDouble("positionSeconds")-position)<.15 &&
-                        pausedFrame?.let { abs(it.seconds-position)<.15 } != true) pausedFrame = captured
+                    if (paused && after.optBoolean("sceneSurfaceReady") && !after.optBoolean("playWhenReady") &&
+                        abs(after.optDouble("positionSeconds")-position)<.05 && after.optLong("videoReleaseNs")==releaseNs) {
+                        pausedFrame = captured
+                        pausedFrameReleaseNs = releaseNs
+                    }
                     while (frames.size > 20 || frames.firstOrNull()?.seconds?.let { it < position - 48 } == true) frames.removeFirst()
                     if (lastBeatPosition.isNaN() || abs(position - lastBeatPosition) >= 20.0) {
                         visualBeats.addLast(TalkSceneFrame(position, frame))

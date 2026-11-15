@@ -144,7 +144,9 @@ import kotlin.math.roundToInt
         val home = Offset(orbX + radius, orbY + radius)
         val viewport = Rect(radius, radius, maxX + radius, maxY + radius)
         val visibleFrame = overlayWindowOrigin?.let { origin -> videoBounds?.translate(-origin) }
-        val target = if(!controls && !typing && !dragging && state.phase=="Speaking")
+        val thinking = !typing && connected && state.phase!="Speaking" &&
+            (state.phase=="Thinking" || activity==TalkOrbActivity.OBSERVE || activity==TalkOrbActivity.RECALL)
+        val target = if(!controls && !typing && !dragging && (state.phase=="Speaking" || thinking))
             visibleFrame?.let { frame ->
                 state.frameTarget?.inVideo(frame)?.intersect(Rect(0f,0f,maxX+orbPixels,heightPixels))
                     ?.takeUnless { it.isEmpty }
@@ -171,12 +173,18 @@ import kotlin.math.roundToInt
                 if(target==null)hasSceneTravel=false
                 return@LaunchedEffect
             }
-            if(target!=null)kotlinx.coroutines.delay(150)else kotlinx.coroutines.delay(240)
+            if(target==null)kotlinx.coroutines.delay(200)
             val control = talkOrbGlideControl(from,destination,viewport,radius,target,captions)
-            val duration = (590 + 175 * distance / (2 * radius)).roundToInt().coerceIn(690,1_520)
+            val duration = (470 + 135 * distance / (2 * radius)).roundToInt().coerceIn(560,1_340)
             hasSceneTravel = true
             glide.snapTo(0f)
-            glide.animateTo(1f,tween(duration,easing=CubicBezierEasing(.34f,.04f,.30f,1f))) {
+            glide.animateTo(1f,keyframes {
+                durationMillis = duration
+                0f at 0 using LinearOutSlowInEasing
+                .14f at (duration * .24f).roundToInt() using FastOutSlowInEasing
+                .82f at (duration * .70f).roundToInt() using LinearOutSlowInEasing
+                1f at duration
+            }) {
                 orbCenter = talkOrbGlidePoint(from,control,destination,value)
             }
             if(target==null)hasSceneTravel=false
@@ -259,7 +267,7 @@ import kotlin.math.roundToInt
                 sceneFocus=target!=null,faceFloat=false,
                 haloStyle=TalkHaloStyle.LED, haloReady=!typing && (connected && talkVoiceHaloReady(state) || !connected && state.microphoneReady && !state.muted),
                 eyesClosed=!state.textMode && !connected,blinkOnConnect=!state.textMode && connected,
-                playerThinking=!typing&&state.phase!="Speaking"&&talkShowsResponseProgress(state.sending,state.answerComplete))
+                playerThinking=thinking)
         }
     }
 }

@@ -67,21 +67,27 @@ class Talk190SceneDeviceTest {
                     while (openedAt == 0L) delay(5)
                     var audio = 0L
                     var transport = 0L
+                    var orb = 0L
                     withTimeoutOrNull(20_000) {
-                        while(audio == 0L || transport == 0L) {
+                        while(audio == 0L || transport == 0L || orb == 0L) {
                             val now=android.os.SystemClock.elapsedRealtime()
                             if(audio==0L && player.talkVoice.state.value.microphoneReady)audio=now
                             if(transport==0L)transport=player.talkVoice.debugPlayerTransportAt.takeIf { it>=openedAt }?:0L
+                            if(orb==0L && player.talkVoice.debugCardBounds["player-orb"] != null)orb=now
                             delay(10)
                         }
                     }
                     JSONObject().put("tapToCaptureMs",audio.takeIf { it>=openedAt }?.minus(openedAt))
                         .put("tapToTransportMs",transport.takeIf { it>=openedAt }?.minus(openedAt))
+                        .put("tapToOrbLayoutMs",orb.takeIf { it>=openedAt }?.minus(openedAt))
                         .put("preflight",player.talkVoice.debugPreparedSocketClaims>preflightClaims)
                 } else null
                 if(args.getString("sceneWaitForPreflight")=="true")delay(3000)
                 if(!inspectOnly){
-                    withContext(Dispatchers.Main){player.talkVoice.debugTraceInput=true}
+                    withContext(Dispatchers.Main){
+                        player.talkVoice.debugTraceInput=true
+                        player.talkVoice.debugCardBounds.remove("player-orb")
+                    }
                     if(args.getString("sceneUseToolbar")=="true"){
                         val automation=i.uiAutomation
                         fun find(node:android.view.accessibility.AccessibilityNodeInfo?):android.view.accessibility.AccessibilityNodeInfo? {
