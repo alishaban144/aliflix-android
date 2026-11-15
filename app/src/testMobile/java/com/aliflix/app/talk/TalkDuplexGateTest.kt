@@ -20,4 +20,11 @@ class TalkDuplexGateTest {
   now=1201;assertFalse(gate.isEcho(pcm(16000,.032,317.0)))
   now=0;gate.reset();assertFalse(gate.isEcho(pcm(16000,.032,317.0)))
  }
+ @Test fun partialAudioTrackWritesKeepTheReferenceAligned(){
+  val gate=TalkDuplexGate{0}
+  val far=pcm(24000,.2,317.0)
+  for(offset in far.indices step 22)gate.reference(far,offset,minOf(22,far.size-offset))
+  assertTrue(gate.isEcho(pcm(16000,.032,317.0,.012),nearProbability=.99f))
+  assertFalse(gate.isEcho(pcm(16000,.032,881.0,.012),nearProbability=.99f))
+ }
 }

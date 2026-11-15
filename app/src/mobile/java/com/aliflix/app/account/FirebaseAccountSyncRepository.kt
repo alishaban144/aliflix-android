@@ -287,7 +287,7 @@ class FirebaseAccountSyncRepository(
             .filterNot { (cloud.removedProgress[it.key]?:-1)>=it.updatedAtMillis || pendingDeletion(uid,PROGRESS,it.key,it.updatedAtMillis) }
         val localSettings = currentSettingsSnapshot()
         val mergedSettings = AccountMergePolicy.resolveSettings(localSettings, cloud.settings)
-        queueInitialImports(uid,mergedLibrary,cloud.library)
+        val recentImports = queueInitialImports(uid, mergedLibrary, cloud.library)
         libraryStore.applySyncedSnapshot(mergedLibrary)
         playbackProgressStore.applySyncedEntries(mergedProgress)
         applySettingsSnapshot(mergedSettings)
@@ -298,10 +298,7 @@ class FirebaseAccountSyncRepository(
         flushLibraryOutbox(uid)
 
         withTimeout(INITIAL_SYNC_TIMEOUT_MILLIS) {
-            val cloudRecent = cloud.library.recent.associateBy { it.media.key }
-            uploadMergedSnapshot(uid, mergedLibrary.recent.filter {
-                it.lastPlayedAtMillis > (cloudRecent[it.media.key]?.lastPlayedAtMillis ?: -1L)
-            }, mergedProgress, mergedSettings)
+            uploadMergedSnapshot(uid, recentImports, mergedProgress, mergedSettings)
         }
     }
 
@@ -712,7 +709,7 @@ class FirebaseAccountSyncRepository(
             recentEditor.apply()
         }
     }
-    private fun queueInitialImports(uid:String,merged:LibrarySnapshot,cloud:LibrarySnapshot) {
+    private fun queueInitialImports(uid:String,merged:LibrarySnapshot,cloud:LibrarySnapshot):List<RecentMediaEntry> {
         val editor=libraryOutbox.edit()
         listOf(Triple(MY_LIST,merged.myList,cloud.myList),Triple(FAVORITES,merged.favorites,cloud.favorites)).forEach { (collection,local,remote) ->
             val known=remote.map { it.key }.toSet()
@@ -723,12 +720,17 @@ class FirebaseAccountSyncRepository(
             }
         }
         editor.apply()
+        val cloudRecent = cloud.recent.associateBy { it.media.key }
+        val recentImports = merged.recent.filter {
+            it.lastPlayedAtMillis > (cloudRecent[it.media.key]?.lastPlayedAtMillis ?: -1L)
+        }
         val recentEditor=recentOutbox.edit()
-        merged.recent.forEach { entry ->
+        recentImports.forEach { entry ->
             val key="$uid/${entry.media.key}"
             if(!recentOutbox.contains(key))recentEditor.putString(key,org.json.JSONObject().put("media",entry.media.toJson()).put("time",entry.lastPlayedAtMillis).toString())
         }
         recentEditor.apply()
+        return recentImports
     }
     private fun flushLibraryOutbox(uid:String) {
         scope.launch(Dispatchers.Default) {
