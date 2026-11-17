@@ -26,6 +26,44 @@ import java.io.File
 class MobileRefinementUiTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun timeOffsetPreviewClosesTheSheetAndRepeatsUntilRelease() {
+        var tenths by mutableIntStateOf(0)
+        compose.setContent { AliflixMobileTheme {
+            val selection = PlaybackSelection(Media(1, MediaType.MOVIE, "Fixture"),
+                source = PlaybackSource(MobilePlaybackProvider.FLIXER))
+            NativePlayerScreen(
+                NativePlayerUi(title = "Fixture", ready = true, playbackSelection = selection), null,
+                settings = PlayerSettings(subtitleDelayTenths = tenths),
+                onSubtitleDelayChange = { tenths = it },
+                onSubtitleDelayStep = { tenths += it },
+            )
+        } }
+        compose.onNodeWithContentDescription("More").performClick()
+        compose.onNodeWithText("Audio & subtitles").performClick()
+        compose.onNodeWithContentDescription("Adjust time offset over video").performScrollTo().performClick()
+        compose.onNodeWithText("SUBTITLE SYNC").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Close time offset preview").assertIsDisplayed()
+        val later = compose.onNodeWithContentDescription("Show subtitles 0.1 seconds later")
+        later.performClick()
+        compose.runOnIdle { assertEquals(1, tenths) }
+
+        later.performTouchInput { down(center) }
+        compose.waitUntil(timeoutMillis = 4_000) { tenths >= 4 }
+        later.performTouchInput { up() }
+        val afterRelease = tenths
+        compose.mainClock.advanceTimeBy(500)
+        compose.runOnIdle { assertEquals(afterRelease, tenths) }
+
+        val earlier = compose.onNodeWithContentDescription("Show subtitles 0.1 seconds earlier")
+        earlier.performTouchInput { down(center) }
+        compose.waitUntil(timeoutMillis = 4_000) { tenths <= afterRelease - 3 }
+        earlier.performTouchInput { up() }
+        compose.onNodeWithText("Reset").performClick()
+        compose.runOnIdle { assertEquals(0, tenths) }
+        compose.onNodeWithContentDescription("Close time offset preview").performClick()
+        compose.onNodeWithText("Time Offset").assertDoesNotExist()
+    }
+
     @Test fun subtitleShortcutOnlyShowsTracksAndSearchWhileMoreRetainsAdvancedSettings() {
         var loading by mutableStateOf(false)
         var tracks by mutableStateOf(listOf(track("a","Release A")))

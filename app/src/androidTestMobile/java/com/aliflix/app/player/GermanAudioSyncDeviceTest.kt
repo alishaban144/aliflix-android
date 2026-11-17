@@ -124,7 +124,7 @@ class GermanAudioSyncDeviceTest {
             File(output,"original-cues.json").writeText(original)
             if (InstrumentationRegistry.getArguments().getString("collectReferences") == "true") {
                 kotlinx.coroutines.runBlocking {
-                    val repo = SubdlSubtitleRepository()
+                    val repo = SubtitleRepository()
                     val tracks = mobileSubtitleCandidates(normalizeMobileSubtitleTracks(repo.search(selection,"de").getOrDefault(emptyList())), "de", 1, 1, selection.media.title)
                     for ((index, track) in tracks.take(6).withIndex()) {
                         val cues = repo.download(track,selection).getOrDefault(emptyList())

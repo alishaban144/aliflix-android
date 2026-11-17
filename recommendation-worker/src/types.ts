@@ -214,6 +214,7 @@ export interface SecretBindings {
   TMDB_API_KEY?: string;
   TMDB_READ_ACCESS_TOKEN?: string;
   SUBDL_API_KEY?: string;
+  WYZIE_API_KEY?: string;
   CURSOR_SIGNING_SECRET: string;
 }
 

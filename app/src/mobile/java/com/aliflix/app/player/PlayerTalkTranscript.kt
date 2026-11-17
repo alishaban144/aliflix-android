@@ -34,7 +34,7 @@ internal class PlayerTalkTranscript {
             if(com.aliflix.app.BuildConfig.DEBUG)android.util.Log.d("TalkEdition", "cached duration=${it.timingDurationMs} end=${it.cues.maxOfOrNull { cue -> cue.endSeconds }}")
             return@withLock it
         }
-        val repository = SubdlSubtitleRepository()
+        val repository = SubtitleRepository()
         val supplied=tracks.filter { it.hashMatched || it.id.startsWith("flixer:") || it.downloadToken.startsWith("https://") }
         val result = try {
             AutomaticSubtitleLoader(

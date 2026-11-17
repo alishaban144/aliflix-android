@@ -377,7 +377,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                     val selected = saved ?: if (NativePlaybackService.activeRequest?.offlineDownloadId.isNullOrBlank()) {
                         ui = ui.copy(subtitleLoading = true)
                         try {
-                            val repository = SubdlSubtitleRepository()
+                            val repository = SubtitleRepository()
                             withTimeoutOrNull(28_000) {
                                 AutomaticSubtitleLoader(
                                     sourceTracks = { ui.subtitleTracks + NativePlaybackService.activeRequest?.sourceCaptionTracks().orEmpty() },
@@ -513,7 +513,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         if (language != null) editor.putString("language", canonicalSubtitleLanguageCode(language))
         editor.apply()
     }
-    private var subtitleSyncDebounceJob: Job? = null
+    private var providerTrial: Job? = null
     private var audioSyncJob: Job? = null
     private var referencePreparation: Job? = null
     private var referencePreparationKey: String? = null
@@ -731,6 +731,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                     onSelectServer = ::selectServer,
                     onBrowseProvider = ::browseProvider,
                     onSelectProviderServer = ::selectProviderServer,
+                    onTryAlternativeProvider = ::tryAlternativeProvider,
                     onRetryProviderServers = ::retryProviderDiscovery,
                     onSeasonSelected = ::loadEpisodeSeason,
                     onStop = ::stopPlayback,
@@ -769,6 +770,9 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                     },
                     onSubtitleDisable = ::disableSubtitles,
                     onSubtitleDelayChange = ::updateSubtitleDelay,
+                    onSubtitleDelayStep = { step ->
+                        updateSubtitleDelay(settingsStore.settings.value.subtitleDelayTenths + step)
+                    },
                     onSyncWithAudio = ::syncWithAudio,
                     onResetSubtitleSync = ::resetSubtitleSync,
                     onAudioBoostChange = settingsStore::updateBoostAudio,
@@ -926,6 +930,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     }
 
     internal fun pauseAndLeavePlayer() {
+        cancelProviderTrial()
         preparation?.cancel(); resolver?.close(); resolver = null
         subtitleJob?.cancel()
         controller?.pause()
@@ -939,6 +944,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         super.onNewIntent(intent); setIntent(intent)
         if(talkCreated)intent.getStringExtra("talkTaskId")?.let { id -> com.aliflix.app.talk.TalkTaskWork.get(this).conversation(id)?.let(talkVoice::restoreHandoff) }
         if (intent.hasExtra("selection") || intent.hasExtra("request") || intent.hasExtra("requestFile")) {
+            cancelProviderTrial()
             requestAccepted = false; exhaustedSources.clear(); triedServers.clear(); recoveryCount = 0; acceptRequest(intent)
         }
     }
@@ -1120,6 +1126,146 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     private fun availableProvidersFor(current: PlaybackSelection): List<com.aliflix.app.model.PlaybackProvider> =
         (com.aliflix.app.model.mobileGeneralPlaybackProviders() + MobilePlaybackProvider.entries.filter { it.isAnimeNative } + PlaybackProviderId.entries.filter { it.isAnimeNative } +
             current.source.identity).filter { it.isAvailableFor(current.media) }.distinct()
+
+    private data class VerifiedProvider(
+        val selection: PlaybackSelection,
+        val server: String,
+        val servers: List<String>,
+        val request: NativePlaybackRequest,
+    )
+
+    private fun cancelProviderTrial() {
+        providerTrial?.cancel()
+        providerTrial = null
+        if (ui.checkingAlternativeProvider) ui = ui.copy(checkingAlternativeProvider = false)
+    }
+
+    private fun tryAlternativeProvider() {
+        val current = selection ?: return
+        val player = controller ?: return
+        val active = NativePlaybackService.activeRequest ?: return
+        val requestId = NativePlaybackService.activeRequestId ?: return
+        if (!ui.ready || ui.external || active.offlineDownloadId.isNotBlank() ||
+            preparation?.isActive == true || audioEditionJob?.isActive == true || providerTrial?.isActive == true) return
+
+        val preferences = com.aliflix.app.data.PlaybackProviderRepository(this).preferences.value
+        val candidates = alternativePlaybackSources(current, preferences)
+        if (candidates.isEmpty()) {
+            ui = ui.copy(message = "No other provider supports this title")
+            return
+        }
+        val audio = NativePlaybackService.selectedAudioLanguage()
+        val frameProbe = kotlinx.coroutines.sync.Semaphore(1)
+        ui = ui.copy(checkingAlternativeProvider = true, message = null)
+        providerTrial = lifecycleScope.launch {
+            try {
+                val winner = withTimeoutOrNull(65_000) {
+                    firstSuccessful(candidates.mapIndexed { index, candidate -> suspend {
+                        if (index > 0) delay(900)
+                        val adapter = NativeStreamResolver(this@NativePlayerActivity, progress, resolverHost)
+                        var server = candidate.source.identity.displayName
+                        var servers = emptyList<String>()
+                        try {
+                            withTimeout(resolveBudgetMillis(candidate.source.identity) + 12_000) {
+                                val request = adapter.resolve(
+                                    candidate, player.currentPosition.coerceAtLeast(0), emptySet(),
+                                    onServers = { servers = it }, parallelism = 1,
+                                    audioLanguage = audio.ifBlank { null }, allowVerification = false,
+                                    onServer = { server = it },
+                                )
+                                check(request.url != active.url)
+                                frameProbe.acquire()
+                                try {
+                                    StartupStreamCache.awaitPlayable(this@NativePlayerActivity,
+                                        request.copy(positionMs = player.currentPosition.coerceAtLeast(0)),
+                                        audio, requireVideoFrame = true)
+                                } finally { frameProbe.release() }
+                                VerifiedProvider(candidate, server, servers.ifEmpty { listOf(server) }, request)
+                            }
+                        } finally { adapter.close() }
+                    } }, parallelism = 2)
+                }
+                if (selection?.key != current.key || selection?.source != current.source || controller !== player ||
+                    ui.external || NativePlaybackService.activeRequestId != requestId) return@launch
+                if (winner != null) handOffToProvider(winner, current, player)
+                else ui = ui.copy(message = "No alternate stream could be verified")
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                ui = ui.copy(message = "No alternate stream could be verified")
+            } finally {
+                if (providerTrial === coroutineContext[Job]) {
+                    providerTrial = null
+                    ui = ui.copy(checkingAlternativeProvider = false)
+                }
+            }
+        }
+    }
+
+    private fun handOffToProvider(winner: VerifiedProvider, current: PlaybackSelection, player: Player) {
+        val previous = NativePlaybackService.activeRequest ?: return
+        val position = player.currentPosition.coerceAtLeast(0)
+        val wasPlaying = player.playWhenReady
+        val previousUi = ui
+        val previousCues = activeSubtitleCues
+        val previousCuesJson = activeSubtitleCuesJson
+        recordCurrentProgress(urgent = true)
+        originalAudioWarmup?.cancel()
+        alternativeAudio.clear()
+        subtitleJob?.cancel()
+        activeSubtitleCues = emptyList()
+        activeSubtitleCuesJson = null
+        subtitleTimingEvidence = null
+        renderCaptions(emptyList())
+        player.pause()
+        ui = ui.copy(stage = "Switching to ${winner.selection.source.identity.displayName}", ready = false,
+            server = winner.server, availableServers = winner.servers, subtitleTracks = emptyList(),
+            activeSubtitleTrack = null, subtitleError = null, error = null)
+        preparation = lifecycleScope.launch {
+            val candidate = winner.selection
+            val request = winner.request.copy(positionMs = position, playing = false, selectionJson = candidate.nativeJson())
+            try {
+                withTimeout(12_000) {
+                    val attempt = startNative(request)
+                    awaitNativeReady(request.url, attempt)
+                }
+            } catch (error: Exception) {
+                ensureActive()
+                selection = current
+                ui = ui.copy(server = previousUi.server, availableServers = previousUi.availableServers,
+                    subtitleTracks = previousUi.subtitleTracks, activeSubtitleTrack = previousUi.activeSubtitleTrack)
+                try {
+                    val attempt = startNative(previous.copy(positionMs = position, playing = false, selectionJson = current.nativeJson()))
+                    awaitNativeReady(previous.url, attempt)
+                    activeSubtitleCues = previousCues
+                    activeSubtitleCuesJson = previousCuesJson
+                    if (previousCuesJson != null) {
+                        NativePlaybackService.rememberOriginalSubtitles(previousCuesJson)
+                        NativePlaybackService.updateSubtitles(previous.subtitlesVtt, previous.subtitleLanguage, previous.subtitleLabel)
+                    }
+                    ui = ui.copy(stage = null, ready = true, message = "Alternate stream failed. Restored ${current.source.identity.displayName}.")
+                    if (wasPlaying) resumePreparedPlayback()
+                    warmOriginalAudio(current, previousUi.server)
+                } catch (rollbackError: Exception) {
+                    ensureActive()
+                    ui = ui.copy(stage = null, ready = false, error = "Couldn't restore the previous stream. Retry playback.")
+                }
+                return@launch
+            }
+
+            triedServers.clear()
+            exhaustedSources.clear()
+            recoveryCount = 0
+            resolvedServerNames[serverCatalogueKey(candidate)] = winner.servers
+            intent.putExtra("selection", candidate.nativeJson())
+            rememberSuccessfulRoute(candidate, winner.server, request)
+            applyPreparedCaptions(candidate, request, allowAutomaticSubtitles(), selectedSubtitleLanguage())
+            ui = ui.copy(stage = null, ready = true, message = "Switched to ${candidate.source.identity.displayName}")
+            reconcileSyncedCaptions()
+            if (wasPlaying) resumePreparedPlayback()
+            warmNextEpisode(candidate, winner.server)
+            warmOriginalAudio(candidate, winner.server)
+        }
+    }
 
     /** Level-one drill-in: lists a source's servers without touching the running stream. */
     private fun browseProvider(provider: com.aliflix.app.model.PlaybackProvider) {
@@ -1314,6 +1460,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
             ui.sourceAudioOptions.none { it.language == language }) return
         if (ui.pendingSourceAudioLanguage == language || (ui.pendingSourceAudioLanguage == null && ui.sourceAudioLanguage == language)) return
         val active = NativePlaybackService.activeRequest ?: return
+        cancelProviderTrial()
         val alternative=alternativeAudio[language]?.takeIf{alternativeAudioOwner==current.key}
         val target=alternative?.selection?:current
         if (audioEditionRollback == null) audioEditionRollback = active
@@ -1383,6 +1530,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
 
     private fun prepareSelection(positionMs: Long? = null, preferredServer: String? = null,
         strictPreferredServer: Boolean = false) {
+        cancelProviderTrial()
         audioEditionJob?.cancel(); audioEditionRollback = null
         ui = ui.copy(pendingSourceAudioLanguage = null)
         val current = selection ?: return
@@ -1461,7 +1609,6 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         )
         updateSelectionUi()
         preparation = lifecycleScope.launch {
-            val choices = getSharedPreferences("native-subtitle-choice", MODE_PRIVATE)
             val auto = allowAutomaticSubtitles()
             val language = selectedSubtitleLanguage()
             val originalCaptions = if (current.source.identity == com.aliflix.app.model.MobilePlaybackProvider.FLIXER)
@@ -1608,24 +1755,8 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                     try {
                         val attempt = startNative(resolved.copy(positionMs = resume, playing = false, preferEmbeddedSubtitles = auto, subtitleLanguage = language.lowercase()))
                         awaitNativeReady(resolved.url, attempt)
-                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                            runCatching { routeStore.save(candidate, server, resolved) }
-                        }
-                        if (candidate.media.type == com.aliflix.app.model.MediaType.TV) {
-                            history.edit().putString("$seriesKey:provider", candidate.source.identity.name)
-                                .putString("$seriesKey:server", server).apply()
-                        }
-                        if (hasManualSubtitleChoice() && subtitleChoices.getBoolean("enabled", false)) {
-                            restoreCaption(candidate, subtitleChoices.getString("language", language) ?: language, manual = true)
-                        } else if (auto) loadAutomaticSubtitles(candidate, language, resolved.url)
-                        else if (candidate.source.identity.hasSourceEditions) {
-                            ui = ui.copy(subtitleTracks = resolved.sourceCaptionTracks())
-                        } else if (candidate.source.identity == com.aliflix.app.model.MobilePlaybackProvider.FLIXER) {
-                            subtitleJob = lifecycleScope.launch {
-                                val tracks = FlixerSubtitleRepository.tracks(candidate)
-                                if (selection?.key == candidate.key) ui = ui.copy(subtitleTracks = tracks)
-                            }
-                        }
+                        rememberSuccessfulRoute(candidate, server, resolved)
+                        applyPreparedCaptions(candidate, resolved, auto, language)
                         intent.putExtra("selection", candidate.nativeJson())
                         ui = ui.copy(stage = null, ready = true, error = null,
                             message = null)
@@ -1660,6 +1791,30 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                 val message = "This video is currently unavailable. Please try again later."
                 ui = ui.copy(stage = null, error = message, subtitleLoading = false)
             } finally { originalCaptions?.cancel(); resolver?.close(); resolver = null }
+        }
+    }
+
+    private suspend fun rememberSuccessfulRoute(candidate: PlaybackSelection, server: String, request: NativePlaybackRequest) {
+        withContext(Dispatchers.IO) { runCatching { routeStore.save(candidate, server, request) } }
+        if (candidate.media.type == com.aliflix.app.model.MediaType.TV) {
+            val seriesKey = "series:${candidate.media.key}"
+            getSharedPreferences("native-resolver-performance", MODE_PRIVATE).edit()
+                .putString("$seriesKey:provider", candidate.source.identity.name).putString("$seriesKey:server", server).apply()
+        }
+    }
+
+    private fun applyPreparedCaptions(candidate: PlaybackSelection, request: NativePlaybackRequest, auto: Boolean, language: String) {
+        if (hasManualSubtitleChoice() && subtitleChoices.getBoolean("enabled", false)) {
+            restoreCaption(candidate, subtitleChoices.getString("language", language) ?: language, manual = true)
+        } else if (auto) {
+            loadAutomaticSubtitles(candidate, language, request.url)
+        } else if (candidate.source.identity.hasSourceEditions) {
+            ui = ui.copy(subtitleTracks = request.sourceCaptionTracks())
+        } else if (candidate.source.identity == MobilePlaybackProvider.FLIXER) {
+            subtitleJob = lifecycleScope.launch {
+                val tracks = FlixerSubtitleRepository.tracks(candidate)
+                if (selection?.key == candidate.key && selection?.source == candidate.source) ui = ui.copy(subtitleTracks = tracks)
+            }
         }
     }
 
@@ -1762,7 +1917,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         subtitleJob = lifecycleScope.launch {
             ui = ui.copy(subtitleLoading = true, subtitleError = null)
             try {
-                val repository = SubdlSubtitleRepository()
+                val repository = SubtitleRepository()
                 val result = withTimeoutOrNull(28_000) {
                     AutomaticSubtitleLoader(
                         sourceTracks = { when (current.source.identity) {
@@ -1880,7 +2035,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         subtitleJob?.cancel()
         subtitleJob = lifecycleScope.launch {
             ui = ui.copy(subtitleLoading = true)
-            val result = SubdlSubtitleRepository().search(current, selectedSubtitleLanguage())
+            val result = SubtitleRepository().search(current, selectedSubtitleLanguage())
             ensureActive()
             ui = ui.copy(subtitleLoading = false, subtitleTracks = normalizeMobileSubtitleTracks(ui.subtitleTracks + result.getOrDefault(emptyList())),
                 subtitleError = result.exceptionOrNull()?.let { "Subtitles couldn't load. Tap Refresh to retry." })
@@ -1917,7 +2072,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         subtitleJob?.cancel()
         subtitleJob = lifecycleScope.launch {
             ui = ui.copy(subtitleLoading = true, subtitleError = null)
-            val result = SubdlSubtitleRepository().download(track, chosenSelection)
+            val result = SubtitleRepository().download(track, chosenSelection)
             ensureActive()
             if (generation != subtitleGeneration || selection?.key != chosenSelection.key || !hasManualSubtitleChoice() ||
                 canonicalSubtitleLanguageCode(subtitleChoices.getString("language", "").orEmpty()) !=
@@ -1970,14 +2125,6 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
 
     private fun updateSubtitleDelay(tenths: Int) {
         settingsStore.updateSubtitleDelayTenths(tenths)
-        updateSubtitleCues()
-        subtitleSyncDebounceJob?.cancel()
-        subtitleSyncDebounceJob = lifecycleScope.launch {
-            delay(300)
-            val cuesJson = activeSubtitleCuesJson ?: return@launch
-            val vtt = renderSubtitleVtt(cuesJson, tenths / 10.0)
-            NativePlaybackService.updateSubtitles(vtt)
-        }
     }
 
     private fun renderSubtitleVtt(json: String?, delay: Double): String {
@@ -2042,7 +2189,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         referencePreparation = lifecycleScope.launch {
             try {
                 withTimeout(20_000) {
-                    val repository = SubdlSubtitleRepository()
+                    val repository = SubtitleRepository()
                     // Catalogue diversity avoids spending the whole background budget
                     // comparing near-identical copies of one mistimed release.
                     val catalogues = coroutineScope {
@@ -2558,6 +2705,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     }
 
     private fun stopPlayback() {
+        cancelProviderTrial()
         audioEditionJob?.cancel(); audioEditionRollback = null
         recordCurrentProgress(urgent = true)
         subtitleRenderJob?.cancel()
@@ -2565,6 +2713,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         startService(Intent(this, NativePlaybackService::class.java).setAction(NativePlaybackService.ACTION_STOP)); finish()
     }
     override fun onStop() {
+        cancelProviderTrial()
         talkPreparationJob?.cancel(); talkPreparationJob=null
         if (talkCreated) talkVoice.cancelPlayerPreparation()
         sceneCaptureJob?.cancel(); sceneCaptureJob = null
@@ -2592,7 +2741,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         if (::subtitles.isInitialized) subtitles.removeCallbacks(subtitleLayoutUpdate)
         subtitleRenderJob?.cancel()
         nextEpisodeWarmup?.cancel(); referencePreparation?.cancel()
-        preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel(); subtitleSyncDebounceJob?.cancel(); episodeQueueJob?.cancel(); introJob?.cancel(); super.onDestroy()
+        preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel(); episodeQueueJob?.cancel(); introJob?.cancel(); super.onDestroy()
     }
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)

@@ -85,6 +85,8 @@ internal fun MobilePlayerMoreSheet(
     onGermanEdition: (() -> Unit)? = null,
     synchronizedPlayback: Boolean = false,
     onShareScene: (() -> Unit)? = null,
+    onTryAlternativeProvider: (() -> Unit)? = null,
+    checkingAlternativeProvider: Boolean = false,
 ) {
     // Removing the sheet resets navigation and scroll positions on its next opening.
     if (!visible) return
@@ -191,9 +193,25 @@ internal fun MobilePlayerMoreSheet(
                             }
                         }
                         Spacer(Modifier.height(8.dp))
-                        MoreOptionRow(Icons.Rounded.Dns, "Streaming source",
-                            if(com.aliflix.app.BuildConfig.IS_TV) listOfNotNull(activeProvider.displayName, selectedServer?.takeUnless { it == activeProvider.displayName }).joinToString(" · ") else activeProvider.displayName,
-                            onClick = { page = MorePage.SOURCES })
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            MoreOptionRow(Icons.Rounded.Dns, "Streaming source",
+                                if(com.aliflix.app.BuildConfig.IS_TV) listOfNotNull(activeProvider.displayName, selectedServer?.takeUnless { it == activeProvider.displayName }).joinToString(" · ") else activeProvider.displayName,
+                                onClick = { page = MorePage.SOURCES }, modifier = Modifier.weight(1f))
+                            onTryAlternativeProvider?.let { tryProvider ->
+                                IconButton(
+                                    onClick = { onDismiss(); tryProvider() },
+                                    enabled = !checkingAlternativeProvider,
+                                    modifier = Modifier.padding(start = 4.dp).size(48.dp),
+                                ) {
+                                    if (checkingAlternativeProvider) {
+                                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                    } else {
+                                        Icon(Icons.Rounded.SwapHoriz, "Find a playable alternate provider",
+                                            tint = AliflixAccentSecondary, modifier = Modifier.size(22.dp))
+                                    }
+                                }
+                            }
+                        }
                         onCast?.let { action ->
                             MoreOptionRow(Icons.Rounded.Cast, "Cast", if (castActive) "Connected" else "",
                                 onClick = { onDismiss(); action() })
@@ -290,11 +308,13 @@ private fun MoreOptionRow(
     title: String,
     subtitle: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
     selected: Boolean = false,
     showChevron: Boolean = true,
 ) {
     Surface(
         onClick = onClick,
+        modifier = modifier,
         color = if (selected) AliflixAccentSecondary.copy(alpha = .10f) else RowBackground,
         shape = RoundedCornerShape(16.dp),
     ) {

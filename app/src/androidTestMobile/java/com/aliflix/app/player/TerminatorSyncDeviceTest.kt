@@ -27,7 +27,7 @@ class TerminatorSyncDeviceTest {
             val root = File(context.getExternalFilesDir(null), "terminator-subtitles-private").apply { mkdirs() }
             tracks.forEachIndexed { index, track ->
                 withTimeoutOrNull(8_000) {
-                    SubdlSubtitleRepository().download(track, original).getOrNull()?.let {
+                    SubtitleRepository().download(track, original).getOrNull()?.let {
                         File(root, "$index.json").writeText(subtitleCuesJson(it))
                     }
                 }
@@ -38,7 +38,7 @@ class TerminatorSyncDeviceTest {
         // This independently checked NTSC edition matches this stream. The PAL
         // edition returned first by the catalogue has a different clock. Expected
         // timing remains test-only; the app receives only the shifted captions.
-        val truth = tracks.firstNotNullOfOrNull { track -> SubdlSubtitleRepository().download(track, original).getOrNull()?.takeIf { cues ->
+        val truth = tracks.firstNotNullOfOrNull { track -> SubtitleRepository().download(track, original).getOrNull()?.takeIf { cues ->
             cues.size > 500 && cues.any { "graphic equalisers" in it.text.lowercase() && it.startSeconds in 1218.0..1220.0 }
         } }?.map { it.copy(startSeconds = it.startSeconds + 6.5, endSeconds = it.endSeconds + 6.5) }
             ?: error("The Terminator's original English captions are unavailable")

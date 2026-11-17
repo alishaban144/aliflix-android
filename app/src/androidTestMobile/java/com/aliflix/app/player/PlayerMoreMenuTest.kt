@@ -18,6 +18,21 @@ class PlayerMoreMenuTest {
     private val selection = PlaybackSelection(Media(101, MediaType.MOVIE, "Fixture"),
         source = PlaybackSource(MobilePlaybackProvider.FLIXER))
 
+    @Test fun alternateProviderActionDoesNotOpenManualSelection() {
+        var tried = 0
+        var dismissed = false
+        compose.setContent { AliflixMobileTheme {
+            MobilePlayerMoreSheet(true, selection, emptyList(), false, null, {}, {}, {}, {}, { dismissed = true },
+                onTryAlternativeProvider = { tried++ })
+        } }
+        compose.onNodeWithContentDescription("Find a playable alternate provider").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(1, tried)
+            assertTrue(dismissed)
+        }
+        compose.onNodeWithText("Streaming source").assertExists()
+    }
+
     @Test fun choosingSourceIsOneTapAndNeverExposesMirrors() {
         var visible by mutableStateOf(true);var selected:PlaybackProvider?=null;var mirrorCalls=0
         compose.setContent { AliflixMobileTheme {

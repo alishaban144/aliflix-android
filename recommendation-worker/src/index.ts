@@ -18,6 +18,7 @@ import { ContinuationReservation, createCursor, parseCursor, RecommendationSessi
 import { RecommendationEnv, RecommendationResponse, RecommendationResult, ServiceError } from './types';
 import { companySearch, editorialPicks, homeFeed, personCredits, titleDetails, titleSearch, tvNetworkFeed } from './catalog';
 import { downloadSubdlSubtitle, searchSubdlSubtitles } from './subdl';
+import { downloadWyzieSubtitle, isWyzieSubtitleToken, searchWyzieSubtitles } from './wyzie';
 import { TmdbClient } from './tmdb';
 import { subtitleAudioTiming } from './subtitleAudio';
 
@@ -264,6 +265,7 @@ export default {
         groqConfigured: Boolean(env.GROQ_API_KEY),
         tmdbConfigured: Boolean(env.TMDB_API_KEY || env.TMDB_READ_ACCESS_TOKEN),
         subdlConfigured: Boolean(env.SUBDL_API_KEY),
+        wyzieConfigured: Boolean(env.WYZIE_API_KEY?.trim()),
       });
     }
     if (url.pathname === '/v3/subtitles/audio-timing' && request.method === 'POST') {
@@ -275,6 +277,7 @@ export default {
     if (url.pathname === '/v3/subtitles' && request.method === 'GET') {
       try {
         await enforceRateLimit(request, env);
+        if (env.WYZIE_API_KEY?.trim()) return json(await searchWyzieSubtitles(env, url));
         return json(await searchSubdlSubtitles(env, url));
       } catch (error) { return errorResponse(error); }
     }
@@ -282,7 +285,9 @@ export default {
     if (subtitleDownloadMatch && request.method === 'GET') {
       try {
         await enforceRateLimit(request, env);
-        return await downloadSubdlSubtitle(env, subtitleDownloadMatch[1]);
+        const token = subtitleDownloadMatch[1];
+        if (isWyzieSubtitleToken(token)) return await downloadWyzieSubtitle(env, token);
+        return await downloadSubdlSubtitle(env, token);
       } catch (error) { return errorResponse(error); }
     }
     if (url.pathname === '/v3/categories') {

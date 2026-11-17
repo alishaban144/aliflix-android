@@ -1,6 +1,7 @@
 package com.aliflix.app.player
 
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 
@@ -30,8 +31,11 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
@@ -65,6 +69,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.VerifiedUser
+import androidx.compose.material.icons.rounded.PictureInPictureAlt
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.BrightnessHigh
@@ -90,9 +95,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -100,6 +103,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -166,6 +170,7 @@ internal data class NativePlayerUi(
     val availableServers: List<String> = emptyList(),
     val availableProviders: List<PlaybackProvider> = emptyList(),
     val providerDiscovery: ProviderServerDiscovery = ProviderServerDiscovery(),
+    val checkingAlternativeProvider: Boolean = false,
     val ready: Boolean = false,
     val external: Boolean = false,
     val revision: Int = 0,
@@ -234,6 +239,7 @@ internal fun NativePlayerScreen(
     onSelectServer: (String) -> Unit = {},
     onBrowseProvider: (PlaybackProvider) -> Unit = {},
     onSelectProviderServer: (PlaybackProvider, String) -> Unit = { _, _ -> },
+    onTryAlternativeProvider: (() -> Unit)? = null,
     onRetryProviderServers: () -> Unit = {},
     onSeasonSelected: (Int) -> Unit = {},
     onStop: () -> Unit = {},
@@ -247,6 +253,7 @@ internal fun NativePlayerScreen(
     onSourceAudioSelected: (String) -> Unit = {},
     onSubtitleDisable: () -> Unit = {},
     onSubtitleDelayChange: (Int) -> Unit = {},
+    onSubtitleDelayStep: (Int) -> Unit = { onSubtitleDelayChange(settings.subtitleDelayTenths + it) },
     onSyncWithAudio: () -> Unit = {},
     onResetSubtitleSync: () -> Unit = {},
     onAudioBoostChange: (Boolean) -> Unit = {},
@@ -273,6 +280,7 @@ internal fun NativePlayerScreen(
     var isScrubbing by remember { mutableStateOf(false) }
     var episodesVisible by remember { mutableStateOf(false) }
     var moreVisible by remember { mutableStateOf(false) }
+    var previewOffset by remember(state.playbackSelection?.key, state.external) { mutableStateOf(false) }
     var shareScene by remember(state.playbackSelection?.key, NativePlaybackService.activeRequestId) { mutableStateOf(false) }
     var partyTopBarHeight by remember { mutableIntStateOf(56) }
     var sheet by remember { mutableStateOf<String?>(null) }
@@ -318,14 +326,21 @@ internal fun NativePlayerScreen(
     LaunchedEffect(seekFeedback.state?.token) {
         if (seekFeedback.state != null) { delay(650); seekFeedback.dismiss() }
     }
-    val overlayOpen = sheet != null || episodesVisible || moreVisible || shareScene
+    val overlayOpen = sheet != null || episodesVisible || moreVisible || shareScene || previewOffset
+    androidx.activity.compose.BackHandler(enabled = previewOffset) { previewOffset = false }
     androidx.activity.compose.BackHandler(enabled = episodesVisible || moreVisible) {
         episodesVisible = false
         moreVisible = false
     }
     LaunchedEffect(overlayOpen) { onOverlayVisibilityChanged(overlayOpen) }
     LaunchedEffect(controls) { onControlsVisibilityChanged(controls) }
-    LaunchedEffect(state.message) { state.message?.let { snackbar.showSnackbar(it) } }
+    LaunchedEffect(state.message, state.checkingAlternativeProvider) {
+        if (state.checkingAlternativeProvider) {
+            snackbar.showSnackbar("Checking other providers…", duration = SnackbarDuration.Indefinite)
+        } else {
+            state.message?.let { snackbar.showSnackbar(it) }
+        }
+    }
     val preparing = state.stage != null || (!state.ready && state.error == null && player?.mediaItemCount != 0 && (player?.duration ?: 0L) <= 0L)
     val playing = player?.isPlaying == true
     val ended = player?.playbackState == Player.STATE_ENDED
@@ -836,9 +851,19 @@ internal fun NativePlayerScreen(
             }
         }
 
-        // Cumulative double-tap / +/-15s seek feedback HUD
-
-
+        if (previewOffset && !state.external) {
+            SubtitleOffsetControls(
+                settings.subtitleDelayTenths,
+                onSubtitleDelayStep,
+                onReset = { onSubtitleDelayChange(0) },
+                onTogglePreview = { previewOffset = false },
+                preview = true,
+                modifier = Modifier.align(Alignment.TopCenter)
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                    .padding(top = if (controls) 80.dp else 12.dp, start = 12.dp, end = 12.dp)
+                    .widthIn(max = 300.dp),
+            )
+        }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp))
     }
 
@@ -893,6 +918,11 @@ internal fun NativePlayerScreen(
             servers = serverOptions,
             providers = providerOptions,
             providerDiscovery = state.providerDiscovery,
+            checkingAlternativeProvider = state.checkingAlternativeProvider,
+            onTryAlternativeProvider = onTryAlternativeProvider.takeIf {
+                !state.external && state.ready && !preparing &&
+                    NativePlaybackService.activeRequest?.offlineDownloadId.isNullOrBlank() && providerOptions.size > 1
+            },
             onSelectProvider = { provider -> onSelectProviderServer(provider, "Auto") },
             onRetryProviderServers = onRetryProviderServers,
             onSelectProviderServer = { option ->
@@ -1047,45 +1077,17 @@ internal fun NativePlayerScreen(
                             Text("Reset", color = AliflixAccentSecondary, fontSize = 11.sp)
                         }
                         }
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = Color.White.copy(alpha = 0.05f),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Column {
-                                    Text("Time Offset", color = Color.White, fontWeight = FontWeight.Medium, fontSize = 13.sp)
-                                    val offsetSec = settings.subtitleDelaySeconds
-                                    val offsetText = if (offsetSec == 0.0) "0.0s" else if (offsetSec > 0) "+%.1fs".format(Locale.ROOT, offsetSec) else "%.1fs".format(Locale.ROOT, offsetSec)
-                                    Text(offsetText, color = if (offsetSec != 0.0) AliflixAccentSecondary else Color.White.copy(alpha = 0.6f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    FilledTonalIconButton(
-                                        onClick = { onSubtitleDelayChange(settings.subtitleDelayTenths - 1) },
-                                        modifier = Modifier.size(48.dp),
-                                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color.White.copy(alpha = 0.1f), contentColor = Color.White)
-                                    ) {
-                                        Text("\u22120.1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                                    }
-                                    if (settings.subtitleDelayTenths != 0) {
-                                        TextButton(onClick = { onSubtitleDelayChange(0) }) {
-                                            Text("Reset", color = AliflixAccentSecondary, fontSize = 11.sp)
-                                        }
-                                    }
-                                    FilledTonalIconButton(
-                                        onClick = { onSubtitleDelayChange(settings.subtitleDelayTenths + 1) },
-                                        modifier = Modifier.size(48.dp),
-                                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color.White.copy(alpha = 0.1f), contentColor = Color.White)
-                                    ) {
-                                        Text("+0.1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                                    }
-                                }
-                            }
-                        }
+                        SubtitleOffsetControls(
+                            settings.subtitleDelayTenths,
+                            onSubtitleDelayStep,
+                            onReset = { onSubtitleDelayChange(0) },
+                            onTogglePreview = {
+                                sheet = null
+                                controls = false
+                                previewOffset = true
+                            }.takeIf { state.ready && !state.external },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
 
                         // Subtitle Size Selection
                         Text("SUBTITLE SIZE", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, modifier = Modifier.padding(top = 8.dp))
@@ -1195,6 +1197,87 @@ internal fun NativePlayerScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SubtitleOffsetControls(
+    tenths: Int,
+    onStep: (Int) -> Unit,
+    onReset: () -> Unit,
+    onTogglePreview: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    preview: Boolean = false,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = if (preview) PlayerInk.copy(alpha = .9f) else Color.White.copy(alpha = .05f),
+        contentColor = Color.White,
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Time Offset", fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                onTogglePreview?.let {
+                    IconButton(onClick = it, modifier = Modifier.size(48.dp)) {
+                        Icon(
+                            if (preview) Icons.Default.Close else Icons.Rounded.PictureInPictureAlt,
+                            if (preview) "Close time offset preview" else "Adjust time offset over video",
+                            tint = AliflixAccentSecondary,
+                            modifier = Modifier.size(19.dp),
+                        )
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                Text(
+                    (if (tenths > 0) "+%.1fs" else "%.1fs").format(Locale.ROOT, tenths / 10.0),
+                    color = if (tenths == 0) Color.White.copy(alpha = .6f) else AliflixAccentSecondary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                )
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RepeatingOffsetButton("−0.1", "Show subtitles 0.1 seconds earlier") { onStep(-1) }
+                TextButton(onClick = onReset, enabled = tenths != 0) { Text("Reset") }
+                RepeatingOffsetButton("+0.1", "Show subtitles 0.1 seconds later") { onStep(1) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RepeatingOffsetButton(label: String, description: String, onStep: () -> Unit) {
+    val interactions = remember { MutableInteractionSource() }
+    val pressed by interactions.collectIsPressedAsState()
+    val step by rememberUpdatedState(onStep)
+    var repeating by remember { mutableStateOf(false) }
+    LaunchedEffect(pressed, repeating) {
+        if (!pressed) {
+            repeating = false
+        } else if (repeating) {
+            while (true) {
+                delay(150)
+                step()
+            }
+        }
+    }
+    Box(
+        Modifier.size(48.dp).clip(CircleShape).background(Color.White.copy(alpha = .1f))
+            .combinedClickable(
+                interactionSource = interactions,
+                indication = LocalIndication.current,
+                role = androidx.compose.ui.semantics.Role.Button,
+                onClick = { step() },
+                onLongClickLabel = "Repeat adjustment",
+                onLongClick = { step(); if (pressed) repeating = true },
+            ).semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, fontWeight = FontWeight.Bold, fontSize = 11.sp)
     }
 }
 

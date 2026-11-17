@@ -262,7 +262,7 @@ class NativeSubtitleRenderingTest {
                     try { kotlinx.coroutines.delay(30_000); request.copy(title = "Slow") }
                     finally { loserClosed = true }
                 }, suspend {
-                    StartupStreamCache.awaitPlayable(context, request)
+                    StartupStreamCache.awaitPlayable(context, request, requireVideoFrame = true)
                     request
                 }))
                 assertEquals("Race", winner.title)

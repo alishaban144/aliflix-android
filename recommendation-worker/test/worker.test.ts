@@ -84,6 +84,7 @@ describe('Cloudflare Worker', () => {
       groqConfigured: true,
       tmdbConfigured: true,
       subdlConfigured: true,
+      wyzieConfigured: false,
     });
   });
 

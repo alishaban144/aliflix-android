@@ -43,8 +43,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "292"
-  RELEASE_VERSION_NAME: "3.1.202"
+  RELEASE_VERSION_CODE: "293"
+  RELEASE_VERSION_NAME: "3.1.203"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -368,9 +368,11 @@ jobs:
           unzip -tq aliflix-mobile-compat.apk
 
       - name: Build update manifests
+        env:
+          RELEASE_NOTES: ${{ inputs.notes }}
         run: |
           set -euo pipefail
-          RELEASE_NOTES=""
+          RELEASE_NOTES_JSON="$(jq -n --arg notes "$RELEASE_NOTES" '$notes')"
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -387,8 +389,8 @@ jobs:
             "sizeBytes": ${MOBILE_SIZE},
             "supportedAbis": ["arm64-v8a"],
             "minimumSdk": 29,
-            "notes": "${RELEASE_NOTES}",
-            "releaseNotes": "${RELEASE_NOTES}"
+            "notes": ${RELEASE_NOTES_JSON},
+            "releaseNotes": ${RELEASE_NOTES_JSON}
           }
           EOF
           cp "$MOBILE_APK" aliflix-mobile.apk
@@ -412,7 +414,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
+          body: ${{ inputs.notes || format('Aliflix {0}', env.RELEASE_VERSION_NAME) }}
           files: |
             aliflix-mobile.apk
             update-mobile.json

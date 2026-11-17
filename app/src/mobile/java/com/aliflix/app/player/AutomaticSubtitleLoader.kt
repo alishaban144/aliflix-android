@@ -28,7 +28,7 @@ internal class AutomaticSubtitleLoader(
         for ((budget, lookup) in lookups) {
             currentCoroutineContext().ensureActive()
             if (!stillCurrent()) return null
-            // Reserve time for SubDL even when several source files stall.
+            // Reserve time for the subtitle catalogue even when several source files stall.
             var best: AutomaticSubtitleResult? = null
             var bestGap = Double.POSITIVE_INFINITY
             val result = withTimeoutOrNull(budget) {

@@ -396,7 +396,7 @@ internal suspend fun PreparedDownload.downloadRequest(quality: DownloadQuality, 
     if (selection.source.identity.hasSourceEditions && language.isNotBlank()) {
         val caption = playback.sourceCaptionTracks().firstOrNull { canonicalSubtitleLanguageCode(it.languageCode) == canonicalSubtitleLanguageCode(language) }
         if (caption != null) {
-            val cues = SubdlSubtitleRepository().download(caption, selection).getOrThrow()
+            val cues = SubtitleRepository().download(caption, selection).getOrThrow()
             require(cues.isNotEmpty() && subtitleLanguageIsPlausible(cues, language)) { "Subtitles unavailable" }
             vtt = nativeSubtitlesVtt(subtitleCuesJson(cues), 0.0)
         }
@@ -404,7 +404,7 @@ internal suspend fun PreparedDownload.downloadRequest(quality: DownloadQuality, 
     if (selection.source.identity == MobilePlaybackProvider.FLIXER && language.isNotBlank()) {
         val originals = FlixerSubtitleRepository.tracks(selection).filter { it.languageCode.equals(language, true) }.sortedBy { it.hearingImpaired }
         for (original in originals.take(3)) {
-            val cues = withTimeoutOrNull(5_000) { SubdlSubtitleRepository().download(original, selection).getOrNull() }.orEmpty()
+            val cues = withTimeoutOrNull(5_000) { SubtitleRepository().download(original, selection).getOrNull() }.orEmpty()
             if (cues.isEmpty() || !subtitleLanguageIsPlausible(cues, language)) continue
             vtt = nativeSubtitlesVtt(JSONArray().apply { cues.forEach {
                 put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text))
@@ -413,7 +413,7 @@ internal suspend fun PreparedDownload.downloadRequest(quality: DownloadQuality, 
         }
     }
     if (!originalSubtitles && vtt.isBlank() && language.isNotBlank()) {
-        val repo = SubdlSubtitleRepository()
+        val repo = SubtitleRepository()
         val tracks = withTimeout(20_000) { repo.search(selection, language).getOrThrow() }
         val track = mobileSubtitleCandidates(normalizeMobileSubtitleTracks(tracks), language,
             selection.seasonNumber, selection.episodeNumber, selection.media.title).firstOrNull()

@@ -21,6 +21,26 @@ internal fun initialPlaybackRace(candidates: List<PlaybackSelection>): List<Play
     }
 }
 
+internal fun alternativePlaybackSources(
+    selection: PlaybackSelection,
+    preferences: PlaybackPreferences,
+): List<PlaybackSelection> {
+    val anime = selection.media.isJapaneseAnime
+    val specialist = when {
+        anime -> null
+        selection.media.type == MediaType.TV -> MobilePlaybackProvider.SERIENSTREAM
+        else -> MobilePlaybackProvider.FILMO
+    }
+    return playbackSourceFallbacks(selection, preferences).drop(1).sortedBy { candidate ->
+        val provider = candidate.source.identity
+        when {
+            (anime && provider.isAnimeNative) || provider == specialist -> 0
+            provider == preferences.effectiveGeneralProvider -> 1
+            else -> 2
+        }
+    }
+}
+
 /** Give the chosen catalogue a brief head start, with bounded concurrent alternatives. */
 internal suspend fun <T : Any> racePlaybackSources(candidates: List<PlaybackSelection>, attempt: suspend (PlaybackSelection) -> T): T =
     firstSuccessful(candidates.mapIndexed { index, candidate -> suspend {

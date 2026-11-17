@@ -10,6 +10,26 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 
 class PlaybackSourceFallbackTest {
+    @Test fun alternateSourcesPreferTheRightCatalogueAndPreserveContent() {
+        val movie = Media(550, MediaType.MOVIE, "Fight Club")
+        val series = Media(1396, MediaType.TV, "Breaking Bad")
+        val anime = Media(21, MediaType.TV, "One Piece", genres = listOf("Animation"), originalLanguage = "ja")
+        val active = PlaybackSource(MobilePlaybackProvider.FLIXER)
+        val preferred = PlaybackPreferences(generalProvider = PlaybackProviderId.CINEJOY)
+        val cases = listOf(
+            PlaybackSelection(movie, source = active) to MobilePlaybackProvider.FILMO,
+            PlaybackSelection(series, 2, 3, source = active) to MobilePlaybackProvider.SERIENSTREAM,
+            PlaybackSelection(anime, 4, 8, source = active) to MobilePlaybackProvider.ANIWORLD,
+        )
+        cases.forEach { (current, firstProvider) ->
+            val candidates = alternativePlaybackSources(current, preferred)
+            assertEquals(firstProvider, candidates.first().source.identity)
+            assertTrue(candidates.none { it.source.identity == active.identity })
+            assertTrue(candidates.all { it.copy(source = active) == current && it.source.identity.isAvailableFor(current.media) })
+            if (current.media == anime) assertTrue(candidates.take(3).all { it.source.identity.isAnimeNative })
+        }
+    }
+
     @Test fun japaneseSeriesUseDedicatedSourcesEvenWithAGeneralProviderSaved() {
         val anime = Media(21, MediaType.TV, "One Piece", genres = listOf("Animation"), originalLanguage = "ja")
         val preferences = PlaybackPreferences(generalProvider = MobilePlaybackProvider.FLIXER)

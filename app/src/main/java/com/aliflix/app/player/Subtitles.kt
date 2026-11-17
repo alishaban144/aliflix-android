@@ -76,7 +76,7 @@ private val SUBTITLE_LANGUAGE_ALIASES = mapOf(
     "THA" to "TH", "BEN" to "BN", "URD" to "UR",
 )
 
-class SubdlSubtitleRepository(
+class SubtitleRepository(
     baseUrl: String = BuildConfig.RECOMMENDATION_AI_BASE_URL,
 ) {
     private val baseUrl = baseUrl.trimEnd('/')
@@ -114,7 +114,7 @@ class SubdlSubtitleRepository(
                     id = id,
                     languageCode = item.optString("languageCode", "SUB").trim().uppercase(),
                     languageName = item.optString("languageName", "Subtitle").trim(),
-                    releaseName = item.optString("releaseName", "SubDL subtitle").trim(),
+                    releaseName = item.optString("releaseName", "Subtitle").trim(),
                     fileName = item.optString("fileName", "subtitle.srt").trim(),
                     hearingImpaired = item.optBoolean("hearingImpaired"),
                     format = item.optString("format").trim().lowercase(),

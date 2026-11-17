@@ -162,7 +162,7 @@ fun WebPlayerScreen(
     var subtitleDelayTenths by remember(selection.key) { mutableStateOf(0) }
     var subtitleFontPercent by remember(selection.key) { mutableStateOf(100) }
     var autoSubtitleAttemptedLanguage by remember(selection.key) { mutableStateOf<String?>(null) }
-    val subtitleRepository = remember { SubdlSubtitleRepository() }
+    val subtitleRepository = remember { SubtitleRepository() }
     val subtitleScope = rememberCoroutineScope()
 
     LaunchedEffect(selection.key) {
@@ -588,9 +588,9 @@ private fun SubtitleDialog(
                         )
                         Text(
                             text = if (!searching && searchError == null && tracks.isNotEmpty()) {
-                                "${tracks.size} exact ${if (tracks.size == 1) "match" else "matches"} • SubDL"
+                                "${tracks.size} exact ${if (tracks.size == 1) "match" else "matches"}"
                             } else {
-                                "Exact title and episode match • SubDL"
+                                "Exact title and episode match"
                             },
                             color = AliflixContentSecondary,
                             fontSize = 11.sp,

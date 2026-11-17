@@ -54,7 +54,8 @@ internal object StartupStreamCache {
         }
     }
 
-    suspend fun awaitPlayable(context: Context, request: NativePlaybackRequest, audioLanguage: String = "", bufferMs: Long = 250) = withContext(Dispatchers.Main.immediate) { withTimeout(12_000) {
+    suspend fun awaitPlayable(context: Context, request: NativePlaybackRequest, audioLanguage: String = "",
+        bufferMs: Long = 250, requireVideoFrame: Boolean = false) = withContext(Dispatchers.Main.immediate) { withTimeout(12_000) {
         val media = mediaFactory(context, request)
         val player = ExoPlayer.Builder(context.applicationContext)
             .setMediaSourceFactory(DefaultMediaSourceFactory(media).setLoadErrorHandlingPolicy(CineJoyLoadErrorPolicy { request.referer == CineJoyNativeCatalog.REFERER }))
@@ -64,7 +65,16 @@ internal object StartupStreamCache {
                 // of loading so resume validation cannot stall below READY.
                 4_000, 12_000,
                 if (bufferMs > 250) 1_000 else 250, 500).build()).build()
+        var surface: androidx.media3.exoplayer.video.PlaceholderSurface? = null
         try {
+            var renderedFrame = false
+            if (requireVideoFrame) {
+                surface = androidx.media3.exoplayer.video.PlaceholderSurface.newInstance(context, false)
+                player.setVideoSurface(surface)
+                player.addListener(object : Player.Listener {
+                    override fun onRenderedFirstFrame() { renderedFrame = true }
+                })
+            }
             player.volume = 0f
             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setPreferredAudioLanguage(audioLanguage.takeIf { it.isNotBlank() }).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
             player.setMediaItem(MediaItem.Builder().setUri(request.url).setMimeType(request.mimeType).build(), request.positionMs)
@@ -81,9 +91,16 @@ internal object StartupStreamCache {
             val groups=player.currentTracks.groups
             check(groups.any { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }) { "No playable video" }
             check(groups.none { it.type == C.TRACK_TYPE_AUDIO } || groups.any { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }) { "No playable audio" }
+            while (requireVideoFrame && !renderedFrame) {
+                player.playerError?.let { throw it }
+                delay(50)
+            }
         } catch(error:Exception) {
             if(com.aliflix.app.BuildConfig.DEBUG)android.util.Log.w("AliflixStartup","${error.javaClass.simpleName}: state=${player.playbackState}, position=${player.currentPosition}, buffered=${player.bufferedPosition}, duration=${player.duration}, tracks=${player.currentTracks.groups.size}, error=${player.playerError?.errorCodeName}")
             throw error
-        } finally { player.release() }
+        } finally {
+            player.release()
+            surface?.release()
+        }
     } }
 }
