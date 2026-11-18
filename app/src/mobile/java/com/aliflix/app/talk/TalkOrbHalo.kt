@@ -18,8 +18,8 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 internal fun talkVoiceHaloReady(state: TalkVoiceState): Boolean =
-    !state.textMode && (state.phase == "Speaking" ||
-        !state.muted && state.phase in setOf("Listening", "Thinking"))
+    !state.textMode && !state.muted &&
+        state.phase in setOf("Listening", "Speaking", "Thinking")
 
 @Composable
 internal fun TalkOrbHalo(compact: Boolean, strength: () -> Float, speech: () -> Float, phase: () -> Float) {
