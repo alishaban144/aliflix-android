@@ -47,16 +47,17 @@ internal fun MobileLibraryTabs(tabs: List<Pair<String, Int>>, selected: Int, onS
 
 @Composable
 internal fun MobileLibraryGenre(label: String, count: Int, selected: Boolean, onClick: () -> Unit) {
-    Column(Modifier.widthIn(max = 240.dp).heightIn(min = 48.dp)
-        .selectable(selected, role = Role.Tab, onClick = onClick).padding(horizontal = 2.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).clip(RoundedCornerShape(12.dp))
+        .background(if (selected) AliflixAccentSecondary.copy(alpha = .13f) else androidx.compose.ui.graphics.Color.Transparent)
+        .selectable(selected, role = Role.Tab, onClick = onClick).padding(horizontal = 7.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+        Box(Modifier.width(2.dp).height(26.dp)
+            .background(if (selected) AliflixAccentSecondary else AliflixContentTertiary.copy(alpha = .15f), RoundedCornerShape(1.dp)))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(label, color = if (selected) AliflixAccentSecondary else AliflixContentSecondary,
-                fontSize = 12.sp, lineHeight = 17.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-            Text(count.toString(), color = AliflixContentTertiary, fontSize = 10.sp)
+                fontSize = 12.sp, lineHeight = 16.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
+            if (selected) Text(count.toString(), color = AliflixContentSecondary, fontSize = 10.sp)
         }
-        Box(Modifier.width(if (selected) 20.dp else 8.dp).height(2.dp)
-            .background(if (selected) AliflixAccentSecondary else AliflixContentTertiary.copy(alpha = .3f), RoundedCornerShape(1.dp)))
     }
 }

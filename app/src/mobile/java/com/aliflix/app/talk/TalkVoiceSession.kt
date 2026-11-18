@@ -204,8 +204,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         frameAttentionTurn = userTurn.get()
         parts.put(JSONObject().put("text","Authoritative on-screen image for this turn at ${frame.seconds} seconds, frameId=$frameId. " +
             "Only this labeled image establishes what is visible NOW. Prior stills, summaries, dialogue, and cast data can establish earlier events and identity, but cannot establish what is visible now. " +
-            "Resolve each requested part independently against this image. If any part is about a visible detail, call scene_attention with this frameId before speaking. " +
-            "Rehearse the short reply and include a separate target for each visible detail in it, in spoken order. " +
+            "Use scene_attention with this frameId whenever the reply discusses a currently visible referent. This includes motive and relationship questions such as why he asks her, even if the question does not ask what is visible. " +
+            "Bind each on-screen person discussed to their own face box. For two visible people, add both targets, in the order the answer refers to each. Include the actual short spoken phrase and unambiguous aliases such as a name, role, he or she; never bind an ambiguous pronoun or off-screen speaker. " +
             "For a question about what lights a subject, target the visible source or light entry if identifiable. Target each requested text, prop or location individually. " +
             "For each target give its tight box and a short phrase you will say. " +
             "Then answer directly. For every visual claim, inspect the labeled image again before speaking, even if earlier frames, dialogue or plot knowledge suggest a different answer. " +
@@ -2094,7 +2094,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         val decision=synchronized(microphoneOwnership){
             if(ticket!=epoch||captureTicket!=captureGeneration||muted&&!ownedFixture)return
             val echo=!ownedFixture&&probability>=.35f&&duplexGate.isEcho(frame,probability)
-            inputTurns.accept(frame,probability,echo,outputActive=speaking&&!ownedFixture)
+            inputTurns.accept(frame,probability,echo,outputActive=speaking&&!ownedFixture,
+                endSilenceMs=if(conversationContext.optJSONObject("activePlayer")?.has("id")==true)736 else 1056)
         }
         if(!decision.start&&!decision.end&&decision.frames.isEmpty())return
         scope.launch(Dispatchers.Main.immediate) { applyMicrophoneDecision(decision,probability,ticket,replay=ownedFixture,captureTicket=captureTicket) }

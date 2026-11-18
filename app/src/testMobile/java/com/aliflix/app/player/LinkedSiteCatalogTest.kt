@@ -31,7 +31,7 @@ class LinkedSiteCatalogTest {
         val page=Jsoup.parse("""<div class="provider-row"><span class="provider-row__lang">English</span>
             <div data-provider-chip data-p="good"><span class="provider-chip__name">VOE</span></div>
             <div data-provider-chip data-p="blocked"><span class="provider-chip__name">Byse</span></div></div>""","https://filmo.to/movies/interstellar")
-        assertEquals(listOf("VOE"),filmoPlaybackLinks(page).map { it.server })
+        assertEquals(listOf("VOE","Byse"),filmoPlaybackLinks(page).map { it.server })
     }
     @Test fun filmoVoePublicFileRedirectIsAcceptedWithoutAdmittingOtherRootDocuments() {
         for(url in listOf("https://voe.sx/abc123?default_audio_language=en","https://voe.sx/e/abc123","https://megankiddifference.com/e/abc123","https://megankiddifference.com/engine/opaque-public-player-token"))

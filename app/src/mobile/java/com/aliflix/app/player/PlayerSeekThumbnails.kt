@@ -26,13 +26,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.StreamKey
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.Presentation
 import androidx.media3.exoplayer.SeekParameters
+import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.hls.playlist.DefaultHlsPlaylistParserFactory
+import androidx.media3.exoplayer.hls.playlist.HlsMediaPlaylist
+import androidx.media3.exoplayer.hls.playlist.HlsMultivariantPlaylist
+import androidx.media3.exoplayer.hls.playlist.HlsPlaylist
+import androidx.media3.exoplayer.hls.playlist.HlsPlaylistParserFactory
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.upstream.ParsingLoadable
 import androidx.media3.inspector.frame.FrameExtractor
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -44,15 +54,17 @@ import kotlin.coroutines.resumeWithException
 @androidx.annotation.OptIn(UnstableApi::class)
 internal class PlayerSeekThumbnails(private val context: Context, private val request: NativePlaybackRequest) {
     private val frames = LruCache<Long, Bitmap>(80)
-    private val requests = Channel<Long>(Channel.CONFLATED)
+    private data class Request(val time: Long, val foreground: Boolean)
+    private val requests = MutableStateFlow<Request?>(null)
     private val failures = LruCache<Long, Long>(32)
     private var revision by mutableIntStateOf(0)
     private var liveFrame: Pair<Long, Bitmap>? = null
 
-    fun request(positionMs: Long) {
+    fun request(positionMs: Long, foreground: Boolean = true) {
         val time = bucket(positionMs)
+        if (!foreground && requests.value?.foreground == true) return
         if (frames.get(time) == null && (failures.get(time) ?: 0L) <= SystemClock.uptimeMillis()) {
-            requests.trySend(time)
+            if (foreground || requests.value == null) requests.value = Request(time, foreground)
         }
     }
 
@@ -61,7 +73,7 @@ internal class PlayerSeekThumbnails(private val context: Context, private val re
         val observedRevision = revision
         if (observedRevision == 0) return null
         return frames.get(time)
-            ?: liveFrame?.takeIf { abs(it.first - positionMs) <= BUCKET_MS / 2 }?.second
+            ?: liveFrame?.takeIf { abs(it.first - positionMs) <= BUCKET_MS }?.second
             ?: frames.get(time - BUCKET_MS)
             ?: frames.get(time + BUCKET_MS)
     }
@@ -96,16 +108,23 @@ internal class PlayerSeekThumbnails(private val context: Context, private val re
             com.aliflix.app.downloads.OfflineDownloads.get(context).offlineFactory()
         } else StartupStreamCache.mediaFactory(context, request)
         val item = MediaItem.Builder().setUri(request.url).setMimeType(request.mimeType).build()
+        val factory = if (request.mimeType == MimeTypes.APPLICATION_M3U8) {
+            HlsMediaSource.Factory(source).setPlaylistParserFactory(PreviewHlsPlaylists())
+        } else DefaultMediaSourceFactory(source)
         var extractor: FrameExtractor? = null
         try {
-            for (time in requests) {
-                if (frames.get(time) != null || (failures.get(time) ?: 0L) > SystemClock.uptimeMillis()) continue
+            requests.collectLatest { request ->
+                if (request == null) return@collectLatest
+                val (time, foreground) = request
                 try {
+                    if (foreground) delay(80)
+                    if (frames.get(time) != null || (failures.get(time) ?: 0L) > SystemClock.uptimeMillis()) return@collectLatest
                     val decoder = extractor ?: FrameExtractor.Builder(context, item)
-                        .setMediaSourceFactory(DefaultMediaSourceFactory(source))
+                        .setMediaSourceFactory(factory)
                         .setSeekParameters(SeekParameters.CLOSEST_SYNC)
-                        .setEffects(listOf(Presentation.createForHeight(144)))
+                        .setEffects(listOf(Presentation.createForHeight(108)))
                         .build().also { extractor = it }
+                    val started = SystemClock.elapsedRealtime()
                     val frame = withTimeoutOrNull(3_500) {
                         suspendCancellableCoroutine<FrameExtractor.Frame> { continuation ->
                             val future = decoder.getFrame(time)
@@ -125,6 +144,9 @@ internal class PlayerSeekThumbnails(private val context: Context, private val re
                     } else {
                         frames.put(time, frame.bitmap)
                         revision++
+                        if (foreground && com.aliflix.app.BuildConfig.DEBUG) {
+                            android.util.Log.d("AliflixPreview", "Scrub frame decoded in ${SystemClock.elapsedRealtime() - started}ms")
+                        }
                     }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -133,6 +155,8 @@ internal class PlayerSeekThumbnails(private val context: Context, private val re
                     extractor?.close()
                     extractor = null
                     failures.put(time, SystemClock.uptimeMillis() + 5_000)
+                } finally {
+                    requests.compareAndSet(request, null)
                 }
             }
         } finally {
@@ -145,6 +169,29 @@ internal class PlayerSeekThumbnails(private val context: Context, private val re
     private companion object { const val BUCKET_MS = 2_000L }
 }
 
+@androidx.annotation.OptIn(UnstableApi::class)
+private class PreviewHlsPlaylists : HlsPlaylistParserFactory {
+    private val default = DefaultHlsPlaylistParserFactory()
+
+    override fun createPlaylistParser(): ParsingLoadable.Parser<HlsPlaylist> {
+        val parser = default.createPlaylistParser()
+        return ParsingLoadable.Parser { uri, input ->
+            val playlist = parser.parse(uri, input)
+            if (playlist !is HlsMultivariantPlaylist) return@Parser playlist
+            val choice = playlist.variants.withIndex()
+                .filter { it.value.format.width > 0 && it.value.format.height > 0 }
+                .minWithOrNull(compareBy({ it.value.format.height }, { it.value.format.bitrate }))
+                ?: return@Parser playlist
+            playlist.copy(listOf(StreamKey(HlsMultivariantPlaylist.GROUP_INDEX_VARIANT, choice.index)))
+        }
+    }
+
+    override fun createPlaylistParser(
+        multivariantPlaylist: HlsMultivariantPlaylist,
+        previousMediaPlaylist: HlsMediaPlaylist?,
+    ): ParsingLoadable.Parser<HlsPlaylist> = default.createPlaylistParser(multivariantPlaylist, previousMediaPlaylist)
+}
+
 @Composable
 internal fun PlayerSeekThumbnail(
     frames: PlayerSeekThumbnails?,
@@ -155,7 +202,7 @@ internal fun PlayerSeekThumbnail(
     LaunchedEffect(frames, positionMs / 2_000) {
         frames?.request(positionMs)
         while (frames != null) {
-            delay(5_000)
+            delay(3_600)
             frames.request(positionMs)
         }
     }

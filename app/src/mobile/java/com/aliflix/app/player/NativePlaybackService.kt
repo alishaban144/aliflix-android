@@ -131,6 +131,7 @@ class NativePlaybackService : MediaSessionService() {
     private lateinit var cineJoyRecovery: CineJoyPlayerRecovery
     private var originalItem: MediaItem? = null
     private var externalCaptionCues: List<SubtitleCue> = emptyList()
+    private var appliedCaptionDelaySeconds = 0.0
     private var originalCaptionJson: String? = null
     private val speechCapture = PlaybackSpeechBuffer()
     private val videoClock = PlaybackVideoClock()
@@ -448,6 +449,7 @@ class NativePlaybackService : MediaSessionService() {
             else parseTimedTextSubtitleCues(next.subtitlesVtt)
         originalCaptionJson = externalCaptionCues.takeIf { it.isNotEmpty() }?.let(::subtitleCuesJson)
         val delay = (application as AliflixApplication).playerSettingsStore.settings.value.subtitleDelaySeconds
+        appliedCaptionDelaySeconds = delay
         val initialVtt = if (externalCaptionCues.isEmpty()) next.subtitlesVtt else correctedMobileVtt(externalCaptionCues, null, delay)
         val prepared = next.copy(subtitlesVtt = initialVtt)
         request = prepared
@@ -838,7 +840,8 @@ class NativePlaybackService : MediaSessionService() {
         internal fun currentCaptionCues(): List<androidx.media3.common.text.Cue> {
             val service = activeService ?: return emptyList()
             if (embeddedSubtitlesActive || service.externalCaptionCues.isEmpty()) return service.localPlayer.currentCues.cues.map(::mobileCaptionCue)
-            val seconds = service.player.currentPosition / 1000.0
+            val requestedDelay = (service.application as AliflixApplication).playerSettingsStore.settings.value.subtitleDelaySeconds
+            val seconds = service.player.currentPosition / 1000.0 - (requestedDelay - service.appliedCaptionDelaySeconds)
             return service.externalCaptionCues.asSequence().filter { seconds >= it.startSeconds && seconds < it.endSeconds }
                 .map { androidx.media3.common.text.Cue.Builder().setText(mobileCaptionText(it.text)).build() }.toList()
         }
@@ -965,6 +968,8 @@ class NativePlaybackService : MediaSessionService() {
             service.request = updated
             activeRequest = updated
             service.externalCaptionCues = parseTimedTextSubtitleCues(vtt)
+            service.appliedCaptionDelaySeconds =
+                (service.application as AliflixApplication).playerSettingsStore.settings.value.subtitleDelaySeconds
             service.relay?.updateSubtitles(vtt)
             val lang = updated.subtitleLanguage.ifBlank { "en" }
             val configs = if (vtt.isBlank()) emptyList() else {

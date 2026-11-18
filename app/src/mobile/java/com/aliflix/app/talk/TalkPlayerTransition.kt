@@ -14,12 +14,12 @@ import kotlin.math.*
     val progress by transition.animateFloat(transitionSpec={
         if(!motion)tween(0)
         else if(targetState==EnterExitState.Visible)keyframes{
-            durationMillis=430
+            durationMillis=320
             0f at 0 using LinearOutSlowInEasing
-            .44f at 82 using FastOutSlowInEasing
-            .91f at 224 using LinearOutSlowInEasing
-            1.04f at 311 using FastOutSlowInEasing
-            1f at 430
+            .38f at 48 using LinearOutSlowInEasing
+            .88f at 145 using FastOutSlowInEasing
+            1.035f at 225 using FastOutSlowInEasing
+            1f at 320
         }else tween(360,easing=FastOutSlowInEasing)
     },label="player-orb-flight"){if(it==EnterExitState.Visible)1f else 0f}
     val density=LocalDensity.current
@@ -28,7 +28,7 @@ import kotlin.math.*
     val y=with(density){(if(compact)14.dp else 94.dp).toPx()}
     return Modifier.graphicsLayer{
         val entering=transition.targetState==EnterExitState.Visible
-        val p=progress;val arc=sin(p*PI.toFloat());val size=.36f+.64f*p
+        val p=progress;val arc=sin(p*PI.toFloat());val size=.50f+.50f*p
         alpha=if(entering)(.82f+p*.48f).coerceAtMost(1f) else p.coerceIn(0f,1f)
         translationX=-x*(1f-p)+arc*x*.29f;translationY=-y*(1f-p)+arc*y*.24f
         scaleX=size*(1f+arc*.14f);scaleY=size*(1f-arc*.10f)

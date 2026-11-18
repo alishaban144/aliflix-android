@@ -175,7 +175,7 @@ import kotlin.math.roundToInt
             }
             if(target==null)kotlinx.coroutines.delay(200)
             val control = talkOrbGlideControl(from,destination,viewport,radius,target,captions)
-            val duration = (470 + 135 * distance / (2 * radius)).roundToInt().coerceIn(560,1_340)
+            val duration = (330 + 115 * distance / (2 * radius)).roundToInt().coerceIn(420,990)
             hasSceneTravel = true
             glide.snapTo(0f)
             glide.animateTo(1f,keyframes {

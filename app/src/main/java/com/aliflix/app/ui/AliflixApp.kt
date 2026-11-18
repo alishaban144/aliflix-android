@@ -84,6 +84,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -606,6 +607,7 @@ fun AliflixApp(
     }
     var accountNotice by rememberSaveable { mutableStateOf<String?>(null) }
     var launchCompleted by rememberSaveable { mutableStateOf(false) }
+    val skipLaunchPresentation = remember { launchCompleted || initialMedia != null || assistantAction != null }
     LaunchedEffect(launchCompleted, recent.take(3).map { it.key }) {
         if (launchCompleted) viewModel.preloadRecentlyWatchedEpisodes()
     }
@@ -1039,7 +1041,7 @@ fun AliflixApp(
     AliflixLaunchOverlay(
         isHomeReady = isHomeReady,
         onLaunchComplete = { launchCompleted = true },
-        skip = initialMedia != null || assistantAction != null,
+        skip = skipLaunchPresentation,
     ) {
         Box(
             modifier = Modifier
@@ -1204,7 +1206,6 @@ fun AliflixApp(
                                 .map { it.media }
                                 .distinctBy { it.key }
                             listOf(
-                                ContentRail("My List", myList),
                                 ContentRail("Trailers you watched", trailers),
                                 ContentRail("Recently watched", watched),
                             ).forEach { rail ->
@@ -3501,6 +3502,7 @@ private fun GenreOrganizedList(
     }
     val groups = remember(items) { groupMyListByMainGenre(items) }
     val sectionIndices = remember(groups) { libraryGenreSectionIndices(groups) }
+    val genres = remember(groups) { groups.filter { it.key.isNotEmpty() } }
     val scope = rememberCoroutineScope()
     val activeGenre by remember(groups, gridState) {
         derivedStateOf {
@@ -3509,42 +3511,43 @@ private fun GenreOrganizedList(
     }
     val genreTabs = rememberLazyListState()
     val motionEnabled = rememberMobileMotionEnabled()
-    LaunchedEffect(activeGenre, groups) {
-        val index = groups.filter { it.key.isNotEmpty() }.indexOfFirst { it.key == activeGenre }
-        if (index >= 0) {
-            if (genreTabs.layoutInfo.visibleItemsInfo.none { it.index == index }) {
-                if (motionEnabled) genreTabs.animateScrollToItem(index) else genreTabs.scrollToItem(index)
-            }
-            androidx.compose.runtime.withFrameNanos { }
-            val layout = genreTabs.layoutInfo
-            layout.visibleItemsInfo.firstOrNull { it.index == index }?.let { tab ->
-                val delta = tab.offset + tab.size / 2f - (layout.viewportStartOffset + layout.viewportEndOffset) / 2f
-                if (motionEnabled) genreTabs.animateScrollBy(delta, spring(dampingRatio = .82f, stiffness = 320f))
-                else genreTabs.scrollBy(delta)
-            }
+    LaunchedEffect(activeGenre, genres, genreTabs.isScrollInProgress) {
+        val index = genres.indexOfFirst { it.key == activeGenre }
+        if (index >= 0 && !genreTabs.isScrollInProgress &&
+            genreTabs.layoutInfo.visibleItemsInfo.none { it.index == index }) {
+            genreTabs.scrollToItem(index)
         }
     }
-    Column(Modifier.fillMaxSize()) {
-        // Fixed within the library's scroll container, beneath My Space's existing header.
-        LazyRow(
-            state = genreTabs,
-            contentPadding = PaddingValues(horizontal = AliflixSpacing.Content, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(20.dp),
-            modifier = Modifier.fillMaxWidth().selectableGroup(),
-        ) {
-            items(groups.filter { it.key.isNotEmpty() }, key = { it.key }) { group ->
-                MobileLibraryGenre(group.key, group.value.size, activeGenre == group.key) {
-                    scope.launch { gridState.animateScrollToItem(sectionIndices.getValue(group.key)) }
+    var scrollToGenre by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    Row(Modifier.fillMaxSize().padding(start = 10.dp, end = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (genres.isNotEmpty()) {
+            LazyColumn(
+                state = genreTabs,
+                contentPadding = PaddingValues(4.dp, 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.width(114.dp).fillMaxHeight()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(AliflixContentPrimary.copy(alpha = .045f))
+                    .selectableGroup(),
+            ) {
+                items(genres, key = { it.key }) { group ->
+                    MobileLibraryGenre(group.key, group.value.size, activeGenre == group.key) {
+                        scrollToGenre?.cancel()
+                        scrollToGenre = scope.launch {
+                            val index = sectionIndices.getValue(group.key)
+                            if (motionEnabled) gridState.animateScrollToItem(index) else gridState.scrollToItem(index)
+                        }
+                    }
                 }
             }
         }
         LazyVerticalGrid(
             state = gridState,
-            columns = GridCells.Adaptive(132.dp),
-            contentPadding = PaddingValues(start = AliflixSpacing.Content, end = AliflixSpacing.Content, top = 8.dp, bottom = 28.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Panel),
-            modifier = Modifier.weight(1f).fillMaxWidth(),
+            columns = GridCells.Adaptive(104.dp),
+            contentPadding = PaddingValues(top = 4.dp, bottom = 40.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.weight(1f).fillMaxHeight(),
         ) {
             groups.forEach { group ->
                 if (group.key.isNotEmpty()) item(key = "genre:${group.key}", span = { GridItemSpan(maxLineSpan) }) {

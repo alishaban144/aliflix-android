@@ -5,8 +5,6 @@ import com.aliflix.app.model.*
 import com.aliflix.app.data.MobileEpisodeRepository
 import com.aliflix.app.recommendation.RecommendationAiClient
 import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.json.JSONArray
@@ -15,13 +13,14 @@ import java.net.URI
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 
-internal data class SitePlaybackLink(val server: String, val language: String, val url: String, val token: String = "") {
+internal data class SitePlaybackLink(val server: String, val language: String, val url: String,
+    val token: String = "", val variant: String = "") {
     val audioLabel: String get() = when(language) {
         "ja-de" -> "Japanese · German subtitles"
         "ja-en" -> "Japanese · English subtitles"
         else -> formatAudioTrackLabel(language, null)
     }
-    val label get() = "$audioLabel · $server"
+    val label get() = listOf(audioLabel, server, variant).filter(String::isNotBlank).joinToString(" · ")
 }
 
 private fun siteTitle(value: String) = java.text.Normalizer.normalize(value.lowercase(), java.text.Normalizer.Form.NFKD)
@@ -36,24 +35,17 @@ private fun ownedSiteUrl(raw: String, base: String, path: Regex): String? = runC
  * their own origin. Audio editions, hardsub variants and TV episode numbering
  * stay explicit; no guessed video URL or title-only substring match is used. */
 internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
-    private suspend fun page(url: String): Document {
-        val response=SerienstreamHttp.get(url,url)
+    private suspend fun page(url: String, referer: String = url): Document {
+        val response=SerienstreamHttp.get(url,referer)
         return Jsoup.parse(String(response.bytes,Charsets.UTF_8),response.finalUrl.ifBlank { url })
-    }
-    private suspend fun moviePage(url:String):Document {
-        val first=page(url)
-        if(first.selectFirst("html")?.attr("lang")?.substringBefore('-')=="en")return first
-        // Locale cookies can expire or be cleared while the process survives.
-        // Inspect the actual document rather than caching a permanent Boolean.
-        localeLock.withLock { page("https://filmo.to/lang/en?redirect=%2F") }
-        return page(url)
     }
     suspend fun links(selection: PlaybackSelection): Pair<Document,List<SitePlaybackLink>> = withTimeout(30_000) {
         if (selection.source.identity == MobilePlaybackProvider.FILMO) {
+            require(selection.media.type == MediaType.MOVIE)
             val base=selection.source.baseUrl.trimEnd('/')
             val cached=titles["filmo:${selection.media.key}"]
             val direct=cached ?: "$base/movies/${selection.media.title.lowercase().replace(Regex("[^a-z0-9]+"),"-").trim('-')}"
-            val first=(try { moviePage(direct) } catch(cancelled:CancellationException) { throw cancelled }
+            val first=(try { page(direct) } catch(cancelled:CancellationException) { throw cancelled }
                 catch(_:Exception) { currentCoroutineContext().ensureActive();null })?.takeIf { filmoTitleMatches(it,selection.media) }
             val document=first ?: run {
                 val response=SerienstreamHttp.get("$base/search/suggest?q=${encoded(selection.media.title)}",base)
@@ -63,7 +55,7 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
                     ownedSiteUrl(results.getJSONObject(index).optString("url"),base,Regex("/movies/[^/]+"))
                 }.distinct().take(12)
                 firstSuccessful(candidates.map { url -> suspend {
-                    moviePage(url).also { require(filmoTitleMatches(it,selection.media)) { "Filmo title/year mismatch" } }
+                    page(url).also { require(filmoTitleMatches(it,selection.media)) { "Filmo title/year mismatch" } }
                 } },parallelism=2)
             }
             titles["filmo:${selection.media.key}"]=document.location()
@@ -121,7 +113,7 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
 
     suspend fun resolve(selection:PlaybackSelection,position:Long,excluded:Set<String>,preferred:String?,strict:Boolean,
         audio:String?,onServers:(List<String>)->Unit,onServer:(String)->Unit,
-        embedded:suspend (String,String)->NativePlaybackRequest):NativePlaybackRequest = withTimeout(if(selection.source.identity==MobilePlaybackProvider.FILMO)18_000 else 30_000) {
+        embedded:suspend (String,String)->NativePlaybackRequest):NativePlaybackRequest = withTimeout(30_000) {
         val (document,links)=links(selection)
         android.util.Log.i("AliflixSite","${selection.source.identity.name}: catalogue links=${links.size}")
         require(links.isNotEmpty()) { "No playable site links" }
@@ -140,14 +132,22 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
                 // deadlines. A valid URL found near the discovery deadline must
                 // still get Media3's normal buffer validation, within the total
                 // provider budget; cold CDN startup is not a broken mirror.
-                val request=withTimeout(8_000) {
+                val request=withTimeout(if (link.server == "Byse") 18_000L else 8_000L) {
                 val action=if(link.token.isNotBlank()) {
                     val csrf=document.selectFirst("meta[name=csrf-token]")?.attr("content") ?: error("Missing site session")
                     val result=JSONObject(SerienstreamHttp.post("https://filmo.to/n",document.location(),
                         JSONObject().put("p",link.token).toString(),json=true,csrf=csrf))
                     "https://filmo.to/n/${encoded(result.getString("x"))}"
                 } else link.url
-                val target=action
+                val target=if (link.server.equals("Byse", true) && link.token.isNotBlank()) {
+                    val playerPage = page(action, document.location())
+                    val external = playerPage.selectFirst("a.open[href]")?.absUrl("href").orEmpty()
+                    require(URI(playerPage.location()).host == URI(document.location()).host &&
+                        isNativeStreamUrl(external) && URI(external).scheme == "https") {
+                        "Filmo did not provide its public external player"
+                    }
+                    external
+                } else action
                 val request=if(link.server.equals("VOE",true)) try { publicVoeRequest(selection,target,position) }
                     catch(cancelled:CancellationException) { throw cancelled }
                     catch(error:Exception) {
@@ -187,20 +187,23 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
     }
     companion object {
         private val titles=ConcurrentHashMap<String,String>()
-        private val localeLock=Mutex()
     }
 }
 
-internal fun filmoTitleMatches(page:Document,media:Media):Boolean = siteTitle(page.selectFirst("h1")?.text().orEmpty())==siteTitle(media.title) &&
-    media.year.take(4).matches(Regex("[0-9]{4}")) && page.select(".ft-meta-label").any { it.text().trim()==media.year.take(4) }
+internal fun filmoTitleMatches(page:Document,media:Media):Boolean {
+    val visibleTitle = siteTitle(page.selectFirst("h1")?.text().orEmpty())
+    return visibleTitle == siteTitle(media.title) &&
+        media.year.take(4).matches(Regex("[0-9]{4}")) &&
+        page.select(".ft-meta-label").any { it.text().trim()==media.year.take(4) }
+}
 internal fun filmoSearchMovies(raw:String):JSONArray = requireNotNull(JSONObject(raw).optJSONArray("movies")) { "Filmo search response changed" }
 internal fun filmoPlaybackLinks(page:Document):List<SitePlaybackLink> = page.select(".provider-row").flatMap { row ->
     val language=when(row.selectFirst(".provider-row__lang")?.text()?.lowercase()) { "english"->"en";"deutsch","german"->"de";"español","spanish"->"es";else->return@flatMap emptyList() }
     row.select("[data-provider-chip][data-p]").mapNotNull { chip ->
         val name=chip.selectFirst(".provider-chip__name")?.text().orEmpty()
-        // Byse currently rejects third-party embedding for the inspected files.
-        // Do not advertise a mirror that requires publisher authorization.
-        if(name!="VOE") null else SitePlaybackLink(name,language,page.location(),chip.attr("data-p"))
+        val token = chip.attr("data-p").takeIf(String::isNotBlank) ?: return@mapNotNull null
+        val variant = chip.text().trim().removePrefix(name).trim()
+        if(name !in setOf("VOE", "Byse")) null else SitePlaybackLink(name,language,page.location(),token,variant)
     }
 }.distinctBy { it.label }
 internal fun aniworldTitleMatches(page:Document,media:Media):Boolean {

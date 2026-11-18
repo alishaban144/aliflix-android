@@ -161,8 +161,10 @@ export async function searchWyzieSubtitles(env: RecommendationEnv, requestUrl: U
   const url = new URL('/search', ORIGIN);
   url.searchParams.set('id', imdbId && /^tt\d+$/.test(imdbId) ? imdbId : String(tmdbId));
   url.searchParams.set('key', env.WYZIE_API_KEY?.trim() ?? '');
-  url.searchParams.set('limit', language ? '40' : '200');
-  if (language) url.searchParams.set('language', language);
+  if (language) {
+    url.searchParams.set('language', language);
+    url.searchParams.set('limit', '40');
+  }
   if (season !== undefined && episode !== undefined) {
     url.searchParams.set('season', String(season));
     url.searchParams.set('episode', String(episode));
@@ -177,7 +179,17 @@ export async function searchWyzieSubtitles(env: RecommendationEnv, requestUrl: U
   if (!response.ok) throw wyzieError(response.status);
   try {
     const rows = JSON.parse(new TextDecoder().decode(await readWyzieBody(response, 1_048_576))) as WyzieTrack[];
-    const candidates = await Promise.all(rows.slice(0, 200).map(row => row ? asTrack(row, language, key) : null));
+    // The first page can be dominated by editions in one language. Give every
+    // returned language its own small release budget in the manual catalogue.
+    const byLanguage = new Map<string, WyzieTrack[]>();
+    for (const row of rows) {
+      const code = row?.language?.toLowerCase();
+      if (!code || row.ai || !row.url || IMAGE_FORMATS.has(row.format?.toLowerCase() ?? '')) continue;
+      const group = byLanguage.get(code) ?? [];
+      if (group.length < (language ? 40 : 12)) group.push(row);
+      byLanguage.set(code, group);
+    }
+    const candidates = await Promise.all([...byLanguage.values()].flat().map(row => asTrack(row, language, key)));
     const tracks = candidates.filter(track => track !== null);
     return { mediaKey, tracks: [...new Map(tracks.map(track => [track.id, track])).values()] };
   } catch {

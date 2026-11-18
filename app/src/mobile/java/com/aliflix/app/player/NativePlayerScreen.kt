@@ -182,6 +182,7 @@ internal data class NativePlayerUi(
     val subtitleTracks: List<SubtitleTrack> = emptyList(),
     val activeSubtitleTrack: SubtitleTrack? = null,
     val subtitleLoading: Boolean = false,
+    val subtitleCatalogueLoading: Boolean = false,
     val subtitleError: String? = null,
     val audioSyncState: String? = null,
     val audioSyncRemainingSeconds: Int? = null,
@@ -248,6 +249,7 @@ internal fun NativePlayerScreen(
     onFit: (Boolean) -> Unit = {},
     onRotate: () -> Unit = {},
     onSubtitleSearch: () -> Unit = {},
+    onOpenSubtitleCatalogue: () -> Unit = {},
     onSubtitle: (SubtitleTrack) -> Unit = {},
     onAudioSelected: (androidx.media3.common.TrackGroup, Int) -> Unit = { _, _ -> },
     onSourceAudioSelected: (String) -> Unit = {},
@@ -284,6 +286,11 @@ internal fun NativePlayerScreen(
     var shareScene by remember(state.playbackSelection?.key, NativePlaybackService.activeRequestId) { mutableStateOf(false) }
     var partyTopBarHeight by remember { mutableIntStateOf(56) }
     var sheet by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(sheet, state.ready, state.playbackSelection?.key) {
+        if (state.ready && sheet in listOf("Audio & subtitles", "Languages & subtitles", "Subtitles")) {
+            onOpenSubtitleCatalogue()
+        }
+    }
     var trackRevision by remember(player) { mutableIntStateOf(0) }
     DisposableEffect(player) {
         val observer = object : Player.Listener {
@@ -364,11 +371,8 @@ internal fun NativePlayerScreen(
         delay(650)
         while (true) {
             val anchor = previewPosition
-            listOf(0L, 2_000L, -2_000L, 4_000L, -4_000L).forEach { delta ->
-                thumbnails.request((anchor + delta).coerceIn(0, duration - 1))
-                delay(450)
-            }
-            delay(1_000)
+            thumbnails.request((anchor + 2_000L).coerceIn(0, duration - 1), foreground = false)
+            delay(2_000)
         }
     }
     LaunchedEffect(thumbnails, previewVisible, playing, previewSurface, state.external) {
@@ -1155,18 +1159,20 @@ internal fun NativePlayerScreen(
                             Text("More Subtitles", Modifier.weight(1f), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                             TextButton(onClick = onSubtitleSearch) { Text("Search", color = AliflixAccentSecondary) }
                         }
-                        if (state.subtitleLoading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = AliflixAccentPrimary)
+                        val loadingTracks = state.subtitleLoading || state.subtitleCatalogueLoading
+                        if (loadingTracks) LinearProgressIndicator(Modifier.fillMaxWidth(), color = AliflixAccentPrimary)
                         state.subtitleError?.let { Text(it, color = AliflixError, fontSize = 13.sp) }
-                        if (!state.subtitleLoading && subtitleTracks.isEmpty()) {
+                        if (!loadingTracks && subtitleTracks.isEmpty()) {
                             Text("No subtitles", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
                         }
                         var language by remember { mutableStateOf<String?>(null) }
                         val languages = remember(subtitleTracks) {
-                            subtitleTracks.map { it.languageName }.distinct().sortedWith(
-                                compareBy<String> { name ->
-                                    if (name.equals("EN", ignoreCase = true) || name.equals("English", ignoreCase = true)) 0 else 1
-                                }.thenBy { it }
-                            )
+                            val first = listOf("EN", "AR", "DE")
+                            subtitleTracks.distinctBy { it.languageName }.sortedWith(
+                                compareBy<SubtitleTrack> { track ->
+                                    first.indexOf(track.languageCode).takeIf { it >= 0 } ?: first.size
+                                }.thenBy { it.languageName.lowercase(Locale.ROOT) },
+                            ).map { it.languageName }
                         }
                         if (languages.isNotEmpty()) {
                             val activeLanguage = language?.takeIf { l -> languages.any { it.equals(l, ignoreCase = true) } }
@@ -1259,8 +1265,15 @@ private fun RepeatingOffsetButton(label: String, description: String, onStep: ()
         if (!pressed) {
             repeating = false
         } else if (repeating) {
+            var heldMs = 0L
             while (true) {
-                delay(150)
+                val interval = when {
+                    heldMs >= 4_000 -> 55L
+                    heldMs >= 2_000 -> 90L
+                    else -> 165L
+                }
+                delay(interval)
+                heldMs += interval
                 step()
             }
         }

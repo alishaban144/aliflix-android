@@ -164,5 +164,8 @@ internal fun talkOrbBesideTarget(target: Rect, from: Offset, viewport: Rect, rad
         .filterNot { point -> avoid?.overlaps(Rect(
             point.x-radius,point.y-radius,point.x+radius,point.y+radius,
         )) == true }
-        .minByOrNull { (it-from).getDistance() }
+        .minByOrNull { point ->
+            val separation = (point - target.center).getDistance()
+            separation + (point-from).getDistance() * .18f + kotlin.math.abs(point.x - target.center.x) * .35f
+        }
 }

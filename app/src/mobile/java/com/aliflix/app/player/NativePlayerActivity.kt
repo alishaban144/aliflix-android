@@ -487,6 +487,9 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     private var selection: PlaybackSelection? = null
     private var preparation: Job? = null
     private var subtitleJob: Job? = null
+    private var subtitleCatalogueJob: Job? = null
+    private var subtitleCatalogueKey: String? = null
+    private var subtitleDelayCommit: Job? = null
     private var subtitleGeneration = 0L
     private var subtitleChoiceRevision = 0L
     private var automaticAttemptKey: String? = null
@@ -663,16 +666,26 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         subtitles.setApplyEmbeddedFontSizes(false)
         applySubtitleStyle()
         lifecycleScope.launch {
-            var previousDelay = settingsStore.settings.value.subtitleDelayTenths
+            var previous = settingsStore.settings.value
             settingsStore.settings.collect {
-                videoFrame.resizeMode = if (it.resizeModeZoom) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
-                applySubtitleStyle()
-                updateSubtitlePadding(lastControlsVisible)
-                controller?.setPlaybackSpeed(it.playbackSpeed)
-                if (previousDelay != it.subtitleDelayTenths) {
-                    previousDelay = it.subtitleDelayTenths
-                    activeSubtitleCuesJson?.let { json -> NativePlaybackService.updateSubtitles(renderSubtitleVtt(json, it.subtitleDelaySeconds)) }
+                if (previous.resizeModeZoom != it.resizeModeZoom) {
+                    videoFrame.resizeMode = if (it.resizeModeZoom) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
                 }
+                if (previous.subtitleFontSizeSp != it.subtitleFontSizeSp ||
+                    previous.subtitleBackgroundOpacity != it.subtitleBackgroundOpacity) applySubtitleStyle()
+                if (previous.subtitleVerticalOffsetDp != it.subtitleVerticalOffsetDp) updateSubtitlePadding(lastControlsVisible)
+                if (previous.playbackSpeed != it.playbackSpeed) controller?.setPlaybackSpeed(it.playbackSpeed)
+                if (previous.subtitleDelayTenths != it.subtitleDelayTenths) {
+                    subtitleDelayCommit?.cancel()
+                    val request = NativePlaybackService.activeRequestId
+                    subtitleDelayCommit = lifecycleScope.launch {
+                        delay(300)
+                        if (NativePlaybackService.activeRequestId == request) activeSubtitleCuesJson?.let { json ->
+                            NativePlaybackService.updateSubtitles(renderSubtitleVtt(json, it.subtitleDelaySeconds))
+                        }
+                    }
+                }
+                previous = it
             }
         }
         root.addView(subtitles, FrameLayout.LayoutParams(-1, -1))
@@ -753,6 +766,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                             android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                     },
                     onSubtitleSearch = { searchSubtitles() },
+                    onOpenSubtitleCatalogue = { searchSubtitles(refresh = false) },
                     onSubtitle = ::applySubtitle,
                     onSourceAudioSelected = ::selectSourceAudio,
                     onAudioSelected = { group, index ->
@@ -1971,6 +1985,10 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
 
     private fun startNative(request: NativePlaybackRequest): String {
         invalidateSubtitleWork()
+        subtitleCatalogueJob?.cancel()
+        subtitleCatalogueKey = null
+        subtitleDelayCommit?.cancel()
+        ui = ui.copy(subtitleCatalogueLoading = false)
         automaticAttemptKey = null
         selection = runCatching { nativeSelection(request.selectionJson) }.getOrNull() ?: selection
         ui = ui.copy(sourceAudioOptions = if (request.offlineDownloadId.isBlank()) mergedAudioChoices(request)
@@ -2023,7 +2041,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         }.getOrNull()
     }
 
-    private fun searchSubtitles(auto: Boolean = false) {
+    private fun searchSubtitles(refresh: Boolean = true) {
         offlineSubtitleRequest()?.let { saved ->
             val tracks = if (saved.subtitlesVtt.isNotBlank() || saved.preferEmbeddedSubtitles) listOf(
                 SubtitleTrack("offline", saved.subtitleLanguage, java.util.Locale.forLanguageTag(saved.subtitleLanguage).displayLanguage,
@@ -2032,16 +2050,18 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
             return
         }
         val current = selection ?: return
-        subtitleJob?.cancel()
-        subtitleJob = lifecycleScope.launch {
-            ui = ui.copy(subtitleLoading = true)
-            val result = SubtitleRepository().search(current, selectedSubtitleLanguage())
+        val owner = NativePlaybackService.activeRequestId ?: return
+        if (!refresh && (subtitleCatalogueKey == owner || subtitleCatalogueJob?.isActive == true)) return
+        subtitleCatalogueJob?.cancel()
+        subtitleCatalogueJob = lifecycleScope.launch {
+            ui = ui.copy(subtitleCatalogueLoading = true, subtitleError = null)
+            val result = SubtitleRepository().search(current)
             ensureActive()
-            ui = ui.copy(subtitleLoading = false, subtitleTracks = normalizeMobileSubtitleTracks(ui.subtitleTracks + result.getOrDefault(emptyList())),
-                subtitleError = result.exceptionOrNull()?.let { "Subtitles couldn't load. Tap Refresh to retry." })
-            if (auto) {
-                val code = selectedSubtitleLanguage()
-                ui.subtitleTracks.firstOrNull { it.languageCode.equals(code, true) }?.let(::applySubtitle)
+            if (NativePlaybackService.activeRequestId == owner && selection?.key == current.key) {
+                if (result.isSuccess) subtitleCatalogueKey = owner
+                ui = ui.copy(subtitleCatalogueLoading = false,
+                    subtitleTracks = normalizeMobileSubtitleTracks(ui.subtitleTracks + result.getOrDefault(emptyList())),
+                    subtitleError = result.exceptionOrNull()?.let { "Subtitles couldn't load. Tap Search to retry." })
             }
         }
     }
@@ -2125,6 +2145,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
 
     private fun updateSubtitleDelay(tenths: Int) {
         settingsStore.updateSubtitleDelayTenths(tenths)
+        updateSubtitleCues()
     }
 
     private fun renderSubtitleVtt(json: String?, delay: Double): String {
@@ -2731,6 +2752,8 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     }
     override fun onDestroy() {
         if (talkCreated) talkVoice.close()
+        subtitleCatalogueJob?.cancel()
+        subtitleDelayCommit?.cancel()
         originalAudioWarmup?.cancel()
         audioEditionJob?.cancel()
         germanWarmup?.cancel()
