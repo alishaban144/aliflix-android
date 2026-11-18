@@ -27,24 +27,33 @@ class Talk193MotionDeviceTest {
  private fun save(name:String,image:android.graphics.Bitmap){
   File(InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null),name).outputStream().use{image.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
  }
- @Test fun askLedWaitsForReadinessAndBrightensWithRealLevelInput(){
+ @Test fun askHaloWaitsForReadinessAndBrightensWithSpeech(){
   val ready=mutableStateOf(false);val level=mutableFloatStateOf(0f)
+  val compact=mutableStateOf(false);val phase=mutableStateOf("Listening")
   compose.setContent{AliflixMobileTheme{Box(Modifier.fillMaxSize().background(Color.Black),contentAlignment=Alignment.Center){
-   TalkLiveOrb("Listening",{level.floatValue},false,Modifier.size(300.dp).testTag("led"),haloStyle=TalkHaloStyle.LED,haloReady=ready.value)
+   TalkLiveOrb(phase.value,{level.floatValue},false,Modifier.size(300.dp).testTag("orb-halo"),
+       compactHalo=compact.value,haloReady=ready.value)
   }}}
-  fun sample():Pair<Double,android.graphics.Bitmap>{
-   val image=compose.onNodeWithTag("led").captureToImage().asAndroidBitmap();var total=0L;var count=0
+  fun sample(band: ClosedFloatingPointRange<Double> = .35.. .47):Pair<Double,android.graphics.Bitmap>{
+   val image=compose.onNodeWithTag("orb-halo").captureToImage().asAndroidBitmap();var total=0L;var count=0
    for(y in 0 until image.height)for(x in 0 until image.width){
     val r=hypot((x-image.width/2f).toDouble(),(y-image.height/2f).toDouble())/image.width
-    if(r in .35.. .47){val pixel=image.getPixel(x,y);total+=android.graphics.Color.red(pixel)+android.graphics.Color.green(pixel)+android.graphics.Color.blue(pixel);count++}
+    if(r in band){val pixel=image.getPixel(x,y);total+=android.graphics.Color.red(pixel)+android.graphics.Color.green(pixel)+android.graphics.Color.blue(pixel);count++}
    }
    return total.toDouble()/count to image
   }
   val off=sample();save("talk193-led-off.png",off.second)
   compose.runOnIdle{ready.value=true};val idle=sample();save("talk193-led-ready.png",idle.second)
   compose.runOnIdle{level.floatValue=.95f};val speech=sample();save("talk193-led-speech.png",speech.second)
-  assertTrue("Ready LED must be visible",idle.first>off.first+3)
-  assertTrue("Speech intensity must brighten the LED",speech.first>idle.first*1.3)
+  assertTrue("Ready halo must be visible",idle.first>off.first+3)
+  assertTrue("Speech intensity must brighten the halo",speech.first>idle.first*1.3)
+  val discoverFarLight=sample(.435.. .47).first
+  assertTrue("Discover halo must extend past the player halo",discoverFarLight>1)
+  compose.runOnIdle{compact.value=true;phase.value="Speaking"}
+  val playerSpeech=sample(.35.. .40)
+  save("talk206-player-halo.png",playerSpeech.second)
+  assertTrue("Model speech must also illuminate the compact halo",playerSpeech.first>idle.first)
+  assertEquals("The compact halo must fade completely before the outer band",0.0,sample(.435.. .47).first,.1)
   compose.runOnIdle{ready.value=false};assertEquals(off.first,sample().first,1.0)
  }
  @Test fun loaderKeepsTheReferenceTrajectoryAndNeverClipsItsBall(){

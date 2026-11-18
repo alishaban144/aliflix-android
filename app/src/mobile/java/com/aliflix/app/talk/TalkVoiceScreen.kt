@@ -36,14 +36,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.graphics.ShaderBrush
-import androidx.compose.ui.graphics.drawscope.scale
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
 import com.aliflix.app.ui.discover.DiscoverLiveOrb
 import com.aliflix.app.ui.discover.DiscoverTouchTracker
 import com.aliflix.app.ui.discover.observeDiscoverTouches
@@ -52,7 +47,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
@@ -414,22 +408,18 @@ private class TalkParticleField(private val width: Int, private val height: Int,
     }
 }
 
-/** Native adaptation of Unlumen Glow's five-second, linear conic rotation.
- * A feathered radial alpha replaces CSS blur: no rings, clipped layers or resets
- * between listening/speaking. The uninterrupted clock and PCM envelope are separate. */
+/** Carries the same speech envelope and animation clock between listening and speaking. */
 @Composable internal fun TalkLiveOrb(phase:String,level:()->Float,motion:Boolean,modifier:Modifier=Modifier,tracker:DiscoverTouchTracker=remember{DiscoverTouchTracker()},attention:Offset?=null,
-    activity:TalkOrbActivity?=null,haloStyle:TalkHaloStyle=TalkHaloStyle.SOFT,haloReady:Boolean=true,playerThinking:Boolean=false,
+    activity:TalkOrbActivity?=null,compactHalo:Boolean=false,haloReady:Boolean=true,playerThinking:Boolean=false,
     eyesClosed:Boolean=false,blinkOnConnect:Boolean=false,sceneFocus:Boolean=false,faceFloat:Boolean=true) {
     val appearance=remember(activity,phase) { talkOrbAppearance(activity ?: talkOrbPhaseActivity(phase)) }
-    val context=LocalContext.current
-    val lowRam=remember(context){context.getSystemService(android.app.ActivityManager::class.java)?.isLowRamDevice==true}
     val animate=motion&&android.animation.ValueAnimator.areAnimatorsEnabled()
     val seconds=rememberMobileAnimationClock(animate)
     val thoughtStart=remember(playerThinking){seconds.value}
     val currentLevel by rememberUpdatedState(level)
     var energy by remember{mutableFloatStateOf(0f)}
-    var lightRotation by remember { mutableFloatStateOf(0f) }
-    val glow=animateFloatAsState(if(haloStyle==TalkHaloStyle.LED){if(haloReady)1f else if(eyesClosed).18f else 0f}else appearance.glow,tween(if(animate)240 else 0),label="orb-activity-light")
+    var wavePhase by remember { mutableFloatStateOf(0f) }
+    val glow=animateFloatAsState(if(haloReady).72f+.28f*appearance.glow else if(eyesClosed).18f else 0f,tween(if(animate)240 else 0),label="orb-activity-light")
     val flow=animateFloatAsState(appearance.flow,tween(if(animate)320 else 0),label="orb-activity-flow")
     val tilt=animateFloatAsState(if(sceneFocus)appearance.tilt*.35f else appearance.tilt,
         if(animate)tween(if(sceneFocus)540 else 360,easing=FastOutSlowInEasing)else tween(0),label="orb-attention-tilt")
@@ -440,67 +430,23 @@ private class TalkParticleField(private val width: Int, private val height: Int,
             if(previous!=0L){val target=currentLevel().coerceIn(0f,1f);val dt=((now-previous)/1_000_000_000f).coerceIn(0f,.05f)
                 // Prompt onset, long soft release: fast syllables remain visible
                 // while the light never collapses between phonemes.
-                val tau=if(target>energy).045f else .27f
+                val tau=if(target>energy).05f else .23f
                 energy+=(target-energy)*(1f-exp(-dt/tau))
-                lightRotation=(lightRotation+dt*72f*flow.value)%360f
+                wavePhase += dt * (.48f + .68f * flow.value + 1.25f * energy)
             };previous=now
         }
     }
-    var bounds by remember {mutableStateOf(IntSize.Zero)}
-    val lights=remember(bounds){
-        val extent=min(bounds.width,bounds.height)*.475f
-        if(extent<=0f)null else {
-            val center=Offset(bounds.width/2f,bounds.height/2f)
-            val aura=Brush.radialGradient(0f to Color(0xFFDDCFFF).copy(alpha=.5f),
-                .52f to Color(0xFFA58BE4).copy(alpha=.4f),.76f to Color(0xFFA58BE4).copy(alpha=.12f),
-                1f to Color.Transparent,center=center,radius=extent)
-            val rim=Brush.radialGradient(0f to Color.Transparent,.58f to Color.Transparent,
-                    .68f to Color(0xFFF1DEFF).copy(alpha=.3f),1f to Color.Transparent,center=center,radius=extent)
-            val dimension=min(bounds.width,bounds.height).toFloat()
-            val colors=listOf(Color(0xFFF0DDFF),Color(0xFFC4ABF4),Color(0xFFF2C9E6))
-            val lobes=colors.mapIndexed { index,color ->
-                val angle=index*2f*PI.toFloat()/3f
-                val at=center+Offset(cos(angle),sin(angle))*dimension*.27f
-                Brush.radialGradient(0f to color.copy(alpha=.78f),.34f to color.copy(alpha=.46f),
-                    .7f to color.copy(alpha=.12f),1f to Color.Transparent,center=at,radius=dimension*.205f) to at
-            }
-            Triple(aura,rim,lobes)
-        }
-    }
-    val led=remember(bounds,haloStyle){if(haloStyle==TalkHaloStyle.LED&&bounds.width>0)TalkLedHaloField(bounds.width.toFloat(),bounds.height.toFloat())else null}
-    Box(modifier.onSizeChanged{bounds=it}.semantics {contentDescription="Aliflix voice: ${appearance.label}";stateDescription=appearance.label},contentAlignment=Alignment.Center){
-        Canvas(Modifier.fillMaxSize().clip(androidx.compose.foundation.shape.CircleShape).then(
-            if(haloStyle==TalkHaloStyle.LED&&!lowRam)Modifier.blur(16.dp,androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded)else Modifier)){
-            val extent=size.minDimension*.475f;val breath=1f+sin(seconds.value*.82f)*appearance.breath+energy*.02f
-            if(haloStyle==TalkHaloStyle.LED)led?.draw(this,glow.value,if(animate)energy else currentLevel().coerceIn(0f,1f),seconds.value,animate)
-            else lights?.let{(aura,rim,lobes)->
-                rotate(lightRotation){scale(breath){drawCircle(aura,extent,alpha=(glow.value+energy*.25f).coerceIn(0f,1f))}}
-                // Off-centre feathered lights make rotation visibly travel around
-                // the face. A symmetric radial gradient alone cannot show motion.
-                rotate(lightRotation){scale(breath){lobes.forEach { (brush,at) ->
-                    drawCircle(brush,size.minDimension*.205f,center=at,alpha=(glow.value+energy*.3f).coerceIn(0f,1f))
-                }}}
-                // A second feathered light moves independently along the inner
-                // corona, rather than drawing a hard ring or restarting a pulse.
-                rotate(-lightRotation*.43f+38f){scale(1f+energy*.012f){drawCircle(rim,extent,alpha=glow.value*(.23f+energy*.36f))}}
-            }
-        }
-        if(playerThinking) Canvas(Modifier.fillMaxSize()) {
-            val age=(seconds.value-thoughtStart).coerceAtLeast(0f)
-            val t=if(animate)(age%3.8f)/3.8f else .42f
-            val pulse=sin(t*PI.toFloat()).coerceAtLeast(0f)
-            val diameter=size.minDimension*.78f
-            val oval=androidx.compose.ui.geometry.Size(diameter,diameter)
-            val corner=center-Offset(diameter/2f,diameter/2f)
-            val stroke=Stroke(width=1.15.dp.toPx(),cap=androidx.compose.ui.graphics.StrokeCap.Round)
-            drawArc(Color(0xFFE8D9FF).copy(alpha=.23f+.50f*pulse),-128f+360f*t,28f+62f*pulse,
-                false,topLeft=corner,size=oval,style=stroke)
-            drawArc(Color(0xFFEEC4FA).copy(alpha=.14f+.25f*pulse),76f+360f*t,18f+22f*pulse,
-                false,topLeft=corner,size=oval,style=stroke)
-        }
+    Box(modifier.semantics {contentDescription="Aliflix voice: ${appearance.label}";stateDescription=appearance.label},contentAlignment=Alignment.Center){
+        TalkOrbHalo(
+            compact = compactHalo,
+            strength = { glow.value },
+            speech = { if (animate) energy else currentLevel().coerceIn(0f, 1f) },
+            phase = { if (animate) wavePhase else 0f },
+        )
         DiscoverLiveOrb(tracker,Modifier.fillMaxSize(.66f).graphicsLayer{
             val thought=if(playerThinking&&animate)sin((seconds.value-thoughtStart)*2f*PI.toFloat()/3.8f)else 0f
-            scaleX=1f+energy*.012f+thought*.007f;scaleY=1f-energy*.004f-thought*.005f
+            val breath=if(animate)appearance.breath*sin(seconds.value*.82f)else 0f
+            scaleX=1f+breath+energy*.012f+thought*.007f;scaleY=1f+breath-energy*.004f-thought*.005f
             rotationZ=tilt.value+thought*if(playerThinking)1.8f else 0f
             val drift=if(faceFloat)sin(seconds.value*.95f)*.65f else 0f
             translationY=if(animate)(drift+thought*if(playerThinking)1.2f else 0f).dp.toPx() else 0f

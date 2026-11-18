@@ -58,7 +58,7 @@ class Talk196MotionDeviceTest {
    AliflixMobileTheme {
     Box(Modifier.fillMaxSize().background(Color.Black),contentAlignment=androidx.compose.ui.Alignment.Center) {
      TalkLiveOrb("Thinking",{0f},true,Modifier.size(96.dp).testTag("player-thinking-face"),
-         activity=TalkOrbActivity.THINK,haloStyle=TalkHaloStyle.LED,playerThinking=true)
+         activity=TalkOrbActivity.THINK,compactHalo=true,playerThinking=true)
     }
    }
   }

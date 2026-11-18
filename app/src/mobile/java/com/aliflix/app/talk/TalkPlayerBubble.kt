@@ -265,7 +265,7 @@ import kotlin.math.roundToInt
             TalkLiveOrb(state.phase,{session.state.value.level},motion,Modifier.fillMaxSize().testTag("talk-player-orb"),activity=activity,tracker=tracker,
                 attention=target?.center?.plus(overlayRootOrigin),
                 sceneFocus=target!=null,faceFloat=false,
-                haloStyle=TalkHaloStyle.LED, haloReady=!typing && (connected && talkVoiceHaloReady(state) || !connected && state.microphoneReady && !state.muted),
+                compactHalo=true, haloReady=!typing && (connected && talkVoiceHaloReady(state) || !connected && state.microphoneReady && !state.muted),
                 eyesClosed=!state.textMode && !connected,blinkOnConnect=!state.textMode && connected,
                 playerThinking=thinking)
         }

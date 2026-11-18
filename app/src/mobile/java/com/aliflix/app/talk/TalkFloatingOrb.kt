@@ -49,6 +49,6 @@ import com.aliflix.app.ui.discover.DiscoverTouchTracker
   val y=motionBounds?.let{p.y.coerceIn(it.top+radius,it.bottom-radius)}?:p.y
   translationX=x-base/2f;translationY=y-base/2f
   scaleX=diameter/base;scaleY=scaleX;rotationZ=if(motionBounds==null)p.bank else 0f
- }.testTag(tag),tracker,attention,activity,TalkHaloStyle.LED,haloReady,eyesClosed=eyesClosed,blinkOnConnect=blinkOnConnect)
+ }.testTag(tag),tracker,attention,activity,haloReady=haloReady,eyesClosed=eyesClosed,blinkOnConnect=blinkOnConnect)
 }
 }
