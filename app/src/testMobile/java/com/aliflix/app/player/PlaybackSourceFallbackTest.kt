@@ -6,7 +6,9 @@ import org.junit.Assert.*
 import org.junit.Test
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 
 class PlaybackSourceFallbackTest {
@@ -156,13 +158,13 @@ class PlaybackSourceFallbackTest {
         assertTrue(loserClosed)
     }
 
-    @Test fun priorityTimeoutCannotHideAFastAvailableMirror() = runBlocking {
+    @Test fun priorityTimeoutCannotHideAFastAvailableMirror() = runTest {
         val selection=PlaybackSelection(Media(180,MediaType.MOVIE,"Minority Report"),source=PlaybackSource(MobilePlaybackProvider.FILMO))
         val candidates=initialPlaybackRace(playbackSourceFallbacks(selection,PlaybackPreferences()))
         assertEquals(selection,candidates.first())
         assertTrue(candidates.size>1)
         var cleaned=false
-        val winner=withTimeout(2_500) {
+        val winner=withTimeout(10_000) {
             racePlaybackSources(candidates) { candidate ->
                 if(candidate.source.identity==MobilePlaybackProvider.FILMO)try { awaitCancellation() } finally { cleaned=true }
                 else candidate.source.identity.name
@@ -170,5 +172,19 @@ class PlaybackSourceFallbackTest {
         }
         assertNotEquals(MobilePlaybackProvider.FILMO.name,winner)
         assertTrue(cleaned)
+    }
+
+    @Test fun filmOCanFinishHostValidationBeforeTheFallbackStarts() = runTest {
+        val movie = Media(157336, MediaType.MOVIE, "Interstellar")
+        val selection = PlaybackSelection(movie, source = PlaybackSource(MobilePlaybackProvider.FILMO))
+        val started = mutableListOf<PlaybackProvider>()
+        val winner = racePlaybackSources(playbackSourceFallbacks(selection, PlaybackPreferences())) { candidate ->
+            val provider = candidate.source.identity
+            started.add(provider)
+            if (provider == MobilePlaybackProvider.FILMO) delay(4_000)
+            provider
+        }
+        assertEquals(MobilePlaybackProvider.FILMO, winner)
+        assertEquals(MobilePlaybackProvider.FILMO, started.first())
     }
 }

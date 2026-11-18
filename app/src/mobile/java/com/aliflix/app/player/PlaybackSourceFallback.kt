@@ -1,6 +1,9 @@
 package com.aliflix.app.player
 
 import com.aliflix.app.model.*
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Keep content/progress identity while trying every available provider automatically. */
 internal fun playbackSourceFallbacks(selection: PlaybackSelection, preferences: PlaybackPreferences): List<PlaybackSelection> =
@@ -42,8 +45,22 @@ internal fun alternativePlaybackSources(
 }
 
 /** Give the chosen catalogue a brief head start, with bounded concurrent alternatives. */
-internal suspend fun <T : Any> racePlaybackSources(candidates: List<PlaybackSelection>, attempt: suspend (PlaybackSelection) -> T): T =
-    firstSuccessful(candidates.mapIndexed { index, candidate -> suspend {
-        if (index > 0) kotlinx.coroutines.delay(900)
-        attempt(candidate)
+internal suspend fun <T : Any> racePlaybackSources(candidates: List<PlaybackSelection>, attempt: suspend (PlaybackSelection) -> T): T {
+    val filmOAttempt = candidates.firstOrNull()
+        ?.takeIf { it.source.identity == MobilePlaybackProvider.FILMO }
+        ?.let { CompletableDeferred<Unit>() }
+    return firstSuccessful(candidates.mapIndexed { index, candidate -> suspend {
+        if (index == 0) {
+            // FilmO must open an external host and validate its media before it can win.
+            try {
+                attempt(candidate)
+            } finally {
+                filmOAttempt?.complete(Unit)
+            }
+        } else {
+            if (filmOAttempt == null) delay(900)
+            else withTimeoutOrNull(8_000) { filmOAttempt.await() }
+            attempt(candidate)
+        }
     } }, parallelism = 4)
+}
