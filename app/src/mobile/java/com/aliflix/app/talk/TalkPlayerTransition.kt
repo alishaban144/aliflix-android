@@ -24,7 +24,7 @@ import kotlin.math.*
         val p=progress;val arc=sin(p*PI.toFloat());val size=.74f+.26f*p
         alpha=(p*2.6f).coerceIn(0f,1f)
         translationX=-x*(1f-p)+arc*x*.29f;translationY=-y*(1f-p)+arc*y*.24f
-        scaleX=size*(1f+arc*.14f);scaleY=size*(1f-arc*.10f)
+        scaleX=size;scaleY=size
         rotationZ=-12f*(1f-p)+arc*8f
     }
 }
