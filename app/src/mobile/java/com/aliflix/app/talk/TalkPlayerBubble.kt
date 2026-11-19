@@ -61,7 +61,8 @@ import kotlin.math.roundToInt
 
 @Composable internal fun TalkPlayerBubble(session: TalkVoiceSession, onStart: () -> Unit, onClose: () -> Unit, orbTransition: Modifier = Modifier,
     tracker: com.aliflix.app.ui.discover.DiscoverTouchTracker = remember { com.aliflix.app.ui.discover.DiscoverTouchTracker() },
-    videoBounds: Rect? = null, captionBounds: Rect? = null) {
+    videoBounds: Rect? = null, captionBounds: Rect? = null,
+    opened: Boolean = true, settledClosed: Boolean = false) {
     fun Modifier.measured(key: String): Modifier = if (!com.aliflix.app.BuildConfig.DEBUG) this else onGloballyPositioned {
         session.debugCardBounds[key] = it.findRootCoordinates().localBoundingBoxOf(it, clipBounds = false)
     }
@@ -78,11 +79,11 @@ import kotlin.math.roundToInt
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val composerFocus = remember { FocusRequester() }
-    val motion = com.aliflix.app.ui.common.rememberMobileMotionEnabled() && com.aliflix.app.ui.common.rememberMobileResumed() &&
+    val motion = !settledClosed && com.aliflix.app.ui.common.rememberMobileMotionEnabled() && com.aliflix.app.ui.common.rememberMobileResumed() &&
         android.animation.ValueAnimator.areAnimatorsEnabled()
     val activity = talkOrbActivity(state, typing && !state.sending)
     val appearance = remember(activity) { talkOrbAppearance(activity) }
-    val openingLine = remember(state.conversationId) { state.lines.size }
+    val openingLine = remember(state.conversationId, opened) { state.lines.size }
     val lastUser = state.lines.indexOfLast { it.role == "user" }
     val currentLines = state.lines.drop(maxOf(openingLine,lastUser))
     val historyScroll = rememberLazyListState()
@@ -101,7 +102,20 @@ import kotlin.math.roundToInt
             session.sendText(text); draft.value = TextFieldValue(); dismissComposer(); controls = true
         }
     }
-    BackHandler(enabled = controls || typing) { if (typing) returnToVoice() else controls = false }
+    BackHandler(enabled = opened && (controls || typing)) { if (typing) returnToVoice() else controls = false }
+    LaunchedEffect(opened) {
+        if (!opened) {
+            controls = false
+            dragging = false
+        }
+    }
+    LaunchedEffect(settledClosed) {
+        if (settledClosed) {
+            dragX = 0f
+            dragY = 0f
+            draft.value = TextFieldValue()
+        }
+    }
     LaunchedEffect(controls, typing) {
         listOf("player-microphone", "player-expand", "player-full-input", "player-full-close", "player-full-send").forEach(session.debugCardBounds::remove)
         if (!controls) listOf("player-palette", "player-type", "player-close", "player-send", "player-exchange").forEach(session.debugCardBounds::remove)
@@ -126,7 +140,8 @@ import kotlin.math.roundToInt
         .onGloballyPositioned {
             overlayWindowOrigin = it.positionInWindow()
             overlayRootOrigin = it.localToRoot(Offset.Zero)
-        }.testTag("talk-player-bubble")) {
+        }.then(if (opened) Modifier.testTag("talk-player-bubble")
+            else Modifier.clearAndSetSemantics { hideFromAccessibility() })) {
         val orbSize = 76.dp
         val maxX = with(density) { (maxWidth - orbSize).toPx().coerceAtLeast(0f) }
         val maxY = with(density) { (maxHeight - orbSize).toPx().coerceAtLeast(0f) }
@@ -196,7 +211,7 @@ import kotlin.math.roundToInt
         val paletteY = (if(growDown)downStart else upEnd-estimatedHeight)
             .coerceIn(0f,(heightPixels-estimatedHeight).coerceAtLeast(0f))
         Box(Modifier.absoluteOffset { IntOffset(paletteX.roundToInt(), paletteY.roundToInt()) }) {
-            AnimatedVisibility(controls,
+            AnimatedVisibility(opened && controls,
                 enter = if(motion) fadeIn(tween(180))+scaleIn(initialScale=.97f) else EnterTransition.None,
                 exit = ExitTransition.None) {
                 Surface(Modifier.width(paletteWidth).heightIn(max=panelLimit).animateContentSize(androidx.compose.animation.core.tween(if(motion)260 else 0)).onSizeChanged { panelHeight=it.height }.measured("player-palette").testTag("talk-inline-conversation"),
@@ -246,7 +261,8 @@ import kotlin.math.roundToInt
                 kotlin.math.sin(floatClock.value * .94f) * floatDistance else 0f
             IntOffset((center.x.coerceIn(viewport.left,viewport.right)-radius).roundToInt(),
                 ((center.y+drift).coerceIn(viewport.top,viewport.bottom)-radius).roundToInt())
-        }.then(orbTransition).size(orbSize).clip(CircleShape).testTag("talk-player-orb-container").measured("player-orb").semantics {
+        }.then(orbTransition).size(orbSize).clip(CircleShape).testTag("talk-player-orb-container").measured("player-orb").then(
+            if (!opened) Modifier else Modifier.semantics {
             contentDescription="Talk controls";stateDescription=appearance.label
             customActions=listOf(CustomAccessibilityAction("Move to other side") { dragX=if(orbX>maxX/2)-maxX else 0f;true })
         }.clickable(role=Role.Button,onClickLabel=if(controls)"Collapse conversation" else "Expand conversation") { controls=!controls;if(!controls)returnToVoice() }
@@ -260,7 +276,7 @@ import kotlin.math.roundToInt
                     dragX=(dragX+delta.x).coerceIn(-maxX,0f)
                     dragY=(dragY+delta.y).coerceIn(-top,maxY-top)
                 }
-            }) {
+            })) {
             TalkLiveOrb(state.phase,{session.state.value.level},motion,Modifier.fillMaxSize().testTag("talk-player-orb"),activity=activity,tracker=tracker,
                 attention=target?.center?.plus(overlayRootOrigin),
                 sceneFocus=target!=null,faceFloat=false,

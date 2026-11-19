@@ -21,6 +21,8 @@ import android.view.*
 import androidx.compose.ui.Modifier
 import android.widget.FrameLayout
 import androidx.compose.runtime.*
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.core.updateTransition
 import androidx.activity.addCallback
 import androidx.compose.ui.platform.ComposeView
 import androidx.core.content.ContextCompat
@@ -53,11 +55,13 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         private set
     internal val talkVoice by lazy { com.aliflix.app.talk.TalkVoiceSession(this, lifecycleScope,
         restoreHistory = !(com.aliflix.app.BuildConfig.DEBUG && intent.getBooleanExtra("validationFreshHistory",false))).also { voice ->
+        talkCreated = true
         intent.getStringExtra("talkTaskId")?.let { id -> com.aliflix.app.talk.TalkTaskWork.get(this).conversation(id)?.let(voice::restoreHandoff) }
     } }
     internal fun talkHandoff()=if(talkCreated)talkVoice.handoff()else null
     private var talkCreated = false
     private var talkOpening by mutableIntStateOf(0)
+    private var pendingTalkStart: Runnable? = null
     private var talkConnectJob: Job? = null
     private var talkConnectTextMode: Boolean? = null
     private var talkSceneJob: Job? = null
@@ -177,8 +181,6 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         talkVisible = true
         if (opening) talkOpening++
         talkPreparationJob?.cancel()
-        controller?.pause()
-        talkCreated = true
         val revision = talkOpening
         val start = Runnable {
             if (!talkVisible || revision != talkOpening || isDestroyed) return@Runnable
@@ -189,12 +191,21 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
             else talkPermission.launch(android.Manifest.permission.RECORD_AUDIO)
             if (opening) preparePlayerTalkFrame()
         }
-        if (opening) video.postOnAnimation { video.post(start) } else start.run()
+        if (opening) {
+            pendingTalkStart = start
+            video.postOnAnimation {
+                if (talkVisible && revision == talkOpening) controller?.pause()
+            }
+        } else {
+            controller?.pause()
+            start.run()
+        }
     }
     internal fun closeTalk() = closeTalk(keepTransport = true)
 
     private fun closeTalk(keepTransport: Boolean) {
         talkVisible = false
+        pendingTalkStart = null
         talkConnectJob?.cancel(); talkConnectJob = null
         talkSceneJob?.cancel(); talkSceneJob = null
         if (talkCreated) {
@@ -816,12 +827,24 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                     onOverlayVisibilityChanged = { captionGestureBlocked = it },
                 )
                 val talkMotion=com.aliflix.app.ui.common.rememberMobileMotionEnabled()&&com.aliflix.app.ui.common.rememberMobileResumed()
-                androidx.compose.animation.AnimatedVisibility(talkVisible,
-                    enter=androidx.compose.animation.EnterTransition.None,
-                    exit=androidx.compose.animation.ExitTransition.None) {
+                if (ui.ready || talkVisible) {
+                    val flight = updateTransition(
+                        if (talkVisible) EnterExitState.Visible else EnterExitState.PreEnter,
+                        label = "player-talk-visibility",
+                    )
+                    val settled = flight.currentState == flight.targetState && !flight.isRunning
+                    LaunchedEffect(talkOpening, settled) {
+                        if (talkVisible && settled) {
+                            withFrameNanos { }
+                            val start = pendingTalkStart
+                            pendingTalkStart = null
+                            start?.run()
+                        }
+                    }
                     com.aliflix.app.talk.TalkPlayerBubble(talkVoice,onStart=::openTalk,onClose=::closeTalk,tracker=talkTouches,
-                        orbTransition=com.aliflix.app.talk.playerOrbTransition(transition,talkMotion),
-                        videoBounds=talkVideoBounds, captionBounds=talkCaptionBounds)
+                        orbTransition=com.aliflix.app.talk.playerOrbTransition(flight,talkMotion),
+                        videoBounds=talkVideoBounds, captionBounds=talkCaptionBounds,
+                        opened=talkVisible, settledClosed=!talkVisible && settled)
                 }
             } }
         }, FrameLayout.LayoutParams(-1, -1))
