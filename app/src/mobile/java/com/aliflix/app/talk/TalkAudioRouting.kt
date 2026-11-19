@@ -47,8 +47,8 @@ internal class TalkAudioLease(context:Context,
  private val handler=Handler(Looper.getMainLooper())
  private val focus=AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
   .setAudioAttributes(talkAudioAttributes()).setOnAudioFocusChangeListener({value->if(held)onFocus(this,value)},handler).build()
- var held=false;private set
- private var activated=false
+ @Volatile var held=false;private set
+ @Volatile private var activated=false
  private var modeRequested=false
  private var deviceRequested=false
  private var devicesRegistered=false

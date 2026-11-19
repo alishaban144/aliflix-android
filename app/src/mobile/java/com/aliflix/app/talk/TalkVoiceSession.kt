@@ -785,10 +785,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     internal val debugModel get() = ephemeral?.optString("model").orEmpty()
     private val manager = context.getSystemService(AudioManager::class.java)
     @Volatile private var audioLease:TalkAudioLease?=null
+    private var preparingRoute: TalkAudioLease? = null
     private var ducked=false
-    private fun reserveAudio():Boolean {
-        if(audioLease?.held==true)return true
-        val lease=TalkAudioLease(context,onFocus={owner,value->
+    private fun newAudioLease() = TalkAudioLease(context,onFocus={owner,value->
             if(audioLease===owner&&permitted){
             when(value) {
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {ducked=true;runCatching {output?.setVolume(.25f)}}
@@ -796,15 +795,28 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 AudioManager.AUDIOFOCUS_LOSS,AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {suspendSession();update{it.copy(phase="Audio unavailable",level=0f)}}
             }
             }
-        },onRoute={owner,device->if(audioLease===owner&&permitted){
-            // Keep the far-end history across a route switch; queued output is
-            // still playing. Timestamp delay follows the new hardware path.
-            finishMicrophoneActivity("route_changed")
-            runCatching{output?.setPreferredDevice(device)}
-        }},onUnavailable={owner->if(audioLease===owner&&permitted){suspendSession();update{it.copy(phase="Audio unavailable",level=0f)}}})
+        },onRoute={owner,device->
+            scope.launch(Dispatchers.Main.immediate) {
+                if (audioLease === owner && permitted && capture != null) {
+                    finishMicrophoneActivity("route_changed")
+                    runCatching { output?.setPreferredDevice(device) }
+                }
+            }
+        },onUnavailable={owner->if(audioLease===owner&&permitted){suspendSession();update{it.copy(phase="Audio unavailable",level=0f)}}})
+
+    private fun reserveAudio():Boolean {
+        if(audioLease?.held==true)return true
+        val lease = newAudioLease()
         audioLease=lease
         if(lease.reserve())return true
         audioLease=null;lease.close();return false
+    }
+
+    private fun releaseAudioLease() {
+        val lease = audioLease
+        audioLease = null
+        // A cancelled setup closes its unadopted lease alongside the devices.
+        if (lease !== preparingRoute) lease?.close()
     }
     @Volatile private var outputEnergy = 0.0
     private val outputEnvelope=TalkOutputEnvelope()
@@ -929,9 +941,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         debugPlayerTransportAt = 0
         persistHistory()
         stopAudio()
-        val lease = audioLease
-        audioLease = null
-        lease?.close()
+        releaseAudioLease()
         ducked = false
         update { it.copy(phase="Resume",level=0f) }
         parkedPlayerExpiry = scope.launch {
@@ -975,7 +985,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }
 
     internal fun startPlayerOpening() {
-        if(parkedPlayerKey==null)stopAnswer()
+        if (parkedPlayerKey == null && (permitted || state.value.sending || speaking)) stopAnswer()
         usePlayerVoice()
     }
 
@@ -2208,17 +2218,31 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
 
     private suspend fun startLiveAudio(ticket: Long) = audioPreparation.withLock {
         if (ticket != epoch || !permitted || captureJob?.isActive == true) return@withLock
-        activateAudioRoute()
+        val lease = newAudioLease()
+        audioLease = lease
+        preparingRoute = lease
         val devices = TalkAudioDevices()
         var adopted = false
         try {
             // Audio services and the cold ONNX session can block for several frames.
-            withContext(Dispatchers.IO) { prepareAudioDevices(ticket, devices) }
+            withContext(Dispatchers.IO) {
+                check(lease.reserve()) { "Audio focus unavailable" }
+                ensureActive()
+                lease.activate()
+                prepareAudioDevices(ticket, devices)
+            }
             if (ticket != epoch || !permitted || captureJob?.isActive == true) return@withLock
             adopted = true
             attachAudio(ticket, devices)
         } finally {
-            if (!adopted) withContext(NonCancellable + Dispatchers.IO) { devices.close() }
+            preparingRoute = null
+            if (!adopted) {
+                if (audioLease === lease) audioLease = null
+                withContext(NonCancellable + Dispatchers.IO) {
+                    devices.close()
+                    lease.close()
+                }
+            }
         }
     }
 
@@ -2531,7 +2555,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             java.io.File(context.getExternalFilesDir(null),"talk-last-audio-diagnostic.json").writeText(JSONObject().put("audio",JSONArray(debugAudioTimeline.toList())).put("events",JSONArray(debugWireEvents.toList())).toString())
         }
         stopAudio()
-        val lease=audioLease;audioLease=null;lease?.close();ducked=false
+        releaseAudioLease();ducked=false
         update {it.copy(phase="Resume",level=0f,sending=false,evidenceStage=TalkEvidenceStage.NONE)}
     }
     fun pauseSession() {pendingNativeNavigation=null;archiveReadSequence++;continueAfterReconnect=false;markStoppedTurn();textSend?.cancel();textSend=null;suspendSession() }
