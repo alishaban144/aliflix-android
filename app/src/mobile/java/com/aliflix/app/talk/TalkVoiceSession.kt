@@ -13,6 +13,8 @@ import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -891,7 +893,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             initialAudio = scope.launch(Dispatchers.Main, start=CoroutineStart.LAZY) {
                 TalkAudioLease.awaitOwnRelease(context)
                 if(ticket==epoch&&permitted)try {
-                    startAudio(ticket)
+                    startLiveAudio(ticket)
+                } catch(cancelled: CancellationException) {
+                    throw cancelled
                 } catch(_: Exception) {
                     suspendSession()
                     update{it.copy(phase="Audio unavailable")}
@@ -951,7 +955,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             TalkAudioLease.awaitOwnRelease(context)
             if(ticket!=epoch || parkedPlayerKey!=key || !permitted) return false
             clearParkedPlayer()
-            startAudio(ticket)
+            startLiveAudio(ticket)
             update { it.copy(phase="Listening") }
             return true
         } catch(cancelled: CancellationException) {
@@ -1328,7 +1332,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             try {
                 if(!state.value.textMode) {
                     val audioStart=initialAudio
-                    if(audioStart!=null)audioStart.join()else startAudio(ticket)
+                    if(audioStart!=null)audioStart.join()else startLiveAudio(ticket)
                     if(ticket!=epoch||!permitted)return@launch
                 }
                 openingSpeech.drain().forEach { (decision, generation) ->
@@ -2149,50 +2153,112 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         speechMonitor?.offer(bytes,captureTicket,ownedFixture)
     }
 
+    private class TalkAudioDevices : AutoCloseable {
+        var record: AudioRecord? = null
+        var track: AudioTrack? = null
+        var echo: AcousticEchoCanceler? = null
+        var noise: NoiseSuppressor? = null
+        var processor: TalkEchoProcessor? = null
+        var monitor: TalkSpeechMonitor? = null
+
+        override fun close() {
+            runCatching { record?.stop() }
+            runCatching { record?.release() }
+            runCatching { echo?.release() }
+            runCatching { noise?.release() }
+            runCatching { processor?.close() }
+            runCatching { monitor?.close() }
+            runCatching { track?.release() }
+        }
+    }
+
+    private fun activateAudioRoute() {
+        check(reserveAudio()) { "Audio focus unavailable" }
+        // Establish the platform's far-end echo reference before constructing the streams.
+        requireNotNull(audioLease).activate()
+    }
+
     @SuppressLint("MissingPermission")
+    private fun prepareAudioDevices(ticket: Long, devices: TalkAudioDevices) {
+        val record = AudioRecord.Builder()
+            .setAudioSource(if (BuildConfig.DEBUG && acousticProbe) MediaRecorder.AudioSource.UNPROCESSED else MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+            .setAudioFormat(AudioFormat.Builder().setSampleRate(16000).setChannelMask(AudioFormat.CHANNEL_IN_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
+            .setBufferSizeInBytes(maxOf(12_800, AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT) * 2))
+            .build()
+        devices.record = record
+        require(record.state == AudioRecord.STATE_INITIALIZED)
+        devices.echo = if (acousticProbe) null else enableTalkPlatformEcho(record.audioSessionId)
+        devices.processor = if (acousticProbe || devices.echo != null) null
+            else requireNotNull(TalkEchoProcessor.create()) { "Echo processing unavailable" }
+        devices.noise = if (devices.echo != null) enableTalkPlatformNoise(record.audioSessionId) else null
+        devices.monitor = TalkSpeechMonitor(context) { frame, probability, captureTicket, ownedFixture ->
+            if (ticket == epoch) microphoneDecision(frame, probability, ticket, captureTicket, ownedFixture)
+        }
+        devices.track = AudioTrack.Builder().setAudioAttributes(talkAudioAttributes())
+            .setAudioFormat(AudioFormat.Builder().setSampleRate(24000).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .setBufferSizeInBytes(maxOf(5_760, AudioTrack.getMinBufferSize(24000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT) * 2))
+            .build()
+        if (ticket != epoch || !permitted) throw CancellationException("Audio session changed")
+        record.startRecording()
+        check(record.recordingState == AudioRecord.RECORDSTATE_RECORDING)
+    }
+
+    private val audioPreparation = Mutex()
+
+    private suspend fun startLiveAudio(ticket: Long) = audioPreparation.withLock {
+        if (ticket != epoch || !permitted || captureJob?.isActive == true) return@withLock
+        activateAudioRoute()
+        val devices = TalkAudioDevices()
+        var adopted = false
+        try {
+            // Audio services and the cold ONNX session can block for several frames.
+            withContext(Dispatchers.IO) { prepareAudioDevices(ticket, devices) }
+            if (ticket != epoch || !permitted || captureJob?.isActive == true) return@withLock
+            adopted = true
+            attachAudio(ticket, devices)
+        } finally {
+            if (!adopted) withContext(NonCancellable + Dispatchers.IO) { devices.close() }
+        }
+    }
+
     private fun startAudio(ticket: Long) {
         if (captureJob?.isActive == true) return
-        check(reserveAudio()){"Audio focus unavailable"}
-        // Activate after network setup, immediately before the actual I/O.
-        // Qualcomm and other HALs need this mode to supply the far-end AEC reference.
-        requireNotNull(audioLease).activate()
+        activateAudioRoute()
+        val devices = TalkAudioDevices()
+        try {
+            prepareAudioDevices(ticket, devices)
+        } catch (error: Throwable) {
+            devices.close()
+            throw error
+        }
+        attachAudio(ticket, devices)
+    }
+
+    private fun attachAudio(ticket: Long, devices: TalkAudioDevices) {
         synchronized(microphoneOwnership){captureGeneration++;inputTurns.reset();duplexGate.reset()}
-        val record = AudioRecord.Builder().setAudioSource(if(BuildConfig.DEBUG&&acousticProbe)MediaRecorder.AudioSource.UNPROCESSED else MediaRecorder.AudioSource.VOICE_COMMUNICATION)
-            .setAudioFormat(AudioFormat.Builder().setSampleRate(16000).setChannelMask(AudioFormat.CHANNEL_IN_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
-            .setBufferSizeInBytes(maxOf(12_800, AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT) * 2)).build()
-        capture = record
-        require(record.state == AudioRecord.STATE_INITIALIZED)
-        // The platform canceller owns the actual HAL reference when it can be
-        // enabled and controlled. Disabling it unconditionally regressed Pixel
-        // playback after short replies. Use one AEC, with AEC3 as the fallback.
-        echo=if(acousticProbe)null else enableTalkPlatformEcho(record.audioSessionId)
-        val platformEcho=echo
-        if(platformEcho!=null){
-            fun lostEcho(){scope.launch(Dispatchers.Main){if(ticket==epoch&&permitted&&echo===platformEcho)disconnected(ticket,false)}}
-            platformEcho.setEnableStatusListener { _,enabled->if(!enabled)lostEcho() }
-            platformEcho.setControlStatusListener { _,controlled->if(!controlled)lostEcho() }
+        val record = requireNotNull(devices.record).also { capture = it }
+        val track = requireNotNull(devices.track).also { output = it }
+        val processor = devices.processor.also { echoProcessor = it }
+        speechMonitor = devices.monitor
+        val platformEcho = devices.echo.also { echo = it }
+        val platformNoise = devices.noise.also { noise = it }
+        if (platformEcho != null) {
+            fun lostEcho() { scope.launch(Dispatchers.Main) { if (ticket == epoch && permitted && echo === platformEcho) disconnected(ticket, false) } }
+            platformEcho.setEnableStatusListener { _, enabled -> if (!enabled) lostEcho() }
+            platformEcho.setControlStatusListener { _, controlled -> if (!controlled) lostEcho() }
         }
-        val processor=if(acousticProbe||platformEcho!=null)null else requireNotNull(TalkEchoProcessor.create()){"Echo processing unavailable"}
-        echoProcessor=processor
-        noise=if(platformEcho!=null)enableTalkPlatformNoise(record.audioSessionId)else null
-        val platformNoise=noise
-        if(platformNoise!=null){
-            fun lostNoise(){scope.launch(Dispatchers.Main){if(ticket==epoch&&permitted&&noise===platformNoise)disconnected(ticket,false)}}
-            platformNoise.setEnableStatusListener { _,enabled->if(!enabled)lostNoise() }
-            platformNoise.setControlStatusListener { _,controlled->if(!controlled)lostNoise() }
+        if (platformNoise != null) {
+            fun lostNoise() { scope.launch(Dispatchers.Main) { if (ticket == epoch && permitted && noise === platformNoise) disconnected(ticket, false) } }
+            platformNoise.setEnableStatusListener { _, enabled -> if (!enabled) lostNoise() }
+            platformNoise.setControlStatusListener { _, controlled -> if (!controlled) lostNoise() }
         }
-        speechMonitor=TalkSpeechMonitor(context){frame,probability,captureTicket,ownedFixture->
-            if(ticket==epoch)microphoneDecision(frame,probability,ticket,captureTicket,ownedFixture)
-        }
-        val track = AudioTrack.Builder().setAudioAttributes(talkAudioAttributes())
-            .setAudioFormat(AudioFormat.Builder().setSampleRate(24000).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
-            .setTransferMode(AudioTrack.MODE_STREAM).setBufferSizeInBytes(maxOf(5_760, AudioTrack.getMinBufferSize(24000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT) * 2)).build()
         // play() alone does not lower Android's default full-capacity threshold.
         if(android.os.Build.VERSION.SDK_INT>=31)track.setStartThresholdInFrames(1)
         else track.setBufferSizeInFrames(2880)
         audioLease?.outputDevice?.let{device->runCatching{track.setPreferredDevice(device)}}
         track.setVolume(if(ducked).25f else 1f)
-        outputEnvelope.clear();output = track; writtenSamples=0;primingFrom=0;primingBegan=0;debugRenderedBaseline=0;endOfAudio=false;outputEnergy=0.0
+        outputEnvelope.clear();writtenSamples=0;primingFrom=0;primingBegan=0;debugRenderedBaseline=0;endOfAudio=false;outputEnergy=0.0
         val buffer=AudioBuffer();val queue=buffer.chunks;audio=buffer
         outputJob = scope.launch(Dispatchers.IO) {
             try {for ((seq, bytes) in queue) {
@@ -2280,8 +2346,6 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             }}catch(cancelled:CancellationException){throw cancelled}
             catch(_:Exception){if(ticket==epoch&&permitted)withContext(Dispatchers.Main){disconnected(ticket,false)}}
         }
-        record.startRecording()
-        check(record.recordingState==AudioRecord.RECORDSTATE_RECORDING)
         captureJob = scope.launch(Dispatchers.IO) {
             val samples=ShortArray(160)
             val latency=TalkAudioDelay()

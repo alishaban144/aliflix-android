@@ -3379,11 +3379,7 @@ internal fun MySpaceScreen(
                 contentPadding = PaddingValues(horizontal = AliflixSpacing.Medium),
                 border = null,
             ) {
-                Box {
-                    Icon(Icons.Rounded.Settings, "Open Settings", tint = Color.White, modifier = Modifier.size(17.dp))
-                    com.aliflix.app.ui.common.UpdateAvailableDot(!BuildConfig.IS_TV && (updateUi.available != null || updateUi.downloadedApk != null),
-                        Modifier.align(Alignment.CenterStart).offset(x = (-10).dp))
-                }
+                Icon(Icons.Rounded.Settings, null, tint = Color.White, modifier = Modifier.size(17.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(
                     text = "Settings",
@@ -3391,6 +3387,15 @@ internal fun MySpaceScreen(
                     fontWeight = FontWeight.Bold,
                     color = Color.White,
                 )
+                AnimatedVisibility(!BuildConfig.IS_TV && (updateUi.available != null || updateUi.downloadedApk != null),
+                    enter = fadeIn(), exit = fadeOut()) {
+                    Icon(
+                        Icons.Rounded.SystemUpdate,
+                        contentDescription = "App update available",
+                        tint = AliflixAccentSecondary,
+                        modifier = Modifier.padding(start = 7.dp).size(18.dp),
+                    )
+                }
             }
         }
         MySpaceAccountCard(

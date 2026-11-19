@@ -818,12 +818,10 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                 val talkMotion=com.aliflix.app.ui.common.rememberMobileMotionEnabled()&&com.aliflix.app.ui.common.rememberMobileResumed()
                 androidx.compose.animation.AnimatedVisibility(talkVisible,
                     enter=androidx.compose.animation.EnterTransition.None,
-                    exit=androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(if(talkMotion)360 else 0))) {
-                    key(talkOpening) {
-                        com.aliflix.app.talk.TalkPlayerBubble(talkVoice,onStart=::openTalk,onClose=::closeTalk,tracker=talkTouches,
-                            orbTransition=com.aliflix.app.talk.playerOrbTransition(transition,talkMotion),
-                            videoBounds=talkVideoBounds, captionBounds=talkCaptionBounds)
-                    }
+                    exit=androidx.compose.animation.ExitTransition.None) {
+                    com.aliflix.app.talk.TalkPlayerBubble(talkVoice,onStart=::openTalk,onClose=::closeTalk,tracker=talkTouches,
+                        orbTransition=com.aliflix.app.talk.playerOrbTransition(transition,talkMotion),
+                        videoBounds=talkVideoBounds, captionBounds=talkCaptionBounds)
                 }
             } }
         }, FrameLayout.LayoutParams(-1, -1))

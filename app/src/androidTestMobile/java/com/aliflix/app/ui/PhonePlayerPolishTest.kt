@@ -225,6 +225,29 @@ class PhonePlayerPolishTest {
         capture("my-list-active-genre.png")
     }
 
+    @Test fun settingsShowsAnUpdateIconOnlyWhenAnUpdateIsAvailable() {
+        val update = androidx.compose.runtime.mutableStateOf(MobileUpdateUiState())
+        compose.setContent { AliflixMobileTheme {
+            MySpaceScreen(emptyList(), emptyList(), emptyList(), AccountState(), {}, {}, {}, {}, {},
+                androidx.compose.foundation.lazy.grid.rememberLazyGridState(),
+                androidx.compose.foundation.lazy.grid.rememberLazyGridState(),
+                androidx.compose.foundation.lazy.grid.rememberLazyGridState(),
+                0, {}, PlaybackProviderId.MOVIEPIRE, {}, {}, false, {}, RecommendationAiModel.entries.first(), {},
+                SubtitleLanguage.ENGLISH, {}, true, {}, update.value, {}, {}, {})
+        } }
+        val badge = compose.onNodeWithContentDescription("App update available", useUnmergedTree = true)
+        badge.assertDoesNotExist()
+        compose.runOnIdle {
+            update.value = MobileUpdateUiState(available = com.aliflix.app.update.UpdateInfo(
+                Int.MAX_VALUE, "99.0", "https://example.com/update.apk", "", 29, ""
+            ))
+        }
+        badge.assertIsDisplayed()
+        capture("my-space-update-icon.png")
+        compose.onNodeWithText("Settings").performClick()
+        compose.onNodeWithText("App updates").assertIsDisplayed()
+    }
+
     private fun capture(name: String) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         compose.waitForIdle()
