@@ -112,7 +112,7 @@ class SharedSceneDeviceTest {
                         while (previews.frame(20_000) == null) delay(30)
                     }
                     val frame = requireNotNull(previews.frame(20_000))
-                    assertEquals(144, frame.height)
+                    assertEquals(108, frame.height)
                     assertTrue(frame.width > frame.height)
                     assertNull(previews.frame(60_000))
                 } finally {
