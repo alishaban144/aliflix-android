@@ -112,7 +112,6 @@ export class TmdbClient {
     const url = new URL(`${BASE_URL}${path}`);
     for (const [key, value] of Object.entries(params)) if (value !== undefined) url.searchParams.set(key, String(value));
     url.searchParams.sort();
-    const ttl = cacheTtl ?? (path.startsWith('/search/') ? 300 : path.startsWith('/discover/') ? 900 : 3600);
     const headers: HeadersInit = { accept: 'application/json' };
     applyTmdbAuthentication(this.env, url, headers);
 
@@ -124,8 +123,8 @@ export class TmdbClient {
       const timeout = setTimeout(() => controller.abort(), 8_000);
       const signal = this.deadline ? AbortSignal.any([this.deadline, controller.signal]) : controller.signal;
       try {
-        const response = await fetch(url, { headers, signal, redirect: 'error',
-          cf: { cacheEverything: true, cacheTtlByStatus: { '200-299': ttl, '300-599': -1 } } });
+        const response = await fetch(url, { headers, signal,
+          ...(cacheTtl ? { cf: { cacheTtl, cacheEverything: true } } : {}) });
         if (response.ok) return await response.json() as T;
         await response.body?.cancel();
         if (response.status === 401 || response.status === 403) {

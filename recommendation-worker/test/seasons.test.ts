@@ -10,7 +10,7 @@ describe('phone season metadata', () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
       expect(url.pathname).toBe('/3/tv/1396/season/3');
-      expect(init?.cf?.cacheTtlByStatus).toEqual({ '200-299': 3600, '300-599': -1 });
+      expect(init?.cf?.cacheTtl).toBe(3600);
       return Response.json({ episodes: [
         { episode_number: 1, season_number: 3, name: 'Episode one', overview: 'Story', still_path: '/still.jpg', runtime: 47, vote_average: 9.1 },
         { episode_number: 1, season_number: 2, name: 'Wrong season' },
