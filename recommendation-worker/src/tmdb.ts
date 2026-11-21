@@ -80,6 +80,7 @@ export type TmdbTrendingItem = TmdbListItem & { media_type?: MediaType | 'person
 
 export class TmdbClient {
   private used = 0;
+  private rateLimited = false;
   // Filters use the conservative default. Generated Describe/Similar requests
   // explicitly raise this to 40 while capping their AI calls so even the
   // provider-retry path stays below Cloudflare Free's 50-subrequest ceiling.
@@ -105,25 +106,28 @@ export class TmdbClient {
   }
 
   private async request<T>(path: string, params: Record<string, string | number | boolean | undefined> = {}, cacheTtl?: number): Promise<T> {
-    if (!this.env.TMDB_API_KEY && !this.env.TMDB_READ_ACCESS_TOKEN) {
+    if (!this.env.TMDB_API_KEY?.trim() && !this.env.TMDB_READ_ACCESS_TOKEN?.trim()) {
       throw new ServiceError('TMDB_AUTH_FAILED', 'TMDB is not configured', 503, true);
     }
     const url = new URL(`${BASE_URL}${path}`);
     for (const [key, value] of Object.entries(params)) if (value !== undefined) url.searchParams.set(key, String(value));
+    url.searchParams.sort();
+    const ttl = cacheTtl ?? (path.startsWith('/search/') ? 300 : path.startsWith('/discover/') ? 900 : 3600);
     const headers: HeadersInit = { accept: 'application/json' };
     applyTmdbAuthentication(this.env, url, headers);
 
     for (let attempt = 0; attempt < 3; attempt++) {
       this.deadline?.throwIfAborted();
-      let retryDelayMs = 100 * (attempt + 1);
+      if (this.rateLimited) throw new ServiceError('TMDB_RATE_LIMITED', 'TMDB asked this request to back off', 503, true);
       if (++this.used > this.budget) throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB request budget exhausted', 503, true);
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8_000);
-      if (this.deadline) this.deadline.addEventListener('abort', () => controller.abort(), { once: true });
+      const signal = this.deadline ? AbortSignal.any([this.deadline, controller.signal]) : controller.signal;
       try {
-        const response = await fetch(url, { headers, signal: controller.signal,
-          ...(cacheTtl ? { cf: { cacheTtl, cacheEverything: true } } : {}) });
+        const response = await fetch(url, { headers, signal, redirect: 'error',
+          cf: { cacheEverything: true, cacheTtlByStatus: { '200-299': ttl, '300-599': -1 } } });
         if (response.ok) return await response.json() as T;
+        await response.body?.cancel();
         if (response.status === 401 || response.status === 403) {
           throw new ServiceError('TMDB_AUTH_FAILED', 'TMDB rejected the configured credential', 503, false);
         }
@@ -132,17 +136,16 @@ export class TmdbClient {
           throw new ServiceError('TMDB_UNAVAILABLE', `TMDB request failed (${response.status})`, 502, false);
         }
         if (response.status === 429) {
-          const retryAfterSeconds = Number(response.headers.get('retry-after'));
-          if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
-            retryDelayMs = Math.min(2_000, retryAfterSeconds * 1_000);
-          }
+          this.rateLimited = true;
+          throw new ServiceError('TMDB_RATE_LIMITED', 'TMDB asked this request to back off', 503, true);
         }
         if (attempt === 2) throw new ServiceError('TMDB_UNAVAILABLE', `TMDB request failed (${response.status}) for ${path}`, 503, true);
       } catch (error) {
+        this.deadline?.throwIfAborted();
         if (error instanceof ServiceError) throw error;
         if (attempt === 2) throw new ServiceError('TMDB_UNAVAILABLE', `TMDB request timed out or failed for ${path}`, 503, true);
       } finally { clearTimeout(timeout); }
-      await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+      await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
     }
     throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB request failed', 503, true);
   }

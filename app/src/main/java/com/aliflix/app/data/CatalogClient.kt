@@ -408,6 +408,8 @@ class CatalogClient(
         }
     }
 
+    internal fun bundledHome(): HomeContent = HomeContent(fallbackItems.first(), fallbackRails)
+
     suspend fun home(
         onProgress: suspend (HomeContent) -> Unit = {},
     ): HomeContent = supervisorScope {

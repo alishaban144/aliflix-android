@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index';
+import { cachedCatalogue, CatalogueHome } from '../src/catalogueCache';
+import { ServiceError } from '../src/types';
+import { env as bindings, runInDurableObject } from 'cloudflare:test';
 
 const env: any = {
   GEMINI_API_KEY: 'gemini-test',
@@ -340,8 +343,22 @@ describe('TMDB-backed mobile catalogue routes', () => {
       throw new Error(`Unexpected URL ${url}`);
     }));
 
-    const result = await worker.fetch(new Request('https://worker.test/v3/home'), env);
+    const stub = bindings.CATALOGUE_HOME.getByName('test-home');
+    const fresh = await runInDurableObject(stub, async (_instance, state) => {
+      const home = new CatalogueHome(state, env);
+      const [first, simultaneous] = await Promise.all([home.get(), home.get()]);
+      expect(simultaneous).toEqual(first);
+      expect(await state.storage.get('snapshot')).toEqual(first);
+      const saved = { ...first, createdAt: Date.now() - 60 * 60 * 1000 };
+      await state.storage.put('snapshot', saved);
+      await state.storage.put('retry-at', Date.now() + 60 * 1000);
+      expect(await home.get()).toEqual(saved);
+      return first;
+    });
+    const bound = { ...env, CATALOGUE_HOME: { getByName: () => ({ get: async () => fresh }) } };
+    const result = await worker.fetch(new Request('https://worker.test/v3/home'), bound);
     expect(result.status).toBe(200);
+    expect(genreDiscoveries).toHaveLength(14);
     const body: any = await result.json();
     expect(body.hero).toMatchObject({ tmdbId: 10, mediaType: 'movie', title: 'Trending Film' });
     expect(body.rails.slice(0, 5).map((rail: any) => rail.title)).toEqual([
@@ -375,4 +392,19 @@ describe('TMDB-backed mobile catalogue routes', () => {
     expect(new Set(homeKeys).size).toBeLessThan(homeKeys.length);
     expect(seenHosts.every(host => host === 'api.themoviedb.org')).toBe(true);
   });
+});
+
+it('keeps the last successful metadata response when a refresh is rate-limited', async () => {
+  const key = () => new URL('https://stale-catalogue.test/v3/titles/movie/550');
+  const load = vi.fn(async () => ({ tmdbId: 550 }));
+  const options = { freshSeconds: 300, retainSeconds: 3600 };
+  await cachedCatalogue(key(), options, undefined, load);
+  const fresh = await cachedCatalogue(key(), options, undefined, load);
+  expect(await fresh.json()).toEqual({ tmdbId: 550 });
+  expect(load).toHaveBeenCalledTimes(1);
+
+  const unavailable = async () => { throw new ServiceError('TMDB_RATE_LIMITED', 'Back off', 503, true); };
+  const stale = await cachedCatalogue(key(), { ...options, freshSeconds: 0 }, undefined, unavailable);
+  expect(stale.headers.get('cache-control')).toBe('public, max-age=30');
+  expect(await stale.json()).toEqual({ tmdbId: 550 });
 });

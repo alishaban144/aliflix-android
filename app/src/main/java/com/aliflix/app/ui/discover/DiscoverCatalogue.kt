@@ -26,6 +26,7 @@ import coil.compose.AsyncImage
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.MediaCreator
+import com.aliflix.app.model.HomeContent
 import com.aliflix.app.recommendation.RecommendationAiClient
 import com.aliflix.app.recommendation.V3CatalogMedia
 import com.aliflix.app.ui.common.MobileTopSafeArea
@@ -59,6 +60,7 @@ internal class CatalogueSession {
 internal class DiscoverCatalogueStore(
     private val client: RecommendationAiClient,
     private val titleSearch: com.aliflix.app.data.TypoTolerantTitleSearch? = null,
+    private val homeContent: () -> HomeContent? = { null },
 ) {
     val appliedFilterState=mutableStateOf<com.aliflix.app.recommendation.CatalogDiscoverySpec?>(null)
     val filters=DiscoverFilterStore(client)
@@ -134,7 +136,26 @@ internal class DiscoverCatalogueStore(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
-            session.error = "Catalogue unavailable"
+            if (session.items.isEmpty() && session.people.isEmpty() && !more && !com.aliflix.app.BuildConfig.IS_TV) {
+                val rails = homeContent()?.rails.orEmpty()
+                val source = when (category) {
+                    null -> rails.flatMap { it.items }.filter { it.title.contains(query.trim(), ignoreCase = true) }
+                    "trending" -> rails.firstOrNull()?.items.orEmpty()
+                    else -> emptyList()
+                }
+                session.items = source.asSequence()
+                    .filter { it.id !in excludedTmdbIds }
+                    .filter { item ->
+                        when (filter) {
+                            "Movies" -> item.type == MediaType.MOVIE
+                            "Series" -> item.type == MediaType.TV
+                            "People" -> false
+                            else -> true
+                        }
+                    }.distinctBy(Media::key).toList()
+                if (session.items.isNotEmpty()) session.hasMore = false
+            }
+            if (session.items.isEmpty() && session.people.isEmpty()) session.error = "Catalogue unavailable"
         } finally {
             session.loading = false
         }

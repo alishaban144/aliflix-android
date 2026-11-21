@@ -43,6 +43,10 @@
       {
         "name": "TALK_AGENTS",
         "class_name": "TalkAgent"
+      },
+      {
+        "name": "CATALOGUE_HOME",
+        "class_name": "CatalogueHome"
       }
     ]
   },
@@ -76,6 +80,10 @@
       "new_sqlite_classes": [
         "TalkAgent"
       ]
+    },
+    {
+      "tag": "v6-catalogue-home",
+      "new_sqlite_classes": ["CatalogueHome"]
     }
   ],
   "ratelimits": [

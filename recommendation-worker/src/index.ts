@@ -16,7 +16,9 @@ import { aiProviderName, selectedAiModel } from './ai';
 import { ParsedRecommendationRequest, RecommendationRequestSchema } from './schemas';
 import { ContinuationReservation, createCursor, parseCursor, RecommendationSession, requestFingerprint } from './session';
 import { RecommendationEnv, RecommendationResponse, RecommendationResult, ServiceError } from './types';
-import { companySearch, editorialPicks, homeFeed, personCredits, titleDetails, titleSearch, tvNetworkFeed } from './catalog';
+import { companySearch, editorialPicks, personCredits, titleDetails, titleSearch, tvNetworkFeed } from './catalog';
+import { cachedCatalogue, DISCOVER_CACHE, HOME_EDGE_CACHE, METADATA_CACHE, SEARCH_CACHE } from './catalogueCache';
+export { CatalogueHome } from './catalogueCache';
 import { downloadSubdlSubtitle, searchSubdlSubtitles } from './subdl';
 import { downloadWyzieSubtitle, isWyzieSubtitleToken, searchWyzieSubtitles } from './wyzie';
 import { TmdbClient } from './tmdb';
@@ -26,10 +28,6 @@ export { RecommendationSession };
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const json = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
-const catalogJson = (body: unknown): Response => new Response(JSON.stringify(body), {
-  status: 200,
-  headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=300' },
-});
 // A continuation normally needs one fresh engine pass. If that pass does not
 // fill the requested page, one bounded retry explores the next deterministic
 // TMDB lanes instead of stopping after an undersized batch. This spends no
@@ -292,7 +290,12 @@ export default {
     }
     if (url.pathname === '/v3/categories') {
       if (request.method !== 'GET') return new Response(null, { status: 405 });
-      try { await enforceRateLimit(request, env); return catalogJson(await categories(env)); }
+      try {
+        return await cachedCatalogue(new URL(url.pathname, url.origin), METADATA_CACHE, ctx, async () => {
+          await enforceRateLimit(request, env);
+          return categories(env);
+        });
+      }
       catch (error) { return errorResponse(error); }
     }
     if (url.pathname === '/v3/discover' || url.pathname === '/v3/search/catalogue') {
@@ -304,20 +307,18 @@ export default {
           throw new ServiceError('INVALID_REQUEST', 'Unknown Discover category', 400, false);
         const cacheUrl = new URL(url.origin + url.pathname);
         cacheUrl.searchParams.set('v', '4'); cacheUrl.searchParams.set('type', filter); cacheUrl.searchParams.set('page', String(page));
-        cacheUrl.searchParams.set(url.pathname === '/v3/discover' ? 'category' : 'query', url.pathname === '/v3/discover' ? category : (url.searchParams.get('query') || '').trim().slice(0, 160));
+        const isDiscover = url.pathname === '/v3/discover';
+        const query = (url.searchParams.get('query') || '').trim().slice(0, 160);
+        cacheUrl.searchParams.set(isDiscover ? 'category' : 'query', isDiscover ? category : query);
         const excluded = (url.searchParams.get('exclude') || '').split(',').map(value => Number(value)).filter(value => Number.isInteger(value) && value > 0).slice(0, 500);
         if (excluded.length) cacheUrl.searchParams.set('exclude', excluded.join(','));
-        const cacheKey = new Request(cacheUrl.toString());
-        const cached = await caches.default.match(cacheKey);
-        if (cached) return cached;
-        await enforceRateLimit(request, env);
-        const body = url.pathname === '/v3/discover' ? (/^(genre|keyword):/.test(category) ? await browse(env, category, page, excluded) : await discoverCategory(env, category, filter, page))
-          : await catalogueSearch(env, url.searchParams.get('query') || '', filter, page);
-        const response = catalogJson(body);
-        response.headers.set('cache-control', 'public, max-age=900');
-        const cacheWrite = caches.default.put(cacheKey, response.clone());
-        if (ctx) ctx.waitUntil(cacheWrite); else await cacheWrite;
-        return response;
+        return await cachedCatalogue(cacheUrl, isDiscover ? DISCOVER_CACHE : SEARCH_CACHE, ctx, async () => {
+          await enforceRateLimit(request, env);
+          if (!isDiscover) return catalogueSearch(env, query, filter, page);
+          return /^(genre|keyword):/.test(category)
+            ? browse(env, category, page, excluded)
+            : discoverCategory(env, category, filter, page);
+        });
       } catch (error) { return errorResponse(error); }
     }
     const titleMatch = /^\/v3\/titles\/(movie|tv)\/(\d+)$/.exec(url.pathname);
@@ -325,17 +326,12 @@ export default {
     if (seasonMatch) {
       if (request.method !== 'GET') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed', retryable: false } }, 405);
       try {
-        const key=new Request(new URL(url.pathname,url.origin),{method:'GET'});
-        const cached=await caches.default.match(key);
-        if(cached)return cached;
-        await enforceRateLimit(request, env);
-        const tmdb = new TmdbClient(env, 3);
-        const response=catalogJson(seasonMatch[2] === undefined ? await tmdb.seasons(Number(seasonMatch[1]))
-          : await tmdb.episodes(Number(seasonMatch[1]), Number(seasonMatch[2])));
-        response.headers.set('cache-control','public, max-age=21600');
-        const write=caches.default.put(key,response.clone());
-        if(ctx)ctx.waitUntil(write);else await write;
-        return response;
+        return await cachedCatalogue(new URL(url.pathname, url.origin), METADATA_CACHE, ctx, async () => {
+          await enforceRateLimit(request, env);
+          const tmdb = new TmdbClient(env, 3);
+          return seasonMatch[2] === undefined ? tmdb.seasons(Number(seasonMatch[1]))
+            : tmdb.episodes(Number(seasonMatch[1]), Number(seasonMatch[2]));
+        });
       } catch (error) { return errorResponse(error); }
     }
     const personMatch = /^\/v3\/people\/(\d+)\/credits$/.exec(url.pathname);
@@ -347,28 +343,29 @@ export default {
     if (titleMatch || personMatch || isEditorialPicks || isHomeFeed || isTitleSearch || isCompanySearch || isTvNetworkFeed) {
       if (request.method !== 'GET') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed', retryable: false } }, 405);
       try {
-        if(titleMatch) {
-          const key=new Request(new URL(url.pathname,url.origin),{method:'GET'});
-          const cached=await caches.default.match(key);if(cached)return cached;
-          await enforceRateLimit(request,env);
-          const response=catalogJson(await titleDetails(env,titleMatch[1] as 'movie'|'tv',Number(titleMatch[2])));
-          response.headers.set('cache-control','public, max-age=21600');
-          const write=caches.default.put(key,response.clone());if(ctx)ctx.waitUntil(write);else await write;
-          return response;
-        }
-        await enforceRateLimit(request, env);
-        if (personMatch) {
-          return catalogJson(await personCredits(env, Number(personMatch[1])));
-        }
-        if (isTitleSearch) return catalogJson(await titleSearch(env, url.searchParams.get('query') || ''));
-        if (isCompanySearch) return catalogJson(await companySearch(env, url.searchParams.get('query') || ''));
-        if (isTvNetworkFeed) {
-          const requestedRegion = (url.searchParams.get('region') || 'US').trim().toUpperCase();
-          const region = /^[A-Z]{2}$/.test(requestedRegion) ? requestedRegion : 'US';
-          return catalogJson(await tvNetworkFeed(env, region));
-        }
-        if (isHomeFeed) return catalogJson(await homeFeed(env));
-        return catalogJson(await editorialPicks(env));
+        const key = new URL(url.pathname, url.origin);
+        const query = (url.searchParams.get('query') || '').trim().slice(0, 160);
+        const requestedRegion = (url.searchParams.get('region') || 'US').trim().toUpperCase();
+        const region = /^[A-Z]{2}$/.test(requestedRegion) ? requestedRegion : 'US';
+        if (isTitleSearch || isCompanySearch) key.searchParams.set('query', query);
+        if (isTvNetworkFeed) key.searchParams.set('region', region);
+        const policy = isHomeFeed ? HOME_EDGE_CACHE : isTitleSearch || isCompanySearch ? SEARCH_CACHE : METADATA_CACHE;
+        return await cachedCatalogue(key, policy, ctx, async () => {
+          if (isHomeFeed) {
+            try {
+              return (await env.CATALOGUE_HOME.getByName('shared-v1').get()).feed;
+            } catch {
+              throw new ServiceError('TMDB_UNAVAILABLE', 'Home catalogue is temporarily unavailable', 503, true);
+            }
+          }
+          await enforceRateLimit(request, env);
+          if (titleMatch) return titleDetails(env, titleMatch[1] as 'movie' | 'tv', Number(titleMatch[2]));
+          if (personMatch) return personCredits(env, Number(personMatch[1]));
+          if (isTitleSearch) return titleSearch(env, query);
+          if (isCompanySearch) return companySearch(env, query);
+          if (isTvNetworkFeed) return tvNetworkFeed(env, region);
+          return editorialPicks(env);
+        });
       } catch (error) { return errorResponse(error); }
     }
     if (url.pathname !== '/v3/recommendations') return json({ error: { code: 'NOT_FOUND', message: 'Not found', retryable: false } }, 404);

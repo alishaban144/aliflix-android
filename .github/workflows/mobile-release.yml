@@ -43,8 +43,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "297"
-  RELEASE_VERSION_NAME: "3.1.207"
+  RELEASE_VERSION_CODE: "298"
+  RELEASE_VERSION_NAME: "3.1.208"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -369,7 +369,7 @@ jobs:
 
       - name: Build update manifests
         env:
-          RELEASE_NOTES: ${{ inputs.notes }}
+          RELEASE_NOTES: ${{ inputs.notes || 'Home and Discover can keep showing saved titles during catalogue interruptions. Shared caching reduces repeated requests for title and episode metadata.' }}
         run: |
           set -euo pipefail
           RELEASE_NOTES_JSON="$(jq -n --arg notes "$RELEASE_NOTES" '$notes')"
@@ -414,7 +414,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: ${{ inputs.notes || format('Aliflix {0}', env.RELEASE_VERSION_NAME) }}
+          body: ${{ inputs.notes || 'Home and Discover can keep showing saved titles during catalogue interruptions. Shared caching reduces repeated requests for title and episode metadata.' }}
           files: |
             aliflix-mobile.apk
             update-mobile.json

@@ -212,6 +212,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     private var homeRefreshJob: Job? = null
     private var tvNetworksJob: Job? = null
     private var lastHomeRefreshAt = 0L
+    private var homeSnapshotLoaded = false
 
     private val _home = MutableStateFlow(HomeUiState())
     val home: StateFlow<HomeUiState> = _home.asStateFlow()
@@ -812,15 +813,6 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
         }
-        viewModelScope.launch {
-            val cached = homeSnapshotStore.loadSnapshot()
-            if (cached != null && _home.value.content == null) {
-                _home.value = _home.value.copy(
-                    content = cached.content,
-                    editorialPicks = cached.editorialPicks,
-                )
-            }
-        }
         refreshHome()
         val connectivityManager = application.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
         val networkRequest = android.net.NetworkRequest.Builder()
@@ -886,6 +878,17 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         if (!force && System.currentTimeMillis() - lastHomeRefreshAt < HOME_STALE_AFTER_MS) return
         if (homeRefreshJob?.isActive == true) return
         homeRefreshJob = viewModelScope.launch {
+            if (!homeSnapshotLoaded) {
+                val cached = homeSnapshotStore.loadSnapshot()
+                homeSnapshotLoaded = true
+                if (cached != null) {
+                    _home.value = _home.value.copy(
+                        loading = false,
+                        content = cached.content,
+                        editorialPicks = cached.editorialPicks,
+                    )
+                }
+            }
             val previous = _home.value
             _home.value = previous.copy(
                 loading = if (showLoading) true else previous.loading,
@@ -918,15 +921,11 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                         )
                     },
                     onFailure = { error ->
+                        if (error is CancellationException) throw error
                         HomeUiState(
                             loading = false,
-                            content = previous.content,
+                            content = previous.content ?: client.bundledHome(),
                             editorialPicks = previous.editorialPicks,
-                            error = if (previous.content == null) {
-                                error.message ?: "Unable to load TMDB Home."
-                            } else {
-                                null
-                            },
                         )
                     },
                 )
@@ -1112,7 +1111,11 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     }) { query ->
         aiClient.searchTitles(query).map { it.toMedia() }
     }
-    internal val discoverCatalogue = com.aliflix.app.ui.discover.DiscoverCatalogueStore(aiClient, titleSearch)
+    internal val discoverCatalogue = com.aliflix.app.ui.discover.DiscoverCatalogueStore(
+        aiClient,
+        titleSearch,
+        homeContent = { _home.value.content ?: client.bundledHome() },
+    )
 
     suspend fun searchTitles(query: String): List<Media> =
         if (BuildConfig.IS_TV) aiClient.searchTitles(query.trim()).map { it.toMedia() }.distinctBy(Media::key)

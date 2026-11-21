@@ -3,6 +3,15 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {env} from 'cloudflare:test';
 import {TmdbClient} from '../src/tmdb';
 afterEach(()=>vi.restoreAllMocks());
+it('does not retry or start another TMDB call after a rate limit', async () => {
+ const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', {
+   status: 429, headers: { 'retry-after': '60' },
+ }));
+ const client = new TmdbClient({ ...env, TMDB_READ_ACCESS_TOKEN: 'test-only', CURSOR_SIGNING_SECRET: 'test-only' });
+ await expect(client.genres('movie')).rejects.toMatchObject({ code: 'TMDB_RATE_LIMITED' });
+ await expect(client.genres('tv')).rejects.toMatchObject({ code: 'TMDB_RATE_LIMITED' });
+ expect(fetch).toHaveBeenCalledTimes(1);
+});
 it('research fetches only structured details and TV identifiers, leaving full title pages unchanged',async()=>{
  const urls:string[]=[];
  vi.spyOn(globalThis,'fetch').mockImplementation(async url=>{urls.push(String(url));return Response.json({id:70523,name:'Dark',first_air_date:'2017-12-01',genres:[],external_ids:{imdb_id:'tt5753856'}});});
