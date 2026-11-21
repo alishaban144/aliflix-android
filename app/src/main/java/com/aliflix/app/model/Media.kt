@@ -38,6 +38,9 @@ data class MediaCreator(
 
 data class MediaKeyword(val id: Int, val name: String)
 
+private fun cleanOmdbAwards(value: String?): String? =
+    value?.trim()?.takeIf { it.isNotEmpty() && !it.equals("N/A", true) && !it.equals("null", true) }
+
 data class Media(
     val id: Int,
     val type: MediaType,
@@ -66,6 +69,7 @@ data class Media(
     val keywords: List<MediaKeyword> = emptyList(),
     val trailerKey: String? = null,
     val castPeople: List<MediaCreator> = emptyList(),
+    val omdbAwards: String? = null,
 ) {
     val key: String get() = "${type.routeName}:$id"
     val posterUrl: String?
@@ -74,7 +78,14 @@ data class Media(
         get() = imageUrl(backdropPath, "w1280")
 
     fun mergeWithOmdb(omdb: com.aliflix.app.data.omdb.OmdbTitleMetadata): Media {
-        if (!omdb.found || !matchesOmdbIdentity(omdb)) return this
+        if (!omdb.found || !matchesOmdbType(omdb.type)) return this
+        val awards = cleanOmdbAwards(omdb.awards)
+        if (!matchesOmdbIdentity(omdb)) {
+            val canonicalId = imdbId?.takeIf { it.matches(Regex("tt\\d{5,12}")) }
+            return if (awards != null && canonicalId != null && canonicalId == omdb.imdbId) {
+                copy(omdbAwards = awards)
+            } else this
+        }
 
         val mergedImdbId = imdbId.takeIf { it?.matches(Regex("tt\\d+")) == true } ?: omdb.imdbId
         val mergedImdbRating = omdb.imdbRating ?: imdbRating
@@ -112,6 +123,7 @@ data class Media(
             overview = mergedOverview,
             omdbGenres = mergedOmdbGenres,
             omdbFullPlot = mergedFullPlot,
+            omdbAwards = awards ?: omdbAwards,
         )
     }
 
@@ -121,13 +133,6 @@ data class Media(
         val currentImdbId = imdbId?.takeIf { it.matches(Regex("tt\\d{5,12}")) }
         val returnedImdbId = omdb.imdbId?.takeIf { it.matches(Regex("tt\\d{5,12}")) }
         if (currentImdbId != null && returnedImdbId != currentImdbId) return false
-
-        val returnedType = omdb.type?.lowercase().orEmpty()
-        val typeMatches = when (type) {
-            MediaType.MOVIE -> returnedType in setOf("movie", "tv movie")
-            MediaType.TV -> returnedType in setOf("series", "tv series", "miniseries")
-        }
-        if (!typeMatches) return false
 
         fun normalized(value: String): String = java.text.Normalizer
             .normalize(value, java.text.Normalizer.Form.NFKD)
@@ -141,6 +146,11 @@ data class Media(
 
         val currentYear = year.take(4).toIntOrNull()
         return currentYear == null || (omdb.year != null && currentYear == omdb.year)
+    }
+
+    private fun matchesOmdbType(returnedType: String?): Boolean = when (type) {
+        MediaType.MOVIE -> returnedType?.lowercase() in setOf("movie", "tv movie")
+        MediaType.TV -> returnedType?.lowercase() in setOf("series", "tv series", "miniseries")
     }
 
     private fun String?.isNull_or_blank(): Boolean = this == null || this.isBlank()
@@ -186,6 +196,7 @@ data class Media(
         put("runtime", runtime)
         put("omdbGenres", org.json.JSONArray(omdbGenres))
         omdbFullPlot?.let { put("omdbFullPlot", it) }
+        omdbAwards?.let { put("omdbAwards", it) }
     }
 
     companion object {
@@ -284,6 +295,7 @@ data class Media(
                     }
                 }.orEmpty(),
                 omdbFullPlot = json.optString("omdbFullPlot").takeIf { it.isNotBlank() && it != "null" },
+                omdbAwards = cleanOmdbAwards(json.optString("omdbAwards")),
             )
         }
     }

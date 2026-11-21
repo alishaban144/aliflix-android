@@ -4596,7 +4596,7 @@ internal fun DetailScreen(
                     }
                 }
                 if (!com.aliflix.app.BuildConfig.IS_TV) InlineTrailerSection(item)
-                if (item.originalLanguage.isNotBlank()) {
+                if (item.originalLanguage.isNotBlank() || item.omdbAwards != null) {
                     DetailInfoSection(title = "Details") {
                         Column(verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Content)) {
                             if (item.originalLanguage.isNotBlank()) {
@@ -4620,7 +4620,7 @@ internal fun DetailScreen(
                                     }
                                 }
                             }
-
+                            item.omdbAwards?.let { DetailAwardsCard(it) }
                         }
                     }
                 }

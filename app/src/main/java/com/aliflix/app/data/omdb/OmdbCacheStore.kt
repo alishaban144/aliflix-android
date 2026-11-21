@@ -84,6 +84,8 @@ class OmdbCacheStore(
                 val k = keys.next()
                 val obj = json.getJSONObject(k)
                 val status = obj.optString("status", "NOT_FOUND")
+                // Older clients cached transport errors as NOT_FOUND.
+                if (status == "NOT_FOUND" && !obj.optBoolean("confirmedNotFound")) continue
                 val timestamp = obj.optLong("timestampMillis", 0L)
                 val metaObj = obj.optJSONObject("metadata")
                 val meta = metaObj?.let { OmdbTitleMetadata.fromJson(it) }
@@ -107,6 +109,7 @@ class OmdbCacheStore(
                 root.put(k, JSONObject().apply {
                     put("status", v.status)
                     put("timestampMillis", v.timestampMillis)
+                    if (v.status == "NOT_FOUND") put("confirmedNotFound", true)
                     v.metadata?.let { put("metadata", it.toJson()) }
                 })
             }

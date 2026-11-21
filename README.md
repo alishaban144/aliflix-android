@@ -223,6 +223,8 @@ npx wrangler secret put TMDB_READ_ACCESS_TOKEN
 npx wrangler secret put CURSOR_SIGNING_SECRET
 ```
 
+For OMDb awards in title Details, set the Worker secret with `npx wrangler secret put OMDB_API_KEY`.
+
 Create the Groq secret without exposing it to Android or Git:
 
 1. Sign in at [GroqCloud API Keys](https://console.groq.com/keys). Create or select a project, then choose **Create API Key**.

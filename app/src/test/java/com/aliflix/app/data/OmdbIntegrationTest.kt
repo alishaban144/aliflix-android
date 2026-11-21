@@ -1,8 +1,10 @@
 package com.aliflix.app.data.omdb
 
+import com.aliflix.app.mergeStableMobileDetailUpdate
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.RatingSourceState
+import com.aliflix.app.ui.detailAwardsSummary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -11,6 +13,42 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OmdbIntegrationTest {
+
+    @Test
+    fun awardsSurviveLocalizedTitlesAndSubsequentUpdates() {
+        val film = Media(27205, MediaType.MOVIE, "Origen", year = "2010", imdbId = "tt1375666")
+        val omdb = OmdbTitleMetadata(
+            found = true, imdbId = "tt1375666", title = "Inception", year = 2010, type = "movie",
+            awards = "Won 4 Oscars. 159 wins & 220 nominations total",
+        )
+        val enriched = film.mergeWithOmdb(omdb)
+        assertEquals(omdb.awards, enriched.omdbAwards)
+        assertEquals(omdb.awards, Media.fromJson(enriched.toJson()).omdbAwards)
+        assertEquals(omdb.awards, enriched.mergeStableMobileDetailUpdate(film).omdbAwards)
+        assertNull(film.mergeWithOmdb(omdb.copy(imdbId = "tt1234567")).omdbAwards)
+        assertNull(film.mergeWithOmdb(omdb.copy(type = "series")).omdbAwards)
+        assertNull(film.mergeWithOmdb(omdb.copy(awards = "N/A")).omdbAwards)
+    }
+
+    @Test
+    fun awardsPresentationPreservesWinAndNominationWording() {
+        val win = detailAwardsSummary("Won 4 Oscars. 159 wins & 220 nominations total")
+        assertEquals("Won 4 Oscars", win.academy)
+        assertNull(win.summary)
+        assertEquals("159", win.counts?.wins)
+        assertEquals("220", win.counts?.nominations)
+        assertEquals("Total", win.counts?.qualifier)
+        val nomination = detailAwardsSummary("Nominated for 1 Oscar.")
+        assertEquals("Nominated for 1 Oscar", nomination.academy)
+        assertNull(nomination.summary)
+        val other = detailAwardsSummary("Won 16 Primetime Emmys. 169 wins & 247 nominations total")
+        assertNull(other.academy)
+        assertEquals("Won 16 Primetime Emmys.", other.summary)
+        assertEquals("169", other.counts?.wins)
+        assertEquals("Other", detailAwardsSummary("Won 4 Oscars. Another 7 wins & 2 nominations.").counts?.qualifier)
+        assertEquals("Won 3 Academy Awards", detailAwardsSummary("12 wins total. Won 3 Academy Awards.").academy)
+        assertNull(detailAwardsSummary("Won 3 Oscar Wilde Awards.").academy)
+    }
 
     @Test
     fun testOmdbMetadataNormalization() {

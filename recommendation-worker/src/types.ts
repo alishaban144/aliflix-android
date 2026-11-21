@@ -213,6 +213,7 @@ export interface SecretBindings {
   TAVILY_API_KEY?: string;
   TMDB_API_KEY?: string;
   TMDB_READ_ACCESS_TOKEN?: string;
+  OMDB_API_KEY?: string;
   SUBDL_API_KEY?: string;
   WYZIE_API_KEY?: string;
   CURSOR_SIGNING_SECRET: string;

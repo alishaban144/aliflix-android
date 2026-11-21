@@ -43,8 +43,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "298"
-  RELEASE_VERSION_NAME: "3.1.208"
+  RELEASE_VERSION_CODE: "299"
+  RELEASE_VERSION_NAME: "3.1.209"
+  DEFAULT_RELEASE_NOTES: "Movie and series Details now show OMDb awards, with Oscar wins and nominations highlighted and award totals shown separately."
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -156,11 +157,23 @@ jobs:
 
       - name: Upload and deploy recommendation Worker
         working-directory: recommendation-worker
+        env:
+          OMDB_RELEASE_KEY: ${{ secrets.OMDB_API_KEY }}
         run: |
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
           npm ci
+          if [[ "$RELEASE_VERSION_NAME" == '3.1.209' ]]; then
+            secret_names="$(npx wrangler secret list --format json)"
+            if ! jq -e 'any(.[]; .name == "OMDB_API_KEY")' <<< "$secret_names" >/dev/null; then
+              if [[ -z "$OMDB_RELEASE_KEY" ]]; then
+                echo '::error::Set OMDB_API_KEY on the production Worker or add it as a GitHub Actions secret.'
+                exit 1
+              fi
+              printf '%s' "$OMDB_RELEASE_KEY" | npx wrangler secret put OMDB_API_KEY
+            fi
+          fi
           # SQLite class migrations require a deployment, not a gradual versions upload.
           npx wrangler deploy
 
@@ -172,6 +185,11 @@ jobs:
         if: github.ref_name != 'release/v3.1.102'
         working-directory: recommendation-worker
         run: node scripts/verify-browse.mjs
+
+      - name: Verify live OMDb awards
+        if: env.RELEASE_VERSION_NAME == '3.1.209'
+        working-directory: recommendation-worker
+        run: node scripts/verify-omdb-awards.mjs
 
       - name: Verify live Cloudflare recommendation quality
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_live_ai_quality }}
@@ -369,7 +387,7 @@ jobs:
 
       - name: Build update manifests
         env:
-          RELEASE_NOTES: ${{ inputs.notes || 'Home and Discover can keep showing saved titles during catalogue interruptions. Shared caching reduces repeated requests for title and episode metadata.' }}
+          RELEASE_NOTES: ${{ inputs.notes || env.DEFAULT_RELEASE_NOTES }}
         run: |
           set -euo pipefail
           RELEASE_NOTES_JSON="$(jq -n --arg notes "$RELEASE_NOTES" '$notes')"
@@ -414,7 +432,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: ${{ inputs.notes || 'Home and Discover can keep showing saved titles during catalogue interruptions. Shared caching reduces repeated requests for title and episode metadata.' }}
+          body: ${{ inputs.notes || env.DEFAULT_RELEASE_NOTES }}
           files: |
             aliflix-mobile.apk
             update-mobile.json

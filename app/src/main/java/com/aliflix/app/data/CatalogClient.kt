@@ -1058,7 +1058,10 @@ class CatalogClient(
         val metadata = (pageHtml?.let {
             runCatching { parseTitleDetails(it, current) }.getOrDefault(current)
         } ?: current).let { parsed ->
-            parsed.copy(imdbId = parsed.imdbId ?: current.imdbId ?: item.imdbId)
+            parsed.copy(
+                imdbId = parsed.imdbId ?: current.imdbId ?: item.imdbId,
+                omdbAwards = parsed.omdbAwards ?: item.omdbAwards,
+            )
         }
         val metadataWithPendingRatings = metadata.copy(
             imdbRating = null, imdbVoteCount = null, imdbRatingState = RatingSourceState.LOADING,
@@ -1085,12 +1088,14 @@ class CatalogClient(
 
         var omdbEnriched = metadataWithPendingRatings
         suspend fun enrichOmdb() {
-            if (metadata.title.isNotBlank()) {
+            val imdbId = metadata.imdbId?.takeIf { it.matches(Regex("tt\\d{5,12}")) }
+            val year = fourDigitYear.find(metadata.year)?.value?.toIntOrNull()
+            if (imdbId != null || (metadata.title.isNotBlank() && year != null)) {
                 try {
                     val req = com.aliflix.app.data.omdb.OmdbLookupRequest(
-                        imdbId = metadata.imdbId,
+                        imdbId = imdbId,
                         title = metadata.title,
-                        year = fourDigitYear.find(metadata.year)?.value?.toIntOrNull(),
+                        year = year,
                         mediaType = metadata.type.routeName,
                     )
                     val omdbMeta = omdbClient.lookup(req)

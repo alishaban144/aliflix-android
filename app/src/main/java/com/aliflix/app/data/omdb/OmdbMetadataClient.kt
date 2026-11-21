@@ -159,14 +159,20 @@ class OmdbMetadataClient(
                     val metadata = OmdbTitleMetadata.fromJson(json)
                     if (continuation.isActive) continuation.resume(metadata)
                 } else {
-                    if (continuation.isActive) continuation.resume(null)
+                    if (continuation.isActive) {
+                        continuation.resumeWithException(
+                            OmdbMetadataClientException("OMDb lookup failed with HTTP $status"),
+                        )
+                    }
                 }
             } catch (error: Throwable) {
                 if (continuation.isActive) {
                     if (error is CancellationException) {
                         continuation.resumeWithException(error)
                     } else {
-                        continuation.resume(null)
+                        continuation.resumeWithException(
+                            OmdbMetadataClientException("OMDb lookup failed", error),
+                        )
                     }
                 }
             } finally {

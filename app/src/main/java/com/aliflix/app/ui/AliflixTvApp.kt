@@ -1811,6 +1811,18 @@ internal fun TvDetailScreen(
                 }
             }
 
+            item.omdbAwards?.let { awards ->
+                item(key = "awards") {
+                    Column(
+                        Modifier.fillMaxWidth(0.64f).padding(horizontal = 46.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text("Details", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                        DetailAwardsCard(awards, focusable = true)
+                    }
+                }
+            }
+
             if (state.recommendations.isNotEmpty()) {
                 item { TvMediaRail("More like this", state.recommendations, onOpen) }
             }

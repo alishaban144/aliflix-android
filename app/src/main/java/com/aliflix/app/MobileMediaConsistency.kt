@@ -106,6 +106,7 @@ internal fun Media.mergeStableMobileDetailUpdate(update: Media): Media {
         trailerKey = trailerKey ?: update.trailerKey,
         keywords = update.keywords.ifEmpty { keywords },
         reviews = update.reviews.ifEmpty { reviews },
+        omdbAwards = update.omdbAwards ?: omdbAwards,
     )
 }
 

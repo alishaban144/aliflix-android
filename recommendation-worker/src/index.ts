@@ -18,6 +18,7 @@ import { ContinuationReservation, createCursor, parseCursor, RecommendationSessi
 import { RecommendationEnv, RecommendationResponse, RecommendationResult, ServiceError } from './types';
 import { companySearch, editorialPicks, personCredits, titleDetails, titleSearch, tvNetworkFeed } from './catalog';
 import { cachedCatalogue, DISCOVER_CACHE, HOME_EDGE_CACHE, METADATA_CACHE, SEARCH_CACHE } from './catalogueCache';
+import { lookupOmdb, omdbCacheKey, parseOmdbLookup } from './omdb';
 export { CatalogueHome } from './catalogueCache';
 import { downloadSubdlSubtitle, searchSubdlSubtitles } from './subdl';
 import { downloadWyzieSubtitle, isWyzieSubtitleToken, searchWyzieSubtitles } from './wyzie';
@@ -265,6 +266,19 @@ export default {
         subdlConfigured: Boolean(env.SUBDL_API_KEY),
         wyzieConfigured: Boolean(env.WYZIE_API_KEY?.trim()),
       });
+    }
+    if (url.pathname === '/v1/metadata/omdb') {
+      if (request.method !== 'POST') return new Response(null, { status: 405, headers: { allow: 'POST' } });
+      try {
+        if (Number(request.headers.get('content-length')) > 4096) {
+          throw new ServiceError('PAYLOAD_TOO_LARGE', 'OMDb lookup is too large', 413, false);
+        }
+        const lookup = await parseOmdbLookup(request);
+        return await cachedCatalogue(omdbCacheKey(url.origin, lookup), METADATA_CACHE, ctx, async () => {
+          await enforceRateLimit(request, env);
+          return lookupOmdb(env, lookup);
+        });
+      } catch (error) { return errorResponse(error); }
     }
     if (url.pathname === '/v3/subtitles/audio-timing' && request.method === 'POST') {
       try {
