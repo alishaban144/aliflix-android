@@ -63,6 +63,7 @@ internal suspend fun <T : Any> racePlaybackSources(candidates: List<PlaybackSele
             }
         } else {
             if (candidates.first().media.isIndianTitle && candidate.source.identity.isIndianCatalogue) delay(250)
+            else if (candidates.first().source.identity.isIndianCatalogue) delay(1_600)
             else if (filmOAttempt == null) delay(900)
             else withTimeoutOrNull(8_000) { filmOAttempt.await() }
             attempt(candidate)

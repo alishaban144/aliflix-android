@@ -7,6 +7,7 @@ import com.aliflix.app.model.isIndianCatalogue
 import android.os.SystemClock
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
+import androidx.media3.datasource.HttpDataSource
 import com.aliflix.app.data.PlaybackProgressStore
 import com.aliflix.app.model.PlaybackSelection
 import com.aliflix.app.model.PlaybackProvider
@@ -62,11 +63,17 @@ internal class NativeStreamResolver(
         forceLowQuality: Boolean = false,
         audioLanguage: String? = null,
         allowVerification: Boolean = true,
+        onBrowserPlayback: ((server: String, playerUrl: String) -> Unit)? = null,
         onServer: (String) -> Unit,
     ): NativePlaybackRequest {
         reportServers = onServers
         if (selection.source.identity.isIndianCatalogue) {
-            val servers = IndianPlaybackCatalogue.resolveServers(selection)
+            val servers = try { IndianPlaybackCatalogue.resolveServers(selection) } catch (error: Exception) {
+                currentCoroutineContext().ensureActive()
+                android.util.Log.d("AliflixSite", "${selection.source.identity.name}: catalogue ${error.javaClass.simpleName}")
+                throw error
+            }
+            android.util.Log.d("AliflixSite", "${selection.source.identity.name}: ${servers.size} listed servers")
             onServers(servers.map { it.server })
             val candidates = servers.filter { it.server !in excluded && (!strictPreferredServer || it.server == preferredServer) }
                 .sortedBy { it.server != preferredServer }
@@ -77,13 +84,27 @@ internal class NativeStreamResolver(
                     val child = NativeStreamResolver(activity, progress, host)
                     children.add(child)
                     try {
-                        withTimeout(11_000) {
+                        withTimeout(13_000) {
                             val target = IndianPlaybackCatalogue.playerUrl(link)
                             val resolved = child.resolveSingle(selection, positionMs, emptySet(), link.server,
                                 listOf(link.server to target), true) {}
-                            if (validateSingle) StartupStreamCache.awaitPlayable(activity, resolved)
+                            if (validateSingle) try {
+                                StartupStreamCache.awaitPlayable(activity, resolved)
+                            } catch (error: Exception) {
+                                val refused = error.cause as? HttpDataSource.InvalidResponseCodeException
+                                if (refused?.responseCode == 429 && resolved.mimeType == "video/mp4" &&
+                                    selection.media.type == com.aliflix.app.model.MediaType.MOVIE &&
+                                    java.net.URI(target).host == "moviesapi.to") {
+                                    onBrowserPlayback?.invoke(link.server, target)
+                                }
+                                throw error
+                            }
                             link.server to resolved
                         }
+                    } catch (error: Exception) {
+                        currentCoroutineContext().ensureActive()
+                        android.util.Log.d("AliflixSite", "${selection.source.identity.name}: ${link.server} ${error.javaClass.simpleName}")
+                        throw error
                     } finally {
                         child.close()
                         children.remove(child)

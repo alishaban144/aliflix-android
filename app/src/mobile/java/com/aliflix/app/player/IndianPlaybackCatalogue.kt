@@ -130,7 +130,7 @@ internal object IndianPlaybackCatalogue {
             val url = verifiedPlayerUrl(item.attr("data-id")) ?: return@mapNotNull null
             val label = item.attr("data-srv").trim().takeIf { it.length in 1..40 } ?: return@mapNotNull null
             SitePlaybackLink(label, "", url)
-        }.distinctBy { it.url }
+        }.distinctBy { it.url }.sortedBy { URI(it.url).host == "megacloudx.net" }
 
     private fun verifiedPlayerUrl(value: String): String? = runCatching {
         val uri = URI(value)

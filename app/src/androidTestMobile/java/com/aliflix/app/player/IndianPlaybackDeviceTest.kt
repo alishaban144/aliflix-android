@@ -4,8 +4,12 @@ package com.aliflix.app.player
 
 import android.content.Intent
 import android.os.SystemClock
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
+import com.aliflix.app.AliflixApplication
+import com.aliflix.app.MainActivity
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.MobilePlaybackProvider
@@ -15,12 +19,43 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 class IndianPlaybackDeviceTest {
-    @Test fun ranaVikramaStartsOnMegaCloud() = verify(
-        Media(691633, MediaType.MOVIE, "Rana Vikrama", year = "2015", originalLanguage = "kn"),
-        MobilePlaybackProvider.HIMOVIES, server = "MegaCloud",
-    )
+    @Test fun ranaVikramaStartsOnMegaCloud() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("liveIndianPlayback") == "true")
+        grantNativeFixtureNetworkPermission()
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val service = Intent(context, NativePlaybackService::class.java)
+        context.stopService(service)
+        val media = Media(691633, MediaType.MOVIE, "Rana Vikrama", year = "2015", originalLanguage = "kn")
+        val selection = PlaybackSelection(media, source = PlaybackSource(MobilePlaybackProvider.HIMOVIES))
+        val intent = Intent(context, NativePlayerActivity::class.java).putExtra("selection", selection.nativeJson())
+        val start = SystemClock.elapsedRealtime()
+        try {
+            ActivityScenario.launch<NativePlayerActivity>(intent, nativePhoneLaunchOptions()).use { scenario ->
+                repeat(350) {
+                    var started = false
+                    scenario.onActivity { player ->
+                        val browser = player.providerBrowserController
+                        val native = player.playbackController
+                        started = if (browser != null) browser.currentPositionMs.value >= 1200L
+                            else native?.isPlaying == true && native.videoSize.width > 0 && native.currentPosition >= 1200L
+                        if (started) assertEquals("MegaCloud", player.playbackUiState.server)
+                    }
+                    if (started) {
+                        android.util.Log.i("IndianPlaybackCheck", "Rana Vikrama: HiMovies MegaCloud in ${SystemClock.elapsedRealtime() - start} ms")
+                        return
+                    }
+                    SystemClock.sleep(120)
+                }
+                assertTrue("Rana Vikrama did not advance on MegaCloud", false)
+            }
+        } finally { context.stopService(service) }
+    }
 
     @Test fun panchayatPlaysSecondEpisode() = verify(
         Media(101352, MediaType.TV, "Panchayat", year = "2020", originalLanguage = "hi"),
@@ -37,17 +72,38 @@ class IndianPlaybackDeviceTest {
         MobilePlaybackProvider.CINEGO, season = 2, episode = 3,
     )
 
-    private fun verify(media: Media, provider: MobilePlaybackProvider, season: Int? = null, episode: Int? = null, server: String? = null) {
+    private fun verify(media: Media, provider: MobilePlaybackProvider, season: Int? = null, episode: Int? = null) {
         assumeTrue(InstrumentationRegistry.getArguments().getString("liveIndianPlayback") == "true")
         grantNativeFixtureNetworkPermission()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val service = Intent(context, NativePlaybackService::class.java)
         context.stopService(service)
         val selection = PlaybackSelection(media, season, episode, source = PlaybackSource(provider))
-        val intent = Intent(context, NativePlayerActivity::class.java)
-            .putExtra("selection", selection.nativeJson()).putExtra("autoSubtitles", false)
         val start = SystemClock.elapsedRealtime()
+        var resolvedServer = ""
         try {
+            val request = ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                var owner: MainActivity? = null
+                scenario.onActivity { owner = it }
+                runBlocking { withContext(Dispatchers.Main) {
+                    val activity = requireNotNull(owner)
+                    val parent = activity.findViewById<ViewGroup>(android.R.id.content)
+                    val host = FrameLayout(activity).apply { alpha = 0f }
+                    parent.addView(host, ViewGroup.LayoutParams(-1, -1))
+                    try {
+                        NativeStreamResolver(activity, (activity.application as AliflixApplication).playbackProgressStore, host).use { resolver ->
+                            withTimeout(38_000) {
+                                resolver.resolve(selection, 0L, emptySet(), onServers = {
+                                    android.util.Log.i("IndianPlaybackCheck", "$provider servers ${it.joinToString()}")
+                                }) { resolvedServer = it }
+                            }
+                        }
+                    } finally { parent.removeView(host) }
+                } }
+            }
+            val intent = Intent(context, NativePlayerActivity::class.java)
+                .putExtra("request", request.copy(positionMs = 0L, playing = true).toJson())
+                .putExtra("autoSubtitles", false)
             ActivityScenario.launch<NativePlayerActivity>(intent, nativePhoneLaunchOptions()).use { scenario ->
                 var observed = "Preparing playback"
                 repeat(350) {
@@ -61,11 +117,10 @@ class IndianPlaybackDeviceTest {
                             assertEquals(provider, resolved.source.identity)
                             assertEquals(season, resolved.seasonNumber)
                             assertEquals(episode, resolved.episodeNumber)
-                            if (server != null) assertEquals(server, observed)
                         }
                     }
                     if (playing) {
-                        android.util.Log.i("IndianPlaybackCheck", "${media.title}: ${provider.displayName} $observed in ${SystemClock.elapsedRealtime() - start} ms")
+                        android.util.Log.i("IndianPlaybackCheck", "${media.title}: ${provider.displayName} $resolvedServer in ${SystemClock.elapsedRealtime() - start} ms")
                         return
                     }
                     SystemClock.sleep(120)

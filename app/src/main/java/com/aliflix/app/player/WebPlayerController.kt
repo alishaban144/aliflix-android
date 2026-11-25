@@ -2,7 +2,6 @@ package com.aliflix.app.player
 
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.MobilePlaybackProvider
-import com.aliflix.app.model.isIndianCatalogue
 
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -73,6 +72,7 @@ class WebPlayerController(
     private val playbackProgressStore: PlaybackProgressStore,
     private val nativePreparation: Boolean = false,
     private val nativeEmbedUrl: String? = null,
+    private val catalogueBrowserPlayback: Boolean = false,
 ) {
     private var nativeStream: JSONObject? = null
     private var nativeStreamReceivedAt = 0L
@@ -149,9 +149,17 @@ class WebPlayerController(
         }
     }
 
-    private fun preparationScript() = if (nativePreparation) "\n" + nativePreparationScript() else ""
-    private val resolvedEmbedOrigin get()=trustedNativeEmbedOrigin(nativeEmbedUrl,nativePreparation,BuildConfig.IS_TV)
-    private fun nativeOriginRules(sourceHost:String)=nativePlaybackOriginRules(sourceHost)+setOfNotNull(resolvedEmbedOrigin)
+    private fun preparationScript() = when {
+        nativePreparation -> "\n" + nativePreparationScript()
+        catalogueBrowserPlayback -> "\n" + nativePreparationScript(muteAudio = false)
+        else -> ""
+    }
+    private val resolvedEmbedOrigin get()=trustedNativeEmbedOrigin(nativeEmbedUrl,nativePreparation || catalogueBrowserPlayback,BuildConfig.IS_TV)
+    // The public MoviesAPI player embeds the actual video one frame deeper.
+    private val resolvedEmbedChildOrigins: Set<String> get() = if (resolvedEmbedOrigin == "https://moviesapi.to") {
+        setOf("https://cdn.vidspark.to", "https://player.vidprime.top", "https://cdn.vidprime.top")
+    } else emptySet()
+    private fun nativeOriginRules(sourceHost:String)=nativePlaybackOriginRules(sourceHost)+setOfNotNull(resolvedEmbedOrigin)+resolvedEmbedChildOrigins
     private var webView: WebView? = null
     private var loadedKey: String? = null
     private var activeSelection: PlaybackSelection? = null
@@ -695,8 +703,8 @@ class WebPlayerController(
         view: WebView,
         selection: PlaybackSelection,
     ) {
-        if (nativePreparation && nativeEmbedUrl != null) {
-            if(!BuildConfig.IS_TV && (selection.source.identity.isIndianCatalogue || selection.source.identity in setOf(MobilePlaybackProvider.FILMO,MobilePlaybackProvider.ANIWORLD,MobilePlaybackProvider.SERIENSTREAM))) {
+        if (nativeEmbedUrl != null && (nativePreparation || catalogueBrowserPlayback)) {
+            if(!BuildConfig.IS_TV && selection.source.identity in setOf(MobilePlaybackProvider.FILMO,MobilePlaybackProvider.ANIWORLD,MobilePlaybackProvider.SERIENSTREAM)) {
                 // The site's external-player action may forbid framing. Load
                 // its normal document directly in the temporary muted resolver.
                 view.loadUrl(nativeEmbedUrl)
@@ -828,7 +836,8 @@ class WebPlayerController(
         selection: PlaybackSelection,
     ): Boolean {
         if (!origin.scheme.equals("https", ignoreCase = true)) return false
-        resolvedEmbedOrigin?.let { if(trustedNativeEmbedOrigin(origin.toString(),true,false)==it) return true }
+        val frameOrigin = trustedNativeEmbedOrigin(origin.toString(), true, false)
+        if (frameOrigin != null && (frameOrigin == resolvedEmbedOrigin || frameOrigin in resolvedEmbedChildOrigins)) return true
         val host = origin.host?.lowercase()?.removePrefix("www.") ?: return false
         val approved = PlaybackNavigationPolicy.moviepirePlayerDocumentHosts + PlaybackNavigationPolicy.defaultApprovedPlaybackHosts +
             selection.source.cleanDomain.lowercase().removePrefix("www.")
@@ -1935,7 +1944,7 @@ class WebPlayerController(
         view: WebView,
         selection: PlaybackSelection,
     ) {
-        if (nativePreparation && nativeEmbedUrl != null) return
+        if (nativeEmbedUrl != null && (nativePreparation || catalogueBrowserPlayback)) return
         when (selection.source.identity) {
             PlaybackProviderId.CINEJOY -> Unit // Exact TMDB movie/episode route, native HLS discovery.
             MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, MobilePlaybackProvider.MOVY, MobilePlaybackProvider.SEVEN_MOVIES,

@@ -84,10 +84,10 @@ internal fun preferredNativeEmbeds(selection: PlaybackSelection): List<Pair<Stri
 }
 
 /** Runs only in the temporary resolver, on approved origins; destroyed after handoff. */
-internal fun nativePreparationScript(): String = """
+internal fun nativePreparationScript(muteAudio: Boolean = true): String = """
     (() => {
       // Fallback for WebView providers without MUTE_AUDIO, installed before page scripts.
-      for (const [name, value] of [['muted', true], ['volume', 0]]) {
+      if ($muteAudio) for (const [name, value] of [['muted', true], ['volume', 0]]) {
         const descriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, name);
         if (descriptor && descriptor.configurable) {
           Object.defineProperty(HTMLMediaElement.prototype, name, {
@@ -96,7 +96,7 @@ internal fun nativePreparationScript(): String = """
           });
         }
       }
-      for (const type of [window.AudioContext, window.webkitAudioContext]) {
+      if ($muteAudio) for (const type of [window.AudioContext, window.webkitAudioContext]) {
         if (type) type.prototype.resume = function() { return Promise.resolve(); };
       }
       const deadline = Date.now() + 45000;
@@ -114,7 +114,7 @@ internal fun nativePreparationScript(): String = """
         }
         document.querySelectorAll('video').forEach(video => {
           if (video.mediaKeys) return;
-          video.muted = true;
+          if ($muteAudio) video.muted = true;
           video.setAttribute('playsinline', '');
           video.preload = 'auto';
           if (video.paused) { const promise = video.play(); if (promise) promise.catch(() => {}); }
