@@ -120,6 +120,7 @@ internal fun nativePreparationScript(muteAudio: Boolean = true): String = """
           if (video.paused) { const promise = video.play(); if (promise) promise.catch(() => {}); }
         });
         const videoPlaying = Array.from(document.querySelectorAll('video')).some(v => !v.paused && v.readyState >= 2);
+        if (!$muteAudio && videoPlaying) return;
         if (!videoPlaying) {
           const button = Array.from(document.querySelectorAll(selectors.join(','))).find(b => !b.disabled && b.getBoundingClientRect().width > 0);
           if (button) {

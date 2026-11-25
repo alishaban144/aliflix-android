@@ -983,6 +983,16 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         finish()
     }
 
+    internal fun playProviderBrowser(selected: PlaybackSelection, server: String, url: String) {
+        if (ui.ready || providerBrowserController != null || party.state.value.active) return
+        controller?.stop()
+        selection = selected
+        updateSelectionUi()
+        ui = ui.copy(server = server, stage = null, error = null)
+        providerBrowserController = WebPlayerController(this, progress, nativeEmbedUrl = url, catalogueBrowserPlayback = true)
+        preparation?.cancel()
+    }
+
     override fun onNewIntent(intent: Intent) {
         recordCurrentProgress(urgent = true)
         super.onNewIntent(intent); setIntent(intent)
@@ -1755,15 +1765,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                                         preferredServer = (if (candidate.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY) cineJoyRetryServer else null) ?: (if (candidate.source == startingSource) preferredServer?.takeUnless { it in excluded } else null) ?: savedServer?.takeUnless { it in excluded },
                                         onServers = { names -> if (names.isNotEmpty()) resolvedServerNames[serverCatalogueKey(candidate)] = (resolvedServerNames[serverCatalogueKey(candidate)].orEmpty() + names).distinct() },
                                         onBrowserPlayback = { label, url ->
-                                            if (candidate.source == startingSource && !ui.ready && providerBrowserController == null && !party.state.value.active) {
-                                                controller?.stop()
-                                                selection = candidate
-                                                updateSelectionUi()
-                                                ui = ui.copy(server = label, stage = null, error = null)
-                                                providerBrowserController = WebPlayerController(this@NativePlayerActivity, progress,
-                                                    nativeEmbedUrl = url, catalogueBrowserPlayback = true)
-                                                preparation?.cancel()
-                                            }
+                                            if (candidate.source == startingSource) playProviderBrowser(candidate, label, url)
                                         }) { server = it }
                                 }
                                 Triple(candidate, server, request)

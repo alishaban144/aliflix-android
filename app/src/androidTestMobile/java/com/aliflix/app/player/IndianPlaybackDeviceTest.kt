@@ -25,7 +25,11 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
 class IndianPlaybackDeviceTest {
-    @Test fun ranaVikramaStartsOnMegaCloud() {
+    @Test fun ranaVikramaStartsWithoutManualServerSelection() = verifyRanaVikrama(browserOnly = false)
+
+    @Test fun ranaVikramaPlaysInHiMoviesMegaCloudBrowserPlayer() = verifyRanaVikrama(browserOnly = true)
+
+    private fun verifyRanaVikrama(browserOnly: Boolean) {
         assumeTrue(InstrumentationRegistry.getArguments().getString("liveIndianPlayback") == "true")
         grantNativeFixtureNetworkPermission()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -35,8 +39,15 @@ class IndianPlaybackDeviceTest {
         val selection = PlaybackSelection(media, source = PlaybackSource(MobilePlaybackProvider.HIMOVIES))
         val intent = Intent(context, NativePlayerActivity::class.java).putExtra("selection", selection.nativeJson())
         val start = SystemClock.elapsedRealtime()
+        val target = if (browserOnly) runBlocking {
+            val link = IndianPlaybackCatalogue.resolveServers(selection).first()
+            assertEquals("MegaCloud", link.server)
+            IndianPlaybackCatalogue.playerUrl(link)
+        } else null
         try {
             ActivityScenario.launch<NativePlayerActivity>(intent, nativePhoneLaunchOptions()).use { scenario ->
+                if (target != null) scenario.onActivity { it.playProviderBrowser(selection, "MegaCloud", target) }
+                var route = "Auto"
                 repeat(350) {
                     var started = false
                     scenario.onActivity { player ->
@@ -44,15 +55,20 @@ class IndianPlaybackDeviceTest {
                         val native = player.playbackController
                         started = if (browser != null) browser.currentPositionMs.value >= 1200L
                             else native?.isPlaying == true && native.videoSize.width > 0 && native.currentPosition >= 1200L
-                        if (started) assertEquals("MegaCloud", player.playbackUiState.server)
+                        if (browserOnly) assertTrue("Rate-limited streams use the provider browser", browser != null)
+                        if (started) {
+                            route = player.playbackUiState.server
+                            if (browser != null) assertEquals("MegaCloud", route)
+                            else assertEquals(media.id, nativeSelection(requireNotNull(NativePlaybackService.activeRequest).selectionJson).media.id)
+                        }
                     }
                     if (started) {
-                        android.util.Log.i("IndianPlaybackCheck", "Rana Vikrama: HiMovies MegaCloud in ${SystemClock.elapsedRealtime() - start} ms")
+                        android.util.Log.i("IndianPlaybackCheck", "Rana Vikrama: $route in ${SystemClock.elapsedRealtime() - start} ms (browserOnly=$browserOnly)")
                         return
                     }
                     SystemClock.sleep(120)
                 }
-                assertTrue("Rana Vikrama did not advance on MegaCloud", false)
+                assertTrue("Rana Vikrama did not play (browserOnly=$browserOnly)", false)
             }
         } finally { context.stopService(service) }
     }
