@@ -2,6 +2,7 @@ package com.aliflix.app.player
 
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.MobilePlaybackProvider
+import com.aliflix.app.model.isIndianCatalogue
 
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -695,7 +696,7 @@ class WebPlayerController(
         selection: PlaybackSelection,
     ) {
         if (nativePreparation && nativeEmbedUrl != null) {
-            if(!BuildConfig.IS_TV && selection.source.identity in setOf(MobilePlaybackProvider.FILMO,MobilePlaybackProvider.ANIWORLD,MobilePlaybackProvider.SERIENSTREAM)) {
+            if(!BuildConfig.IS_TV && (selection.source.identity.isIndianCatalogue || selection.source.identity in setOf(MobilePlaybackProvider.FILMO,MobilePlaybackProvider.ANIWORLD,MobilePlaybackProvider.SERIENSTREAM))) {
                 // The site's external-player action may forbid framing. Load
                 // its normal document directly in the temporary muted resolver.
                 view.loadUrl(nativeEmbedUrl)
@@ -1937,7 +1938,8 @@ class WebPlayerController(
         if (nativePreparation && nativeEmbedUrl != null) return
         when (selection.source.identity) {
             PlaybackProviderId.CINEJOY -> Unit // Exact TMDB movie/episode route, native HLS discovery.
-            MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, MobilePlaybackProvider.MOVY, MobilePlaybackProvider.SEVEN_MOVIES -> Unit // Native mobile catalogues and exact TMDB routes.
+            MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, MobilePlaybackProvider.MOVY, MobilePlaybackProvider.SEVEN_MOVIES,
+            MobilePlaybackProvider.HIMOVIES, MobilePlaybackProvider.CINEGO -> Unit // Native mobile catalogues and exact TMDB routes.
             PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
             PlaybackProviderId.MOVIEPIRE -> {
                 if (!BuildConfig.IS_TV) installMobileMoviepireAdShield(view, selection)

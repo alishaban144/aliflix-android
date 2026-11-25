@@ -10,7 +10,7 @@ internal fun talkDiscoveryQuestion(question:String,hasRecommendations:Boolean=fa
     if(talkConversationIntent(question,if(hasRecommendations)3 else 0)!=TalkIntent.CONVERSATION)return false
     if(Regex("^(?:(?:i|we) (?:recommend|suggest)|(?:don't|do not|stop) (?:recommend|suggest))\\b").containsMatchIn(text))return false
     if(Regex("\\b(?:recommend|suggest) the (?:movie|film|series|show)\\s+\\p{L}").containsMatchIn(text))return false
-    if(hasRecommendations&&(talkCatalogueRefinementQuestion(text)||Regex("^(?:more|other|different|alternative|another)(?:[.!?]*$|\\s+(?:different\\s+)?(?:titles?|movies?|films?|series|shows?|choices?))").containsMatchIn(text)))return true
+    if(hasRecommendations&&(talkCatalogueRefinementQuestion(text)||Regex("^(?:(?:can|could|would) you\\s+)?(?:(?:give|show) me\\s+|suggest\\s+|recommend\\s+)?(?:some\\s+|any\\s+)?(?:more|other|different|alternative|another)(?:[.!?]*$|\\s+(?:(?:different|other|new)\\s+)?(?:ones?|titles?|movies?|films?|series|shows?|choices?|recommendations?))").containsMatchIn(text)))return true
     val media=Regex("\\b(?:movies?|films?|series|shows?|titles?|recommendations?|sci.?fi|science fiction)\\b|أفلام|افلام|مسلسلات|filme|serien").containsMatchIn(text)
     if(media&&Regex("\\b(?:recommend|suggest|empfiehl|empfehle|recomienda|sugiere)\\b|اقترح|رشح").containsMatchIn(text))return true
     if(Regex("\\b(?:cards?|posters?|restore|bring back|release dates?|news|reviews?|cast|trailers?|box office|budget|awards?|who|director|explain|ending|episode|season|called|named)\\b|بطاق|karte").containsMatchIn(text))return false

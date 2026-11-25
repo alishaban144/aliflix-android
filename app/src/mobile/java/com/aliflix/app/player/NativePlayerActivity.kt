@@ -1351,6 +1351,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         return when (provider) {
             com.aliflix.app.model.MobilePlaybackProvider.SERIENSTREAM -> SerienstreamNativeCatalog.links(probe).map { it.label }
             MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD -> LinkedSiteCatalog(this).links(probe).second.map { it.label }
+            MobilePlaybackProvider.HIMOVIES, MobilePlaybackProvider.CINEGO -> IndianPlaybackCatalogue.resolveServers(probe).map { it.server }
             com.aliflix.app.model.PlaybackProviderId.CINEJOY ->
                 CineJoyNativeCatalog.fetchServers().map(CineJoyNativeCatalog::serverLabel)
             com.aliflix.app.model.MobilePlaybackProvider.MOVY,
@@ -1725,6 +1726,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                             try {
                                 val request = withTimeout(when (candidate.source.identity) {
                                     com.aliflix.app.model.MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD -> 60_000
+                                    MobilePlaybackProvider.HIMOVIES, MobilePlaybackProvider.CINEGO -> 36_000
                                     com.aliflix.app.model.PlaybackProviderId.MIRURO -> 45_000
                                     com.aliflix.app.model.PlaybackProviderId.ANIKURO -> 60_000
                                     com.aliflix.app.model.PlaybackProviderId.CINEJOY,

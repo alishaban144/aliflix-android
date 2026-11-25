@@ -2,6 +2,7 @@ package com.aliflix.app.player
 
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.MobilePlaybackProvider
+import com.aliflix.app.model.isIndianCatalogue
 
 import android.os.SystemClock
 import android.widget.FrameLayout
@@ -64,6 +65,34 @@ internal class NativeStreamResolver(
         onServer: (String) -> Unit,
     ): NativePlaybackRequest {
         reportServers = onServers
+        if (selection.source.identity.isIndianCatalogue) {
+            val servers = IndianPlaybackCatalogue.resolveServers(selection)
+            onServers(servers.map { it.server })
+            val candidates = servers.filter { it.server !in excluded && (!strictPreferredServer || it.server == preferredServer) }
+                .sortedBy { it.server != preferredServer }
+            if (candidates.isEmpty()) throw NoNativeServersException()
+            val (winner, request) = withTimeout(24_000) {
+                firstSuccessful(candidates.mapIndexed { index, link -> suspend {
+                    if (index > 0 && !strictPreferredServer) delay(450)
+                    val child = NativeStreamResolver(activity, progress, host)
+                    children.add(child)
+                    try {
+                        withTimeout(11_000) {
+                            val target = IndianPlaybackCatalogue.playerUrl(link)
+                            val resolved = child.resolveSingle(selection, positionMs, emptySet(), link.server,
+                                listOf(link.server to target), true) {}
+                            if (validateSingle) StartupStreamCache.awaitPlayable(activity, resolved)
+                            link.server to resolved
+                        }
+                    } finally {
+                        child.close()
+                        children.remove(child)
+                    }
+                } }, parallelism = 2)
+            }
+            onServer(winner)
+            return request
+        }
         if (selection.source.identity in setOf(MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD)) {
             return try { LinkedSiteCatalog(activity).resolve(selection,positionMs,excluded,preferredServer,strictPreferredServer,
                 audioLanguage,onServers,onServer) { label, target ->

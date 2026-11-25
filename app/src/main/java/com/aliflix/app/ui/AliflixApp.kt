@@ -1529,7 +1529,8 @@ fun AliflixApp(
 
         urlDialogProvider?.let { provider ->
             val currentUrl = when (provider) {
-                MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> provider.defaultBaseUrl
+                MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY,
+                MobilePlaybackProvider.HIMOVIES, MobilePlaybackProvider.CINEGO -> provider.defaultBaseUrl
                 PlaybackProviderId.MIRURO -> provider.defaultBaseUrl
                 PlaybackProviderId.ANIKURO -> provider.defaultBaseUrl
                 PlaybackProviderId.RAMOFLIX -> ramoflixConfig.baseUrl
@@ -1543,7 +1544,8 @@ fun AliflixApp(
                 defaultUrl = provider.defaultBaseUrl,
                 onSave = { newUrl ->
                     when (provider) {
-                        MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> Unit
+                        MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY,
+                        MobilePlaybackProvider.HIMOVIES, MobilePlaybackProvider.CINEGO -> Unit
                         PlaybackProviderId.MIRURO -> Unit
                         PlaybackProviderId.ANIKURO -> Unit
                         PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(newUrl)
@@ -1554,7 +1556,8 @@ fun AliflixApp(
                 },
                 onReset = {
                     when (provider) {
-                        MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> Unit
+                        MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY,
+                        MobilePlaybackProvider.HIMOVIES, MobilePlaybackProvider.CINEGO -> Unit
                         PlaybackProviderId.MIRURO -> Unit
                         PlaybackProviderId.ANIKURO -> Unit
                         PlaybackProviderId.RAMOFLIX -> viewModel.resetRamoflixUrl()
