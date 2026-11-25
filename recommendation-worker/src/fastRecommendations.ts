@@ -1,4 +1,4 @@
-import { fetchGemini, hasGeminiCredentials, raceGeminiGeneration } from './geminiKeys';
+import { configuredGeminiSlots, geminiProjectRequest, raceGeminiGeneration } from './geminiKeys';
 import { boundedJson } from './talkProviders';
 import { z } from 'zod';
 import type { RecommendationEnv } from './types';
@@ -71,20 +71,47 @@ export function tavilyCandidatePicks(answer:string,findings:Array<{title:string;
  * text request in one tool call. No speech is requested or retained here. */
 export async function liveRecommendationPicks(env:RecommendationEnv,input:unknown,signal:AbortSignal,
  onPick?:(pick:z.infer<typeof Pick>,index:number)=>void) {
- if(!hasGeminiCredentials(env))throw new ServiceError('GEMINI_UNAVAILABLE','Recommendations unavailable',503,true);
+ const url='https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
+ const pool=configuredGeminiSlots(env);
+ const start=Math.floor(Math.random()*pool.length);
+ const slots=[...pool.slice(start),...pool.slice(0,start)];
  const deadline=AbortSignal.any([signal,AbortSignal.timeout(20000)]);
- const response=await fetchGemini(env,'https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent',{
-  headers:{Upgrade:'websocket'},signal:deadline,
- });
- const socket=response.webSocket;
- if(!socket)throw new ServiceError(response.status===429?'AI_QUOTA':'GEMINI_UNAVAILABLE','Recommendations unavailable',response.status===429?429:503,true);
+ let limited=false;
+ // A successful WebSocket upgrade only confirms transport. Gemini can refuse
+ // setup or the actual generation after the upgrade, so rotate at that point too.
+ for(const slot of slots){
+  signal.throwIfAborted();
+  if(deadline.aborted)break;
+  const attempt=AbortSignal.any([deadline,AbortSignal.timeout(Math.floor(20000/Math.min(3,pool.length)))]);
+  let picks:Array<z.infer<typeof Pick>>;
+  try {
+   const {response}=await geminiProjectRequest(env,url,{headers:{Upgrade:'websocket'},signal:attempt},slot);
+   if(!response.webSocket){
+    limited=response.status===429;
+    void response.body?.cancel().catch(()=>{});
+    if(![401,403,408,429].includes(response.status)&&response.status<500)break;
+    continue;
+   }
+   picks=await readLiveRecommendationPicks(response.webSocket,input,attempt);
+  } catch(error) {
+   signal.throwIfAborted();
+   limited=error instanceof ServiceError&&error.status===429;
+   continue;
+  }
+  picks.forEach((pick,index)=>onPick?.(pick,index));
+  return picks;
+ }
+ throw new ServiceError(limited?'AI_QUOTA':'GEMINI_UNAVAILABLE','Recommendations unavailable',limited?429:503,true);
+}
+
+function readLiveRecommendationPicks(socket:WebSocket,input:unknown,deadline:AbortSignal) {
  return new Promise<Array<z.infer<typeof Pick>>>((resolve,reject)=>{
   let settled=false,nudged=false;
   const finish=(picks?:Array<z.infer<typeof Pick>>,error?:unknown)=>{
    if(settled)return;settled=true;deadline.removeEventListener('abort',abort);
    socket.removeEventListener('message',message);socket.removeEventListener('close',closed);socket.removeEventListener('error',closed);
    try{socket.close(1000,'Complete');}catch{}
-   if(picks){try{picks.forEach((p,i)=>onPick?.(p,i));resolve(picks);}catch(callbackError){reject(callbackError);}}else reject(error||Error('GEMINI_UNAVAILABLE'));
+   if(picks?.length)resolve(picks);else reject(error||Error('GEMINI_UNAVAILABLE'));
   };
   const abort=()=>finish(undefined,deadline.reason);
   const closed=()=>finish(undefined,Error('GEMINI_UNAVAILABLE'));
@@ -93,7 +120,10 @@ export async function liveRecommendationPicks(env:RecommendationEnv,input:unknow
    if(settled)return;
    if(raw.length>128000)throw Error('RESPONSE_LIMIT');
    const data=JSON.parse(raw);
-   if(data.error)throw Error('GEMINI_UNAVAILABLE');
+   if(data.error){
+    const limited=data.error.code===429||data.error.status==='RESOURCE_EXHAUSTED';
+    throw new ServiceError(limited?'AI_QUOTA':'GEMINI_UNAVAILABLE','Recommendations unavailable',limited?429:503,true);
+   }
    if(data.setupComplete)socket.send(JSON.stringify({clientContent:{turns:[{role:'user',parts:[{text:JSON.stringify(input)}]}],turnComplete:true}}));
    for(const call of data.toolCall?.functionCalls||[])if(call.name==='recommend_titles')finish(FastPicksSchema.parse(call.args).candidates);
    if(!settled&&!nudged&&data.serverContent?.turnComplete){

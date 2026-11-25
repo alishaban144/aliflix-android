@@ -119,11 +119,12 @@ export async function raceGeminiGeneration<T>(env: GeminiCredentials, url: strin
  init: GeminiRequestInit & {body: string}, decode: (response: Response) => Promise<T>,
  excluded: GeminiKeySlot[] = [],
  retain: (promise: Promise<unknown>)=>void = waitUntil,
+ hedgeDelayMs = 0,
 ): Promise<GeminiGenerationResult<T>> {
  const eligible = configuredGeminiSlots(env).filter(slot => !excluded.includes(slot));
  const preferFresh = url.includes('gemini-4-hydrogen:') || url.endsWith('/auth_tokens');
  const fresh: GeminiKeySlot[] = preferFresh ? eligible.filter(slot => slot === 'hydrogen-a' || slot === 'hydrogen-b') : [];
- const slots = [...rotateCandidates(fresh), ...rotateCandidates(eligible.filter(slot => !fresh.includes(slot)))].slice(0,3);
+ const slots = [...rotateCandidates(fresh), ...rotateCandidates(eligible.filter(slot => !fresh.includes(slot)))];
  const requestInit = {...init, geminiInputTokens: init.geminiInputTokens ?? estimateGeminiInput(init.body)};
  if (slots.length <= 1) {
   const {response, keySlot} = await geminiProjectRequest(env, url, requestInit, slots[0], excluded);
@@ -171,7 +172,11 @@ export async function raceGeminiGeneration<T>(env: GeminiCredentials, url: strin
   throw Error('No Gemini project produced a usable response');
  };
 
- const attempts = [attemptAvailableProjects(), attemptAvailableProjects()];
+ let hedge: ReturnType<typeof setTimeout> | undefined;
+ let startHedge: (()=>void) | undefined;
+ const attempts = [attemptAvailableProjects(), hedgeDelayMs > 0
+  ? new Promise<void>(resolve=>{startHedge=resolve;hedge=setTimeout(resolve,hedgeDelayMs);}).then(attemptAvailableProjects)
+  : attemptAvailableProjects()];
  try {
   const winner = await Promise.any(attempts);
   keep = winner.controller;
@@ -185,6 +190,8 @@ export async function raceGeminiGeneration<T>(env: GeminiCredentials, url: strin
   return {response: failure.response};
  } finally {
   stopped = true;
+  if (hedge !== undefined) clearTimeout(hedge);
+  startHedge?.();
   for (const controller of controllers) if (controller !== keep) controller.abort();
   retain(Promise.allSettled(attempts));
  }

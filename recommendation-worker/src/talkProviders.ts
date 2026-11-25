@@ -172,8 +172,8 @@ export async function issueLiveToken(env: RecommendationEnv, context: TalkContex
   body:JSON.stringify({uses:1,expireTime:new Date(expires).toISOString(),newSessionExpireTime:new Date(Math.min(expires-1000,Date.now()+60000)).toISOString(),
     bidiGenerateContentSetup:lockedSetup,fieldMask:mask}),signal:AbortSignal.timeout(8000) };
  const decode=async(response:Response)=>z.object({name:z.string().min(8).max(4096)}).parse(await boundedJson(response,16384));
- const grant=pinned||excluded.length ? await geminiProjectRequest(env,url,init,pinned,excluded) :
-  await raceGeminiGeneration(env,url,init,decode,excluded,retain);
+ const grant=pinned ? await geminiProjectRequest(env,url,init,pinned,excluded) :
+  await raceGeminiGeneration(env,url,init,decode,excluded,retain,900);
  if('response' in grant&&!grant.response.ok){
   await grant.response.body?.cancel();console.warn('talk_live_token_status',grant.response.status);throw Error('LIVE_UNAVAILABLE');
  }
