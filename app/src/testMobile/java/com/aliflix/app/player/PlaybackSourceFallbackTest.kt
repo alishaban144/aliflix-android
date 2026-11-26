@@ -109,7 +109,7 @@ class PlaybackSourceFallbackTest {
     @Test fun newSourcesPreserveExactEpisodeRoutes() {
         val series = Media(615, MediaType.TV, "Futurama")
         assertEquals("https://www.movy.sx/tv/615/2/3?play=true", PlaybackSource(MobilePlaybackProvider.MOVY).buildEntryUrl(series, 2, 3))
-        assertEquals("https://7movies.ac/tv/615/watch?season=2&episode=3", PlaybackSource(MobilePlaybackProvider.SEVEN_MOVIES).buildEntryUrl(series, 2, 3))
+        assertEquals("https://7movies.ws/tv/615/watch?season=2&episode=3", PlaybackSource(MobilePlaybackProvider.SEVEN_MOVIES).buildEntryUrl(series, 2, 3))
         val episode = PlaybackSelection(series, 2, 3, source = PlaybackSource(MobilePlaybackProvider.SEVEN_MOVIES))
         val embeds = preferredNativeEmbeds(episode)
         assertEquals(5, embeds.size)
@@ -118,7 +118,7 @@ class PlaybackSourceFallbackTest {
         assertTrue(embeds.map { it.second }.distinct().size == embeds.size)
         val movie = Media(550, MediaType.MOVIE, "Fight Club")
         assertEquals("https://www.movy.sx/movie/550?play=true", PlaybackSource(MobilePlaybackProvider.MOVY).buildEntryUrl(movie))
-        assertEquals("https://7movies.ac/movie/550/watch", PlaybackSource(MobilePlaybackProvider.SEVEN_MOVIES).buildEntryUrl(movie))
+        assertEquals("https://7movies.ws/movie/550/watch", PlaybackSource(MobilePlaybackProvider.SEVEN_MOVIES).buildEntryUrl(movie))
     }
 
     @Test fun mobileSourcesSurviveNativeHandoffAndPreferenceRestore() {

@@ -5,6 +5,7 @@ import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.MobilePlaybackProvider
 import com.aliflix.app.model.PlaybackPreferences
 import com.aliflix.app.model.PlaybackSelection
+import com.aliflix.app.model.PlaybackSource
 import org.jsoup.Jsoup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -55,14 +56,23 @@ class IndianPlaybackCatalogueTest {
         val media = Media(691633, MediaType.MOVIE, "Rana Vikrama", originalLanguage = "kn")
         val selection = PlaybackSelection(media, source = preferences.sourceFor(media))
         val candidates = initialPlaybackRace(playbackSourceFallbacks(selection, preferences))
-        assertEquals(listOf(MobilePlaybackProvider.HIMOVIES, MobilePlaybackProvider.CINEGO, MobilePlaybackProvider.FLIXER),
-            candidates.take(3).map { it.source.identity })
+        assertEquals(listOf(MobilePlaybackProvider.HIMOVIES, MobilePlaybackProvider.CINEGO,
+            MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.FLIXER),
+            candidates.take(4).map { it.source.identity })
         val winner = withTimeout(500) {
             racePlaybackSources(candidates) { candidate ->
-                if (candidate.source.identity == MobilePlaybackProvider.FLIXER) candidate else awaitCancellation()
+                if (candidate.source.identity == MobilePlaybackProvider.SEVEN_MOVIES) candidate else awaitCancellation()
             }
         }
         assertEquals(media, winner.media)
-        assertEquals(MobilePlaybackProvider.FLIXER, winner.source.identity)
+        assertEquals(MobilePlaybackProvider.SEVEN_MOVIES, winner.source.identity)
+    }
+
+    @Test fun oldSevenMoviesSelectionUsesTheCurrentHost() {
+        val saved = PlaybackSource(MobilePlaybackProvider.SEVEN_MOVIES, "https://7movies.ac/")
+        val movie = Media(691633, MediaType.MOVIE, "Rana Vikrama")
+        assertEquals("https://7movies.ws/movie/691633/watch", saved.buildEntryUrl(movie))
+        assertEquals("https://7movies.ws/tv/691633/watch?season=2&episode=3", saved.buildEntryUrl(movie.copy(type = MediaType.TV), 2, 3))
+        assertEquals(setOf("7movies.ws"), saved.approvedTopLevelHosts)
     }
 }

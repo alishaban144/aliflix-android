@@ -16,6 +16,12 @@ internal fun playbackSourceFallbacks(selection: PlaybackSelection, preferences: 
         .map { selection.copy(source = preferences.sourceFor(selection.media, it)) }
 }
 
+private fun PlaybackSelection.isEarlyIndianAlternative(): Boolean = when (source.identity) {
+    MobilePlaybackProvider.SEVEN_MOVIES -> media.type == MediaType.MOVIE
+    MobilePlaybackProvider.FLIXER, PlaybackProviderId.MOVIEPIRE -> true
+    else -> false
+}
+
 /** Priority controls launch order; an unavailable priority must never serialize fallback. */
 internal fun initialPlaybackRace(candidates: List<PlaybackSelection>): List<PlaybackSelection> {
     val anime = candidates.filter { it.source.identity.isAnimeNative }
@@ -23,9 +29,11 @@ internal fun initialPlaybackRace(candidates: List<PlaybackSelection>): List<Play
         candidates.firstOrNull()?.media?.let { it.type == MediaType.TV && it.isJapaneseAnime } == true && anime.isNotEmpty() ->
             anime + candidates.filterNot { it.source.identity.isAnimeNative }
         candidates.firstOrNull()?.media?.isIndianTitle == true -> candidates.sortedBy {
-            when (val provider = it.source.identity) {
-                MobilePlaybackProvider.FLIXER, PlaybackProviderId.MOVIEPIRE -> 1
-                else -> if (provider.isIndianCatalogue) 0 else 2
+            when {
+                it.source.identity.isIndianCatalogue -> 0
+                it.isEarlyIndianAlternative() && it.source.identity == MobilePlaybackProvider.SEVEN_MOVIES -> 1
+                it.isEarlyIndianAlternative() -> 2
+                else -> 3
             }
         }
         else -> candidates
@@ -68,9 +76,7 @@ internal suspend fun <T : Any> racePlaybackSources(candidates: List<PlaybackSele
                 filmOAttempt?.complete(Unit)
             }
         } else {
-            if (indianCatalogue && (candidate.source.identity.isIndianCatalogue ||
-                    candidate.source.identity == MobilePlaybackProvider.FLIXER ||
-                    candidate.source.identity == PlaybackProviderId.MOVIEPIRE)) delay(250)
+            if (indianCatalogue && (candidate.source.identity.isIndianCatalogue || candidate.isEarlyIndianAlternative())) delay(250)
             else if (filmOAttempt == null) delay(900)
             else withTimeoutOrNull(8_000) { filmOAttempt.await() }
             attempt(candidate)
