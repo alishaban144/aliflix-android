@@ -72,7 +72,6 @@ class WebPlayerController(
     private val playbackProgressStore: PlaybackProgressStore,
     private val nativePreparation: Boolean = false,
     private val nativeEmbedUrl: String? = null,
-    private val catalogueBrowserPlayback: Boolean = false,
 ) {
     private var nativeStream: JSONObject? = null
     private var nativeStreamReceivedAt = 0L
@@ -149,12 +148,8 @@ class WebPlayerController(
         }
     }
 
-    private fun preparationScript() = when {
-        nativePreparation -> "\n" + nativePreparationScript()
-        catalogueBrowserPlayback -> "\n" + nativePreparationScript(muteAudio = false)
-        else -> ""
-    }
-    private val resolvedEmbedOrigin get()=trustedNativeEmbedOrigin(nativeEmbedUrl,nativePreparation || catalogueBrowserPlayback,BuildConfig.IS_TV)
+    private fun preparationScript() = if (nativePreparation) "\n" + nativePreparationScript() else ""
+    private val resolvedEmbedOrigin get()=trustedNativeEmbedOrigin(nativeEmbedUrl,nativePreparation,BuildConfig.IS_TV)
     // The public MoviesAPI player embeds the actual video one frame deeper.
     private val resolvedEmbedChildOrigins: Set<String> get() = if (resolvedEmbedOrigin == "https://moviesapi.to") {
         setOf("https://cdn.vidspark.to", "https://player.vidprime.top", "https://cdn.vidprime.top")
@@ -703,7 +698,7 @@ class WebPlayerController(
         view: WebView,
         selection: PlaybackSelection,
     ) {
-        if (nativeEmbedUrl != null && (nativePreparation || catalogueBrowserPlayback)) {
+        if (nativePreparation && nativeEmbedUrl != null) {
             if(!BuildConfig.IS_TV && selection.source.identity in setOf(MobilePlaybackProvider.FILMO,MobilePlaybackProvider.ANIWORLD,MobilePlaybackProvider.SERIENSTREAM)) {
                 // The site's external-player action may forbid framing. Load
                 // its normal document directly in the temporary muted resolver.
@@ -1944,7 +1939,7 @@ class WebPlayerController(
         view: WebView,
         selection: PlaybackSelection,
     ) {
-        if (nativeEmbedUrl != null && (nativePreparation || catalogueBrowserPlayback)) return
+        if (nativePreparation && nativeEmbedUrl != null) return
         when (selection.source.identity) {
             PlaybackProviderId.CINEJOY -> Unit // Exact TMDB movie/episode route, native HLS discovery.
             MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, MobilePlaybackProvider.MOVY, MobilePlaybackProvider.SEVEN_MOVIES,

@@ -4,8 +4,11 @@ package com.aliflix.app.player
 
 import android.content.Intent
 import android.os.SystemClock
+import android.view.View
 import android.view.ViewGroup
+import android.webkit.WebView
 import android.widget.FrameLayout
+import androidx.core.view.children
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import com.aliflix.app.AliflixApplication
@@ -16,6 +19,7 @@ import com.aliflix.app.model.MobilePlaybackProvider
 import com.aliflix.app.model.PlaybackSelection
 import com.aliflix.app.model.PlaybackSource
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -25,11 +29,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
 class IndianPlaybackDeviceTest {
-    @Test fun ranaVikramaStartsWithoutManualServerSelection() = verifyRanaVikrama(browserOnly = false)
-
-    @Test fun ranaVikramaPlaysInHiMoviesMegaCloudBrowserPlayer() = verifyRanaVikrama(browserOnly = true)
-
-    private fun verifyRanaVikrama(browserOnly: Boolean) {
+    @Test fun ranaVikramaStartsInMedia3WithoutManualServerSelection() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("liveIndianPlayback") == "true")
         grantNativeFixtureNetworkPermission()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -39,39 +39,33 @@ class IndianPlaybackDeviceTest {
         val selection = PlaybackSelection(media, source = PlaybackSource(MobilePlaybackProvider.HIMOVIES))
         val intent = Intent(context, NativePlayerActivity::class.java).putExtra("selection", selection.nativeJson())
         val start = SystemClock.elapsedRealtime()
-        val target = if (browserOnly) runBlocking {
-            val link = IndianPlaybackCatalogue.resolveServers(selection).first()
-            assertEquals("MegaCloud", link.server)
-            IndianPlaybackCatalogue.playerUrl(link)
-        } else null
         try {
             ActivityScenario.launch<NativePlayerActivity>(intent, nativePhoneLaunchOptions()).use { scenario ->
-                if (target != null) scenario.onActivity { it.playProviderBrowser(selection, "MegaCloud", target) }
                 var route = "Auto"
                 repeat(350) {
                     var started = false
                     scenario.onActivity { player ->
-                        val browser = player.providerBrowserController
+                        assertFalse("Provider frames belong in the hidden resolver", hasVisibleWebView(player.window.decorView))
                         val native = player.playbackController
-                        started = if (browser != null) browser.currentPositionMs.value >= 1200L
-                            else native?.isPlaying == true && native.videoSize.width > 0 && native.currentPosition >= 1200L
-                        if (browserOnly) assertTrue("Rate-limited streams use the provider browser", browser != null)
+                        started = native?.isPlaying == true && native.videoSize.width > 0 && native.currentPosition >= 1200L
                         if (started) {
                             route = player.playbackUiState.server
-                            if (browser != null) assertEquals("MegaCloud", route)
-                            else assertEquals(media.id, nativeSelection(requireNotNull(NativePlaybackService.activeRequest).selectionJson).media.id)
+                            assertEquals(media.id, nativeSelection(requireNotNull(NativePlaybackService.activeRequest).selectionJson).media.id)
                         }
                     }
                     if (started) {
-                        android.util.Log.i("IndianPlaybackCheck", "Rana Vikrama: $route in ${SystemClock.elapsedRealtime() - start} ms (browserOnly=$browserOnly)")
+                        android.util.Log.i("IndianPlaybackCheck", "Rana Vikrama: Media3 via $route in ${SystemClock.elapsedRealtime() - start} ms")
                         return
                     }
                     SystemClock.sleep(120)
                 }
-                assertTrue("Rana Vikrama did not play (browserOnly=$browserOnly)", false)
+                assertTrue("Rana Vikrama did not play in Media3", false)
             }
         } finally { context.stopService(service) }
     }
+
+    private fun hasVisibleWebView(view: View): Boolean = view.isShown && view.alpha > 0f &&
+        (view is WebView || view is ViewGroup && view.children.any(::hasVisibleWebView))
 
     @Test fun panchayatPlaysSecondEpisode() = verify(
         Media(101352, MediaType.TV, "Panchayat", year = "2020", originalLanguage = "hi"),

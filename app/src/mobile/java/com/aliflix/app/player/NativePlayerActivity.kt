@@ -568,8 +568,6 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     private val triedServers = linkedSetOf<String>()
     private val exhaustedSources = linkedSetOf<com.aliflix.app.model.PlaybackProvider>()
     private lateinit var resolverHost: FrameLayout
-    internal var providerBrowserController by mutableStateOf<WebPlayerController?>(null)
-        private set
     private lateinit var video: SurfaceView
     private lateinit var videoFrame: AspectRatioFrameLayout
     private lateinit var subtitles: SubtitleView
@@ -704,12 +702,6 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         root.addView(subtitles, FrameLayout.LayoutParams(-1, -1))
         root.addView(ComposeView(this).apply {
             setContent { AliflixMobileTheme {
-                providerBrowserController?.let { browser ->
-                    selection?.let { selected ->
-                        WebPlayerScreen(selected, visible = true, controller = browser, onClose = ::pauseAndLeavePlayer)
-                    }
-                    return@AliflixMobileTheme
-                }
                 val playerSettings by settingsStore.settings.collectAsState()
                 if (showProviderVerification) providerVerification?.let { verification ->
                     SerienstreamVerificationDialog(verification.episodeUrl, verification.language, verification.playUrl, { embed ->
@@ -973,7 +965,6 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     }
 
     internal fun pauseAndLeavePlayer() {
-        providerBrowserController?.setVisible(false)
         cancelProviderTrial()
         preparation?.cancel(); resolver?.close(); resolver = null
         subtitleJob?.cancel()
@@ -983,23 +974,11 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         finish()
     }
 
-    internal fun playProviderBrowser(selected: PlaybackSelection, server: String, url: String) {
-        if (ui.ready || providerBrowserController != null || party.state.value.active) return
-        controller?.stop()
-        selection = selected
-        updateSelectionUi()
-        ui = ui.copy(server = server, stage = null, error = null)
-        providerBrowserController = WebPlayerController(this, progress, nativeEmbedUrl = url, catalogueBrowserPlayback = true)
-        preparation?.cancel()
-    }
-
     override fun onNewIntent(intent: Intent) {
         recordCurrentProgress(urgent = true)
         super.onNewIntent(intent); setIntent(intent)
         if(talkCreated)intent.getStringExtra("talkTaskId")?.let { id -> com.aliflix.app.talk.TalkTaskWork.get(this).conversation(id)?.let(talkVoice::restoreHandoff) }
         if (intent.hasExtra("selection") || intent.hasExtra("request") || intent.hasExtra("requestFile")) {
-            providerBrowserController?.destroy()
-            providerBrowserController = null
             cancelProviderTrial()
             requestAccepted = false; exhaustedSources.clear(); triedServers.clear(); recoveryCount = 0; acceptRequest(intent)
         }
@@ -1763,10 +1742,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                                             getSharedPreferences("serienstream-audio", MODE_PRIVATE).getString(candidate.media.key, null) else null,
                                         forceLowQuality = candidate.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY && cineJoyLowQuality,
                                         preferredServer = (if (candidate.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY) cineJoyRetryServer else null) ?: (if (candidate.source == startingSource) preferredServer?.takeUnless { it in excluded } else null) ?: savedServer?.takeUnless { it in excluded },
-                                        onServers = { names -> if (names.isNotEmpty()) resolvedServerNames[serverCatalogueKey(candidate)] = (resolvedServerNames[serverCatalogueKey(candidate)].orEmpty() + names).distinct() },
-                                        onBrowserPlayback = { label, url ->
-                                            if (candidate.source == startingSource) playProviderBrowser(candidate, label, url)
-                                        }) { server = it }
+                                        onServers = { names -> if (names.isNotEmpty()) resolvedServerNames[serverCatalogueKey(candidate)] = (resolvedServerNames[serverCatalogueKey(candidate)].orEmpty() + names).distinct() }) { server = it }
                                 }
                                 Triple(candidate, server, request)
                             } catch (error: Exception) {
@@ -2068,7 +2044,6 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     }
 
     private fun recover() {
-        if (providerBrowserController != null) return
         if (NativePlaybackService.activeRequest?.offlineDownloadId?.isNotBlank() == true) {
             ui = ui.copy(stage = null, error = "Download could not play. Delete it and download again."); return
         }
@@ -2648,7 +2623,6 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     }
 
     private fun recordCurrentProgress(urgent: Boolean = true) {
-        if (providerBrowserController != null) return
         val sel = NativePlaybackService.activeRequest?.selectionJson?.let { runCatching { nativeSelection(it) }.getOrNull() } ?: return
         val c = controller ?: return
         if (NativePlaybackService.activeScene != null || !NativePlaybackService.canRecordProgress || c.currentMediaItem?.mediaId != sel.key ||
@@ -2696,7 +2670,6 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
     }
 
     override fun onStart() {
-        providerBrowserController?.setVisible(true)
         super.onStart()
         if(talkCreated)talkVoice.restoreRoutedConversation()
         com.aliflix.app.talk.TalkPlayerConnection.attach(this)
@@ -2784,7 +2757,6 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         startService(Intent(this, NativePlaybackService::class.java).setAction(NativePlaybackService.ACTION_STOP)); finish()
     }
     override fun onStop() {
-        providerBrowserController?.setVisible(false)
         cancelProviderTrial()
         talkPreparationJob?.cancel(); talkPreparationJob=null
         if (talkCreated) talkVoice.cancelPlayerPreparation()
@@ -2802,7 +2774,6 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
         super.onStop()
     }
     override fun onDestroy() {
-        providerBrowserController?.destroy()
         if (talkCreated) talkVoice.close()
         subtitleCatalogueJob?.cancel()
         subtitleDelayCommit?.cancel()

@@ -22,7 +22,12 @@ internal fun initialPlaybackRace(candidates: List<PlaybackSelection>): List<Play
     return when {
         candidates.firstOrNull()?.media?.let { it.type == MediaType.TV && it.isJapaneseAnime } == true && anime.isNotEmpty() ->
             anime + candidates.filterNot { it.source.identity.isAnimeNative }
-        candidates.firstOrNull()?.media?.isIndianTitle == true -> candidates.sortedBy { !it.source.identity.isIndianCatalogue }
+        candidates.firstOrNull()?.media?.isIndianTitle == true -> candidates.sortedBy {
+            when (val provider = it.source.identity) {
+                MobilePlaybackProvider.FLIXER, PlaybackProviderId.MOVIEPIRE -> 1
+                else -> if (provider.isIndianCatalogue) 0 else 2
+            }
+        }
         else -> candidates
     }
 }
@@ -50,6 +55,7 @@ internal fun alternativePlaybackSources(
 
 /** Give the chosen catalogue a brief head start, with bounded concurrent alternatives. */
 internal suspend fun <T : Any> racePlaybackSources(candidates: List<PlaybackSelection>, attempt: suspend (PlaybackSelection) -> T): T {
+    val indianCatalogue = candidates.firstOrNull()?.source?.identity?.isIndianCatalogue == true
     val filmOAttempt = candidates.firstOrNull()
         ?.takeIf { it.source.identity == MobilePlaybackProvider.FILMO }
         ?.let { CompletableDeferred<Unit>() }
@@ -62,8 +68,9 @@ internal suspend fun <T : Any> racePlaybackSources(candidates: List<PlaybackSele
                 filmOAttempt?.complete(Unit)
             }
         } else {
-            if (candidates.first().media.isIndianTitle && candidate.source.identity.isIndianCatalogue) delay(250)
-            else if (candidates.first().source.identity.isIndianCatalogue) delay(1_600)
+            if (indianCatalogue && (candidate.source.identity.isIndianCatalogue ||
+                    candidate.source.identity == MobilePlaybackProvider.FLIXER ||
+                    candidate.source.identity == PlaybackProviderId.MOVIEPIRE)) delay(250)
             else if (filmOAttempt == null) delay(900)
             else withTimeoutOrNull(8_000) { filmOAttempt.await() }
             attempt(candidate)

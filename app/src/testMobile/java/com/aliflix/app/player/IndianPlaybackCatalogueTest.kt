@@ -9,6 +9,9 @@ import org.jsoup.Jsoup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 
 class IndianPlaybackCatalogueTest {
     @Test fun matchesExactTitleTypeAndYear() {
@@ -45,5 +48,21 @@ class IndianPlaybackCatalogueTest {
             assertEquals(listOf(MobilePlaybackProvider.HIMOVIES, MobilePlaybackProvider.CINEGO),
                 initialPlaybackRace(playbackSourceFallbacks(selection, preferences)).take(2).map { it.source.identity })
         }
+    }
+
+    @Test fun stalledCatalogueDoesNotDelayNativeAlternatives() = runTest {
+        val preferences = PlaybackPreferences()
+        val media = Media(691633, MediaType.MOVIE, "Rana Vikrama", originalLanguage = "kn")
+        val selection = PlaybackSelection(media, source = preferences.sourceFor(media))
+        val candidates = initialPlaybackRace(playbackSourceFallbacks(selection, preferences))
+        assertEquals(listOf(MobilePlaybackProvider.HIMOVIES, MobilePlaybackProvider.CINEGO, MobilePlaybackProvider.FLIXER),
+            candidates.take(3).map { it.source.identity })
+        val winner = withTimeout(500) {
+            racePlaybackSources(candidates) { candidate ->
+                if (candidate.source.identity == MobilePlaybackProvider.FLIXER) candidate else awaitCancellation()
+            }
+        }
+        assertEquals(media, winner.media)
+        assertEquals(MobilePlaybackProvider.FLIXER, winner.source.identity)
     }
 }

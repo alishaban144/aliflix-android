@@ -84,10 +84,10 @@ internal fun preferredNativeEmbeds(selection: PlaybackSelection): List<Pair<Stri
 }
 
 /** Runs only in the temporary resolver, on approved origins; destroyed after handoff. */
-internal fun nativePreparationScript(muteAudio: Boolean = true): String = """
+internal fun nativePreparationScript(): String = """
     (() => {
       // Fallback for WebView providers without MUTE_AUDIO, installed before page scripts.
-      if ($muteAudio) for (const [name, value] of [['muted', true], ['volume', 0]]) {
+      for (const [name, value] of [['muted', true], ['volume', 0]]) {
         const descriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, name);
         if (descriptor && descriptor.configurable) {
           Object.defineProperty(HTMLMediaElement.prototype, name, {
@@ -96,7 +96,7 @@ internal fun nativePreparationScript(muteAudio: Boolean = true): String = """
           });
         }
       }
-      if ($muteAudio) for (const type of [window.AudioContext, window.webkitAudioContext]) {
+      for (const type of [window.AudioContext, window.webkitAudioContext]) {
         if (type) type.prototype.resume = function() { return Promise.resolve(); };
       }
       const deadline = Date.now() + 45000;
@@ -114,13 +114,12 @@ internal fun nativePreparationScript(muteAudio: Boolean = true): String = """
         }
         document.querySelectorAll('video').forEach(video => {
           if (video.mediaKeys) return;
-          if ($muteAudio) video.muted = true;
+          video.muted = true;
           video.setAttribute('playsinline', '');
           video.preload = 'auto';
           if (video.paused) { const promise = video.play(); if (promise) promise.catch(() => {}); }
         });
         const videoPlaying = Array.from(document.querySelectorAll('video')).some(v => !v.paused && v.readyState >= 2);
-        if (!$muteAudio && videoPlaying) return;
         if (!videoPlaying) {
           const button = Array.from(document.querySelectorAll(selectors.join(','))).find(b => !b.disabled && b.getBoundingClientRect().width > 0);
           if (button) {
