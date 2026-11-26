@@ -145,7 +145,7 @@ internal fun nativeSubtitlesVtt(raw: String?, delaySeconds: Double): String {
 }
 
 /** Observe the provider's own requests. Prefer its HLS multivariant master, retaining AUDIO renditions. */
-internal fun nativeStreamDiscoveryScript(): String = """
+internal fun nativeStreamDiscoveryScript(reportVariantsImmediately: Boolean = false): String = """
     (() => {
       if (window.__aliflixStreamDiscovery) return;
       window.__aliflixStreamDiscovery = true;
@@ -225,7 +225,7 @@ internal fun nativeStreamDiscoveryScript(): String = """
         // A progressive file is complete. For HLS, wait for the master/alternate audio:
         // a child media playlist frequently carries a single preselected language, and
         // handing it off discards every other track (e.g. Dark S1E1 German on CineJoy).
-        if (candidate && (candidate.mimeType === 'video/mp4' || Date.now() - startedAt >= 8000)) {
+        if (candidate && (candidate.mimeType === 'video/mp4' || $reportVariantsImmediately || Date.now() - startedAt >= 8000)) {
           reportStream(candidate.url, candidate.mimeType, candidate.manifestKind === 'variant' ? 2 : 1);
         }
         if (Date.now() - startedAt > 60000) window.clearInterval(watcher);

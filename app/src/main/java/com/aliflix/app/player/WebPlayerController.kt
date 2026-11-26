@@ -52,6 +52,7 @@ import com.aliflix.app.data.PlaybackProgressStore
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.PlaybackProvider
 import com.aliflix.app.model.PlaybackSelection
+import com.aliflix.app.model.isIndianCatalogue
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -751,8 +752,13 @@ class WebPlayerController(
             moviepireProtectedNativeMode = false
             installMoviepireMessageListener(view, sourceHost)
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                val shield = if (selection.source.identity == MobilePlaybackProvider.FLIXER) mobileMoviepireAdShieldScript() else ""
+                // The native resolver already gives the HLS master time to arrive after a variant.
+                val discovery = nativeStreamDiscoveryScript(
+                    reportVariantsImmediately = nativePreparation && selection.source.identity.isIndianCatalogue,
+                )
                 moviepireDocumentStartScriptHandler = WebViewCompat.addDocumentStartJavaScript(
-                    view, (if (selection.source.identity == MobilePlaybackProvider.FLIXER) mobileMoviepireAdShieldScript() else "") + nativeStreamDiscoveryScript() + "\n" + mobileMoviepireProgressBridgeScript() + preparationScript(),
+                    view, shield + discovery + "\n" + mobileMoviepireProgressBridgeScript() + preparationScript(),
                     nativeOriginRules(sourceHost),
                 )
             }

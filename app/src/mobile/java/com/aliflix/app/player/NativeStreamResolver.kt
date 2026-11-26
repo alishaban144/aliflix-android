@@ -3,7 +3,6 @@ package com.aliflix.app.player
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.MobilePlaybackProvider
 import com.aliflix.app.model.isIndianCatalogue
-import com.aliflix.app.model.isIndianTitle
 
 import android.os.SystemClock
 import android.widget.FrameLayout
@@ -202,8 +201,7 @@ internal class NativeStreamResolver(
     }
 
     private suspend fun validateStream(selection: PlaybackSelection, request: NativePlaybackRequest) {
-        val minimum = if (selection.media.isIndianTitle) indianNativeMinimumDurationMs(selection) else 0L
-        StartupStreamCache.awaitPlayable(activity, request, minimumDurationMs = minimum)
+        StartupStreamCache.awaitPlayable(activity, request, expectedDuration = indianNativeDurationRange(selection))
     }
 
     /** Keep Flixer's own live server queue running while native Media3 validates each selected URL. */

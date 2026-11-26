@@ -32,7 +32,7 @@ enum class MobilePlaybackProvider(
     SERIENSTREAM("Serienstream", "https://serienstream.to/"),
     FILMO("Filmo", "https://filmo.to/"),
     ANIWORLD("AniWorld", "https://aniworld.to/"),
-    SEVEN_MOVIES("7Movies", "https://7movies.ws/"),
+    SEVEN_MOVIES("7Movies", "https://7movies.ac/"),
     MOVY("Movy", "https://www.movy.sx/"),
     HIMOVIES("HiMovies", "https://himovies.bz/"),
     CINEGO("CineGo", "https://cinego.ws/");
@@ -194,10 +194,6 @@ enum class SubtitleLanguage(
     }
 }
 
-private fun playbackBaseHost(url: String): String = runCatching {
-    URI(url).host?.removePrefix("www.") ?: url
-}.getOrDefault(url)
-
 data class PlaybackSource(
     val identity: PlaybackProvider,
     val baseUrl: String = identity.defaultBaseUrl,
@@ -206,13 +202,10 @@ data class PlaybackSource(
     val provider: PlaybackProviderId?
         get() = identity as? PlaybackProviderId
 
-    private val currentBaseUrl: String
-        get() = if (identity == MobilePlaybackProvider.SEVEN_MOVIES &&
-            playbackBaseHost(baseUrl).equals("7movies.ac", ignoreCase = true)
-        ) identity.defaultBaseUrl else baseUrl
-
     val cleanDomain: String
-        get() = playbackBaseHost(currentBaseUrl)
+        get() = runCatching {
+            URI(baseUrl).host?.removePrefix("www.") ?: baseUrl
+        }.getOrDefault(baseUrl)
 
     val approvedTopLevelHosts: Set<String>
         get() = setOf(cleanDomain).filter(String::isNotBlank).toSet()
@@ -232,7 +225,7 @@ data class PlaybackSource(
         MobilePlaybackProvider.FLIXER -> baseUrl.trimEnd('/') + if (media.type == MediaType.TV) {
             "/watch/tv/${media.id}/${seasonNumber ?: 1}/${episodeNumber ?: 1}"
         } else "/watch/movie/${media.id}"
-        MobilePlaybackProvider.SEVEN_MOVIES -> currentBaseUrl.trimEnd('/') + if (media.type == MediaType.TV) {
+        MobilePlaybackProvider.SEVEN_MOVIES -> baseUrl.trimEnd('/') + if (media.type == MediaType.TV) {
             "/tv/${media.id}/watch?season=${seasonNumber ?: 1}&episode=${episodeNumber ?: 1}"
         } else "/movie/${media.id}/watch"
         MobilePlaybackProvider.MOVY -> baseUrl.trimEnd('/') + if (media.type == MediaType.TV) {

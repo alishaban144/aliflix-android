@@ -16,12 +16,6 @@ internal fun playbackSourceFallbacks(selection: PlaybackSelection, preferences: 
         .map { selection.copy(source = preferences.sourceFor(selection.media, it)) }
 }
 
-private fun PlaybackSelection.isEarlyIndianAlternative(): Boolean = when (source.identity) {
-    MobilePlaybackProvider.SEVEN_MOVIES -> media.type == MediaType.MOVIE
-    MobilePlaybackProvider.FLIXER, PlaybackProviderId.MOVIEPIRE -> true
-    else -> false
-}
-
 /** Priority controls launch order; an unavailable priority must never serialize fallback. */
 internal fun initialPlaybackRace(candidates: List<PlaybackSelection>): List<PlaybackSelection> {
     val anime = candidates.filter { it.source.identity.isAnimeNative }
@@ -29,11 +23,9 @@ internal fun initialPlaybackRace(candidates: List<PlaybackSelection>): List<Play
         candidates.firstOrNull()?.media?.let { it.type == MediaType.TV && it.isJapaneseAnime } == true && anime.isNotEmpty() ->
             anime + candidates.filterNot { it.source.identity.isAnimeNative }
         candidates.firstOrNull()?.media?.isIndianTitle == true -> candidates.sortedBy {
-            when {
-                it.source.identity.isIndianCatalogue -> 0
-                it.isEarlyIndianAlternative() && it.source.identity == MobilePlaybackProvider.SEVEN_MOVIES -> 1
-                it.isEarlyIndianAlternative() -> 2
-                else -> 3
+            when (val provider = it.source.identity) {
+                MobilePlaybackProvider.FLIXER, PlaybackProviderId.MOVIEPIRE -> 1
+                else -> if (provider.isIndianCatalogue) 0 else 2
             }
         }
         else -> candidates
@@ -63,19 +55,25 @@ internal fun alternativePlaybackSources(
 
 private val runtimeMinutes = Regex("""^(\d{1,3})\s*min(?:utes?)?$""", RegexOption.IGNORE_CASE)
 
-internal fun indianNativeMinimumDurationMs(selection: PlaybackSelection): Long {
+internal fun indianNativeDurationRange(selection: PlaybackSelection): LongRange? {
+    if (!selection.media.isIndianTitle) return null
     val length = if (selection.media.type == MediaType.MOVIE) selection.media.runtime else {
         selection.availableEpisodes.firstOrNull {
             it.seasonNumber == selection.seasonNumber && it.number == selection.episodeNumber
         }?.runtime.orEmpty()
     }
     val minutes = runtimeMinutes.matchEntire(length.trim())?.groupValues?.get(1)?.toLongOrNull()
-    // Leave room for alternate cuts while rejecting provider prerolls and short previews.
-    return if (minutes != null && minutes > 0) minutes * 30_000 else 10_000L
+    if (minutes == null || minutes <= 0) return 10_000L..Long.MAX_VALUE
+    val expected = minutes * 60_000L
+    // Alternate cuts vary in length. Reject previews and grossly mismatched titles.
+    val tolerance = maxOf(90_000L, expected * 15 / 100)
+    return (expected - tolerance).coerceAtLeast(10_000L)..(expected + tolerance)
 }
 
-internal fun verifyNativeDuration(durationMs: Long, minimumDurationMs: Long) {
-    check(durationMs <= 0 || durationMs >= minimumDurationMs) { "Provider returned a short clip" }
+internal fun verifyNativeDuration(durationMs: Long, expected: LongRange?) {
+    check(expected == null || durationMs <= 0 || durationMs in expected) {
+        "The video length doesn't match the selected title."
+    }
 }
 
 /** Give the chosen catalogue a brief head start, with bounded concurrent alternatives. */
@@ -93,7 +91,9 @@ internal suspend fun <T : Any> racePlaybackSources(candidates: List<PlaybackSele
                 filmOAttempt?.complete(Unit)
             }
         } else {
-            if (indianCatalogue && (candidate.source.identity.isIndianCatalogue || candidate.isEarlyIndianAlternative())) delay(250)
+            if (indianCatalogue && (candidate.source.identity.isIndianCatalogue ||
+                    candidate.source.identity == MobilePlaybackProvider.FLIXER ||
+                    candidate.source.identity == PlaybackProviderId.MOVIEPIRE)) delay(250)
             else if (filmOAttempt == null) delay(900)
             else withTimeoutOrNull(8_000) { filmOAttempt.await() }
             attempt(candidate)

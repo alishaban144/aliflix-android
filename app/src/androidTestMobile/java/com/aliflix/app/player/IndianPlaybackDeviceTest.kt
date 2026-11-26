@@ -52,7 +52,7 @@ class IndianPlaybackDeviceTest {
                         if (started) {
                             route = player.playbackUiState.server
                             duration = checkNotNull(native).duration
-                            assertTrue("Expected full-length video, got $duration ms", duration in 7_200_000L..10_800_000L)
+                            assertTrue("Expected Rana Vikrama's runtime, got $duration ms", duration in 8_100_000L..9_300_000L)
                             assertEquals(media.id, nativeSelection(requireNotNull(NativePlaybackService.activeRequest).selectionJson).media.id)
                         }
                     }

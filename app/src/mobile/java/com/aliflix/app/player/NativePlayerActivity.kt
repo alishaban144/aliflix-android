@@ -4,7 +4,6 @@ import com.aliflix.app.model.PlaybackProvider
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.MobilePlaybackProvider
 import com.aliflix.app.model.isJapaneseAnime
-import com.aliflix.app.model.isIndianTitle
 import com.aliflix.app.model.hasSourceEditions
 
 import com.aliflix.app.data.hasInternetConnection
@@ -1687,9 +1686,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                         ui = ui.copy(server = savedRoute.server)
                         val attempt = startNative(request)
                         withTimeout(4_000) { awaitNativeReady(request.url, attempt) }
-                        if (restored.media.isIndianTitle) {
-                            verifyNativeDuration(controller?.duration ?: 0L, indianNativeMinimumDurationMs(restored))
-                        }
+                        verifyNativeDuration(controller?.duration ?: 0L, indianNativeDurationRange(restored))
                         intent.putExtra("selection", restored.nativeJson())
                         ui = ui.copy(stage = null, ready = true, error = null)
                         reconcileSyncedCaptions()
@@ -1796,9 +1793,7 @@ class NativePlayerActivity : FragmentActivity(), com.aliflix.app.talk.TalkPlayer
                     try {
                         val attempt = startNative(resolved.copy(positionMs = resume, playing = false, preferEmbeddedSubtitles = auto, subtitleLanguage = language.lowercase()))
                         awaitNativeReady(resolved.url, attempt)
-                        if (candidate.media.isIndianTitle) {
-                            verifyNativeDuration(controller?.duration ?: 0L, indianNativeMinimumDurationMs(candidate))
-                        }
+                        verifyNativeDuration(controller?.duration ?: 0L, indianNativeDurationRange(candidate))
                         rememberSuccessfulRoute(candidate, server, resolved)
                         applyPreparedCaptions(candidate, resolved, auto, language)
                         intent.putExtra("selection", candidate.nativeJson())
