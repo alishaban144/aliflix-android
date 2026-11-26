@@ -61,6 +61,23 @@ internal fun alternativePlaybackSources(
     }
 }
 
+private val runtimeMinutes = Regex("""^(\d{1,3})\s*min(?:utes?)?$""", RegexOption.IGNORE_CASE)
+
+internal fun indianNativeMinimumDurationMs(selection: PlaybackSelection): Long {
+    val length = if (selection.media.type == MediaType.MOVIE) selection.media.runtime else {
+        selection.availableEpisodes.firstOrNull {
+            it.seasonNumber == selection.seasonNumber && it.number == selection.episodeNumber
+        }?.runtime.orEmpty()
+    }
+    val minutes = runtimeMinutes.matchEntire(length.trim())?.groupValues?.get(1)?.toLongOrNull()
+    // Leave room for alternate cuts while rejecting provider prerolls and short previews.
+    return if (minutes != null && minutes > 0) minutes * 30_000 else 10_000L
+}
+
+internal fun verifyNativeDuration(durationMs: Long, minimumDurationMs: Long) {
+    check(durationMs <= 0 || durationMs >= minimumDurationMs) { "Provider returned a short clip" }
+}
+
 /** Give the chosen catalogue a brief head start, with bounded concurrent alternatives. */
 internal suspend fun <T : Any> racePlaybackSources(candidates: List<PlaybackSelection>, attempt: suspend (PlaybackSelection) -> T): T {
     val indianCatalogue = candidates.firstOrNull()?.source?.identity?.isIndianCatalogue == true

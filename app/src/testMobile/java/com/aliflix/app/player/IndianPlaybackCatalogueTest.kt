@@ -9,6 +9,7 @@ import com.aliflix.app.model.PlaybackSource
 import org.jsoup.Jsoup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.runTest
@@ -66,6 +67,14 @@ class IndianPlaybackCatalogueTest {
         }
         assertEquals(media, winner.media)
         assertEquals(MobilePlaybackProvider.SEVEN_MOVIES, winner.source.identity)
+    }
+
+    @Test fun rejectsShortProviderClipsForIndianFilms() {
+        val movie = Media(691633, MediaType.MOVIE, "Rana Vikrama", runtime = "147 min")
+        val selection = PlaybackSelection(movie, source = PlaybackSource(MobilePlaybackProvider.SEVEN_MOVIES))
+        val minimum = indianNativeMinimumDurationMs(selection)
+        assertThrows(IllegalStateException::class.java) { verifyNativeDuration(5_042L, minimum) }
+        verifyNativeDuration(141 * 60_000L, minimum)
     }
 
     @Test fun oldSevenMoviesSelectionUsesTheCurrentHost() {

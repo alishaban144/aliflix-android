@@ -35,13 +35,14 @@ class IndianPlaybackDeviceTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val service = Intent(context, NativePlaybackService::class.java)
         context.stopService(service)
-        val media = Media(691633, MediaType.MOVIE, "Rana Vikrama", year = "2015", originalLanguage = "kn")
+        val media = Media(691633, MediaType.MOVIE, "Rana Vikrama", year = "2015", originalLanguage = "kn", runtime = "147 min")
         val selection = PlaybackSelection(media, source = PlaybackSource(MobilePlaybackProvider.HIMOVIES))
         val intent = Intent(context, NativePlayerActivity::class.java).putExtra("selection", selection.nativeJson())
         val start = SystemClock.elapsedRealtime()
         try {
             ActivityScenario.launch<NativePlayerActivity>(intent, nativePhoneLaunchOptions()).use { scenario ->
                 var route = "Auto"
+                var duration = 0L
                 repeat(350) {
                     var started = false
                     scenario.onActivity { player ->
@@ -50,11 +51,13 @@ class IndianPlaybackDeviceTest {
                         started = native?.isPlaying == true && native.videoSize.width > 0 && native.currentPosition >= 1200L
                         if (started) {
                             route = player.playbackUiState.server
+                            duration = checkNotNull(native).duration
+                            assertTrue("Expected full-length video, got $duration ms", duration in 7_200_000L..10_800_000L)
                             assertEquals(media.id, nativeSelection(requireNotNull(NativePlaybackService.activeRequest).selectionJson).media.id)
                         }
                     }
                     if (started) {
-                        android.util.Log.i("IndianPlaybackCheck", "Rana Vikrama: Media3 via $route in ${SystemClock.elapsedRealtime() - start} ms")
+                        android.util.Log.i("IndianPlaybackCheck", "Rana Vikrama: Media3 via $route in ${SystemClock.elapsedRealtime() - start} ms, duration $duration ms")
                         return
                     }
                     SystemClock.sleep(120)

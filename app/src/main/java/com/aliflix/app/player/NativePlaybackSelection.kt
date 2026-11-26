@@ -69,13 +69,18 @@ internal fun preferredNativeEmbeds(selection: PlaybackSelection): List<Pair<Stri
     val route = if (selection.media.type == MediaType.TV) "tv/${selection.media.id}/${selection.seasonNumber ?: 1}/${selection.episodeNumber ?: 1}"
         else "movie/${selection.media.id}"
     if (selection.source.identity == MobilePlaybackProvider.SEVEN_MOVIES && !com.aliflix.app.BuildConfig.IS_TV) {
-        return listOf(
+        val cinezo = "Cinezo" to "https://player.cinezo.live/embed/$route?autoplay=true"
+        val servers = listOf(
             "Direct" to checkNotNull(selection.entryUrl),
             "Vidbolt" to "https://vidbolt.xyz/$route?autoPlay=true",
-            "Cinezo" to "https://player.cinezo.live/embed/$route?autoplay=true",
+            cinezo,
             "Vidstuck" to "https://vidstuck.xyz/embed/$route?autoplay=true&back=false&branding=7Movies",
             "Bingr" to "https://bingr.one/watch/$route",
         )
+        // Start the alternate Indian movie host before the wrapper probes settle.
+        return if (selection.media.type == MediaType.MOVIE && selection.media.isIndianTitle) {
+            listOf(cinezo) + servers.filterNot { it == cinezo }
+        } else servers
     }
     if (!selection.source.identity.usesMoviepire) return emptyList()
     return listOf("Vid" to "https://embed.wplay.me/embed/$route", "Mist" to "https://play.xpass.top/e/$route",

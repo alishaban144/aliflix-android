@@ -92,13 +92,9 @@ class WebPlayerController(
         val view = webView ?: return null
         val url = stream.optString("url")
         if (!isNativeStreamUrl(url)) return null
-        val reportedReferer = stream.optString("referer")
-        val referer = if (selection.source.identity == MobilePlaybackProvider.SEVEN_MOVIES &&
-            !isNativeStreamUrl(reportedReferer)
-        ) selection.entryUrl.orEmpty() else reportedReferer
         if (selection.source.identity != MobilePlaybackProvider.FLIXER && shouldAwaitHlsMaster(stream, SystemClock.elapsedRealtime() - nativeStreamReceivedAt)) return null
         return NativePlaybackRequest(url, stream.optString("mimeType", "video/mp4"),
-            referer, view.settings.userAgentString,
+            stream.optString("referer"), view.settings.userAgentString,
             CookieManager.getInstance().getCookie(url).orEmpty(),
             selection.media.title, positionMs, true, selectionJson = selection.nativeJson())
     }
@@ -120,22 +116,12 @@ class WebPlayerController(
                 flixerVideoReady = it == "true"
             }
         } else if (nativeStream != null) return
-        val includeInlineFrames = activeSelection?.source?.identity == MobilePlaybackProvider.SEVEN_MOVIES
         view.evaluateJavascript(
             """
             (() => {
               try {
                 const probe = window.__aliflixNativeStreamUrl;
-                const discovered = typeof probe === 'function' ? String(probe() || '') : '';
-                if (discovered) return discovered;
-                if ($includeInlineFrames) {
-                  // The site's own fallback mounts its direct video in a same-origin srcdoc.
-                  for (const frame of document.querySelectorAll('iframe[srcdoc]')) {
-                    const video = frame.contentDocument?.querySelector('video');
-                    const url = video?.currentSrc || video?.src || '';
-                    if (!video?.mediaKeys && !video?.error && /^https:\/\//i.test(url)) return url;
-                  }
-                }
+                if (typeof probe === 'function') return String(probe() || '');
                 const video = document.querySelector('video');
                 const native = video && window.__aliflixNativeStream;
                 const stream = native ? native(video) : null;

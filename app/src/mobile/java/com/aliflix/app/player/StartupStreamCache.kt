@@ -55,7 +55,7 @@ internal object StartupStreamCache {
     }
 
     suspend fun awaitPlayable(context: Context, request: NativePlaybackRequest, audioLanguage: String = "",
-        bufferMs: Long = 250, requireVideoFrame: Boolean = false) = withContext(Dispatchers.Main.immediate) { withTimeout(12_000) {
+        bufferMs: Long = 250, requireVideoFrame: Boolean = false, minimumDurationMs: Long = 0L) = withContext(Dispatchers.Main.immediate) { withTimeout(12_000) {
         val media = mediaFactory(context, request)
         val player = ExoPlayer.Builder(context.applicationContext)
             .setMediaSourceFactory(DefaultMediaSourceFactory(media).setLoadErrorHandlingPolicy(CineJoyLoadErrorPolicy { request.referer == CineJoyNativeCatalog.REFERER }))
@@ -81,8 +81,10 @@ internal object StartupStreamCache {
             player.prepare()
             while (player.playbackState != Player.STATE_READY) {
                 player.playerError?.let { throw it }
+                verifyNativeDuration(player.duration, minimumDurationMs)
                 delay(50)
             }
+            verifyNativeDuration(player.duration, minimumDurationMs)
             while (player.bufferedPosition - player.currentPosition < bufferMs &&
                 player.bufferedPosition < player.duration) {
                 player.playerError?.let { throw it }
