@@ -53,7 +53,7 @@ class IndianPlaybackCatalogueTest {
 
     @Test fun checksIndianFilmRuntimeAgainstPreviewsAndMismatchedMovies() {
         val movie = Media(691633, MediaType.MOVIE, "Rana Vikrama", originalLanguage = "kn", runtime = "147 min")
-        val selection = PlaybackSelection(movie, source = PlaybackSource(MobilePlaybackProvider.HIMOVIES))
+        val selection = PlaybackSelection(movie, source = PlaybackPreferences().sourceFor(movie))
         val expected = indianNativeDurationRange(selection)
         assertThrows(IllegalStateException::class.java) { verifyNativeDuration(5_042L, expected) }
         assertThrows(IllegalStateException::class.java) { verifyNativeDuration(10_261_875L, expected) }
