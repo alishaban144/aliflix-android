@@ -207,7 +207,7 @@ internal fun DiscoverScreen(
         filterDraft=(appliedFilters?:com.aliflix.app.recommendation.CatalogDiscoverySpec(com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE)).copy(mediaKind=if(mediaFilter=="Series"||appliedFilters?.requiredStatus!=null)com.aliflix.app.recommendation.RecommendationMediaKind.SERIES else com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE)
         filtersOpen=true
     }
-    if(filtersOpen&&!com.aliflix.app.BuildConfig.IS_TV) {
+    if(filtersOpen) {
         @OptIn(ExperimentalMaterial3Api::class)
         val filterSheet=androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded=true)
         val filterSheetScope=androidx.compose.runtime.rememberCoroutineScope()
@@ -264,8 +264,7 @@ internal fun DiscoverScreen(
     LaunchedEffect(askOpenRequestId, aiEnabled) {
         if (askOpenRequestId != null) {
             if (aiEnabled) {
-                if(com.aliflix.app.BuildConfig.IS_TV){recommendModeActive = true;onModeChange(SearchMode.AI)}
-                else openAskConversation(context)
+                openAskConversation(context)
             }
             onAskOpenRequestConsumed(askOpenRequestId)
         }
@@ -280,7 +279,7 @@ internal fun DiscoverScreen(
         modifier = modifier
             .fillMaxSize()
             .downloadAtmosphere()
-            .then(if (!com.aliflix.app.BuildConfig.IS_TV) Modifier.observeDiscoverTouches(touchTracker) else Modifier),
+            .then(Modifier.observeDiscoverTouches(touchTracker)),
     ) {
         AnimatedContent(
             targetState = recommendModeActive,
@@ -465,17 +464,13 @@ internal fun DiscoverScreen(
                                 fieldValue = fieldValue.copy(text = query)
                                 onSubmitSearch(query)
 
-
-
                             }, modifier = Modifier.padding(start = 8.dp).size(48.dp).aliflixSurface(if (fieldValue.text.isNotBlank()) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content, AliflixCorners.Small).testTag("discover-search-button")) {
                                 Icon(if (fieldValue.text.isNotBlank()) Icons.AutoMirrored.Rounded.ArrowForward else Icons.Filled.Search, "Search", tint = AliflixAccentSecondary)
                             }
                         }
 
                         if (aiEnabled && fieldValue.text.isBlank()) DiscoverAskCard(touchTracker) { mode ->
-                            if(com.aliflix.app.BuildConfig.IS_TV){
-                                onSetAskEditorState(askEditorState.copy(mode = mode));recommendModeActive=true;onModeChange(SearchMode.AI)
-                            }else openAskConversation(context)
+                            openAskConversation(context)
                         }
 
                         if (fieldValue.text.isBlank() && appliedFilters==null && recentSearches.isNotEmpty()) {
@@ -498,13 +493,13 @@ internal fun DiscoverScreen(
                                 }
                                 onMediaFilterChange(selected)
                             },
-                            onFilters = if(com.aliflix.app.BuildConfig.IS_TV)null else ::editFilters,
+                            onFilters = ::editFilters,
                             filterCount = appliedFilters?.let{selectedFilterCount(it)}?:0,
                             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp)
                         )
 
                     } }
-                    if(catalogueStore!=null&&appliedFilters!=null&&!com.aliflix.app.BuildConfig.IS_TV)DiscoverFilteredCatalogue(
+                    if(catalogueStore!=null&&appliedFilters!=null)DiscoverFilteredCatalogue(
                         catalogueStore.filters,appliedFilters!!,mediaFilter,fieldValue.text.trim(),onOpen,catalogueHeader,Modifier.fillMaxSize(),onSortChanged={sort->appliedFilters=appliedFilters?.copy(sortBy=sort)}
                     ) else if (catalogueStore != null) DiscoverCatalogueContent(
                         store = catalogueStore, query = fieldValue.text.trim(), filter = mediaFilter,

@@ -5,7 +5,6 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import com.aliflix.app.model.*
 import com.aliflix.app.ui.DetailScreen
-import com.aliflix.app.ui.TvDetailScreen
 import com.aliflix.app.ui.theme.AliflixTheme
 import org.junit.Rule
 import org.junit.Test
@@ -17,9 +16,7 @@ class DetailsStabilityTest {
         var state by mutableStateOf(DetailUiState(item = Media(42, MediaType.TV, "Series fixture")))
         compose.setContent {
             AliflixTheme {
-                if (BuildConfig.IS_TV) TvDetailScreen(state, false, false, PlaybackProviderId.MOVIEPIRE,
-                    false, {}, { _, _ -> }, { _, _, _ -> }, {}, {}, {}, {})
-                else DetailScreen(state, false, false, emptyMap(), null, {}, {}, { _, _ -> }, {}, {}, {}, {},
+                DetailScreen(state, false, false, emptyMap(), null, {}, {}, { _, _ -> }, {}, {}, {}, {},
                     PlaybackProviderId.MOVIEPIRE, {})
             }
         }

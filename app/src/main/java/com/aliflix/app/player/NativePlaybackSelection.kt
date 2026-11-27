@@ -52,7 +52,7 @@ internal fun launchNativeSelection(activity: Activity, selection: PlaybackSelect
 
 // Service/notification launches otherwise inherit the last focused (possibly TV) display.
 internal fun nativePhoneLaunchOptions(context: android.content.Context? = null): android.os.Bundle =
-    (if (context != null && !com.aliflix.app.BuildConfig.IS_TV)
+    (if (context != null)
         ActivityOptions.makeCustomAnimation(context, com.aliflix.app.R.anim.playback_enter, com.aliflix.app.R.anim.playback_exit)
     else ActivityOptions.makeBasic()).setLaunchDisplayId(Display.DEFAULT_DISPLAY).toBundle()
 
@@ -68,7 +68,7 @@ internal fun orderedNativeServers(servers: List<MoviepireServerOption>): List<Mo
 internal fun preferredNativeEmbeds(selection: PlaybackSelection): List<Pair<String, String>> {
     val route = if (selection.media.type == MediaType.TV) "tv/${selection.media.id}/${selection.seasonNumber ?: 1}/${selection.episodeNumber ?: 1}"
         else "movie/${selection.media.id}"
-    if (selection.source.identity == MobilePlaybackProvider.SEVEN_MOVIES && !com.aliflix.app.BuildConfig.IS_TV) {
+    if (selection.source.identity == MobilePlaybackProvider.SEVEN_MOVIES) {
         return listOf(
             "Direct" to checkNotNull(selection.entryUrl),
             "Vidbolt" to "https://vidbolt.xyz/$route?autoPlay=true",

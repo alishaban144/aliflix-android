@@ -83,17 +83,11 @@ class MobileTasteModelTest {
         assertEquals(setOf(martian.key, gravity.key, others.key), ranked.map { it.key }.toSet())
         assertFalse(ranked.any { it.key == paddington.key })
     }
-    @Test fun oldVersusNewFixturesRejectTheGenreOnlyFalsePositive() {
+    @Test fun storyEvidenceRejectsGenreOnlyFalsePositives() {
         val superficial = paddington.copy(genres = interstellar.genres, overview = "",
             rating = 9.0, tmdbVoteCount = 500000)
-        val oldPositive = PersonalizationEngine.legacyMatch(martian, listOf(interstellar))!!.score
-        val oldNegative = PersonalizationEngine.legacyMatch(superficial, listOf(interstellar))!!.score
-        val newPositive = MobileTasteModel.match(martian, listOf(interstellar))
-        val newNegative = MobileTasteModel.match(superficial, listOf(interstellar))
-        assertTrue("Old genre-only baseline wrongly prefers missing story metadata: $oldNegative vs $oldPositive",
-            oldNegative >= oldPositive)
-        assertNotNull(newPositive)
-        assertNull(newNegative)
+        assertNotNull(MobileTasteModel.match(martian, listOf(interstellar)))
+        assertNull(MobileTasteModel.match(superficial, listOf(interstellar)))
     }
     @Test fun explicitLikesHaveMeaningfulLabelsAndNoPercentages() {
         assertEquals("Liked", MobileTasteModel.match(interstellar, listOf(interstellar))?.label)

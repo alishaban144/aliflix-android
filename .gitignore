@@ -8,7 +8,6 @@ build/
 captures/
 .externalNativeBuild/
 .cxx/
-app/build/
 *.apk
 device-debug/
 *.jks
@@ -16,13 +15,34 @@ device-debug/
 keystore.properties
 node_modules/
 .gradle-agent/
-**/.gradle-agent/
-scratch/
-.validation/
-recommendation-worker/node_modules/
-recommendation-worker/dist/
-recommendation-worker/coverage/
-recommendation-worker/.wrangler/
-recommendation-worker/.dev.vars
-recommendation-worker/.env
-recommendation-worker/.env.*
+__pycache__/
+*.pyc
+
+# Local-only agent state, experiments, and validation artifacts
+/.agents/
+/.codex/
+/.gradle-local/
+/.local/
+/.tmp-*/
+/.validation/
+/.validation-*
+/.worktrees/
+/desktopApp/vendor/
+/graphify-out/
+/output/
+/release-bundle/
+/aliflix-mobile*.apk.sha256
+/scratch/
+/test-reports/
+/tmp/
+
+# Optional Firebase client for an isolated debug package
+/app/src/debug/google-services.json
+
+# Generated Worker files and local secrets
+/recommendation-worker/dist/
+/recommendation-worker/coverage/
+/recommendation-worker/.wrangler/
+/recommendation-worker/.dev.vars*
+/recommendation-worker/.env*
+!/recommendation-worker/.env.example

@@ -234,7 +234,7 @@ class AppUpdateManager(
     }
 
     private fun openConnection(url: String, offset: Long = 0): HttpURLConnection {
-        val formFactor = if (BuildConfig.IS_TV) "TV" else "Mobile"
+        val formFactor = "Mobile"
         val extraHeaders = mutableMapOf(
             "Accept" to "application/json, application/octet-stream",
             "User-Agent" to "Aliflix-$formFactor/${BuildConfig.VERSION_NAME}",
@@ -258,7 +258,7 @@ class AppUpdateManager(
     private companion object {
         const val UPDATE_DIRECTORY = "updates"
         val UPDATE_FILE_NAME =
-            if (BuildConfig.IS_TV) "aliflix-tv-update.apk" else "aliflix-mobile-update.apk"
+            "aliflix-mobile-update.apk"
         const val MAX_MANIFEST_BYTES = 64 * 1024
     }
 }

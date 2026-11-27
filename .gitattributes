@@ -1,3 +1,6 @@
 # Captured web pages used as test fixtures must stay byte for byte identical. Line-ending conversion
 # would rewrite the markup the assertions read.
 app/src/test/resources/rt/*.html -text
+
+# Keep archived notes and validation evidence in their original encoding and line endings.
+docs/archive/** -text

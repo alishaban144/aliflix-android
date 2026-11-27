@@ -44,19 +44,17 @@ fun AskAliflixScreen(
     onToggleMyList: (Media) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    if (!com.aliflix.app.BuildConfig.IS_TV) {
-        UnifiedAskAliflix(uiState, editorState, onEditorStateChanged, onSubmitRequest, onReset, onBack,
-            onOpenMedia, suggestions, suggestionsLoading, onRetry, onSearchCompanies, listState,
-            myListKeys, onToggleMyList, modifier, onRefine=onRefineRequest, personalizedPicks=personalizedPicks,onLoadMore=onLoadMore)
-        return
-    }
+    UnifiedAskAliflix(uiState, editorState, onEditorStateChanged, onSubmitRequest, onReset, onBack,
+        onOpenMedia, suggestions, suggestionsLoading, onRetry, onSearchCompanies, listState,
+        myListKeys, onToggleMyList, modifier, onRefine=onRefineRequest, personalizedPicks=personalizedPicks,onLoadMore=onLoadMore)
+    return
     val tracker = remember { DiscoverTouchTracker() }
-    CompositionLocalProvider(LocalAskTouchTracker provides if (com.aliflix.app.BuildConfig.IS_TV) null else tracker) {
+    CompositionLocalProvider(LocalAskTouchTracker provides (tracker)) {
     Box(
         modifier = modifier
             .fillMaxSize()
             .aliflixScreenBackground()
-            .then(if (com.aliflix.app.BuildConfig.IS_TV) Modifier else Modifier.observeDiscoverTouches(tracker)),
+            .then(Modifier.observeDiscoverTouches(tracker)),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             MobileTopSafeArea(extraPadding = 8.dp)

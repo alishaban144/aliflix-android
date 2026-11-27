@@ -73,10 +73,8 @@ internal fun MobilePlayerTopBar(
     onQuality: (() -> Unit)? = null,
     onTalk: (() -> Unit)? = null,
 ) {
-    if (!com.aliflix.app.BuildConfig.IS_TV) {
-        MobilePlayerActionHeader(title, detail, isTv, onBack, onEpisodes, onSubtitles, onRotate, onMore, onQuality, modifier, onTalk)
-        return
-    }
+    MobilePlayerActionHeader(title, detail, isTv, onBack, onEpisodes, onSubtitles, onRotate, onMore, onQuality, modifier, onTalk)
+    return
     androidx.compose.foundation.layout.BoxWithConstraints(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
         val compact = maxWidth < 560.dp
         val identity: @Composable () -> Unit = {
@@ -156,7 +154,7 @@ internal fun MobilePlayerCenterControls(
     modifier: Modifier = Modifier,
 ) {
     androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
-    val gap = if (com.aliflix.app.BuildConfig.IS_TV) 48.dp else ((maxWidth - 184.dp) / 2).coerceIn(8.dp,48.dp)
+    val gap = ((maxWidth - 184.dp) / 2).coerceIn(8.dp,48.dp)
     Row(
         horizontalArrangement = Arrangement.spacedBy(gap),
         verticalAlignment = Alignment.CenterVertically,
@@ -199,27 +197,12 @@ internal fun MobilePlayerCenterControls(
         ) {
             Box(
                 modifier = Modifier
-                    .size(if (com.aliflix.app.BuildConfig.IS_TV) 72.dp else 76.dp)
-                    .then(if (com.aliflix.app.BuildConfig.IS_TV) Modifier.clip(CircleShape)
-                        .background(Color(0xFFF4F1FA)).border(BorderStroke(.5.dp,Color.White.copy(alpha = .55f)),CircleShape)
-                    else Modifier.background(androidx.compose.ui.graphics.Brush.radialGradient(listOf(
+                    .size(76.dp)
+                    .then(Modifier.background(androidx.compose.ui.graphics.Brush.radialGradient(listOf(
                         Color.Black.copy(alpha = .28f),Color.Black.copy(alpha = .12f),Color.Transparent)))),
                 contentAlignment = Alignment.Center,
             ) {
-                if (!com.aliflix.app.BuildConfig.IS_TV) MobileMorphPlaybackIcon(isPlaying, Modifier.size(50.dp))
-                else {
-                AnimatedContent(targetState = isPlaying, transitionSpec = {
-                    (fadeIn(tween(180, delayMillis = 45)) + scaleIn(tween(220), initialScale = .65f)) togetherWith
-                        (fadeOut(tween(100)) + scaleOut(tween(160), targetScale = 1.2f))
-                }, label = "play-pause") { active ->
-                Icon(
-                    imageVector = if (active) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                    contentDescription = if (active) "Pause" else "Play",
-                    tint = Color(0xFF18151F),
-                    modifier = Modifier.size(32.dp),
-                )
-                }
-                }
+                MobileMorphPlaybackIcon(isPlaying, Modifier.size(50.dp))
             }
         }
 

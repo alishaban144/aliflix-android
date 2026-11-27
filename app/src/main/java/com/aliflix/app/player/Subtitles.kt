@@ -10,8 +10,6 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
@@ -57,8 +55,7 @@ internal fun preferredSubtitleTrack(
     .firstOrNull()
 
 internal fun canonicalSubtitleLanguageCode(value: String): String {
-    val normalized = if (BuildConfig.IS_TV) value.trim().substringBefore('-').uppercase()
-        else value.trim().replace('_', '-').substringBefore('-').uppercase(java.util.Locale.ROOT)
+    val normalized = value.trim().replace('_', '-').substringBefore('-').uppercase(java.util.Locale.ROOT)
     SubtitleLanguage.entries.firstOrNull { it.displayName.equals(value.trim(), true) }?.let { return it.code }
     return SUBTITLE_LANGUAGE_ALIASES[normalized] ?: normalized
 }
@@ -87,7 +84,7 @@ class SubtitleRepository(
             val query = buildString {
                 append("$baseUrl/v3/subtitles?type=${selection.media.type.routeName}")
                 append("&tmdbId=${selection.media.id}")
-                if (!BuildConfig.IS_TV && preferredLanguage != null) {
+                if (preferredLanguage != null) {
                     append("&mode=phone&language=${canonicalSubtitleLanguageCode(preferredLanguage)}")
                     fingerprint?.let {
                         append("&videoHash=${it.hash}&videoSize=${it.size}")
@@ -131,7 +128,7 @@ class SubtitleRepository(
                  }.thenBy { it.languageName }
              )
         }
-    }.onFailure { if (!BuildConfig.IS_TV && it is CancellationException) throw it }
+    }.onFailure { if (it is CancellationException) throw it }
 
     suspend fun download(track: SubtitleTrack, selection: PlaybackSelection? = null): Result<List<SubtitleCue>> = runCatching {
         withContext(Dispatchers.IO) {
@@ -141,20 +138,20 @@ class SubtitleRepository(
                 try {
                     readBytes(directUrl)
                 } catch (error: Exception) {
-                    if (!BuildConfig.IS_TV && error is CancellationException) throw error
+                    if (error is CancellationException) throw error
                     readBytes(workerUrl)
                 }
             } else {
                 try {
                     readBytes(workerUrl)
                 } catch (e: Exception) {
-                    if (!BuildConfig.IS_TV && e is CancellationException) throw e
+                    if (e is CancellationException) throw e
                     if(e is SubtitleException && e.status==429)throw e
                     if (directUrl != null) {
                         try {
                             readBytes(directUrl)
                         } catch (error: Exception) {
-                            if (!BuildConfig.IS_TV && error is CancellationException) throw error
+                            if (error is CancellationException) throw error
                             throw e
                         }
                     } else throw e
@@ -162,15 +159,15 @@ class SubtitleRepository(
             }
             val subtitleBytes = if (response.isZip()) {
                 extractSubtitleFromZip(response, track.fileName,
-                    selection?.takeUnless { BuildConfig.IS_TV }?.seasonNumber,
-                    selection?.takeUnless { BuildConfig.IS_TV }?.episodeNumber,
-                    requireExactMember = !BuildConfig.IS_TV && directUrl?.let { url ->
+                    selection?.seasonNumber,
+                    selection?.episodeNumber,
+                    requireExactMember = directUrl?.let { url ->
                         runCatching { java.net.URI(url).path.split('/').filter(String::isNotBlank).let { it.size >= 3 && it[0]=="subtitle" } }.getOrDefault(false)
                     } == true)
             } else {
                 response
             }
-            val decoded = if (BuildConfig.IS_TV) decodeSubtitleText(subtitleBytes) else decodeMobileSubtitleText(subtitleBytes, track.languageCode)
+            val decoded = decodeMobileSubtitleText(subtitleBytes, track.languageCode)
             val cues = if (
                 track.format in setOf("ass", "ssa") ||
                 track.fileName.endsWith(".ass", ignoreCase = true) ||
@@ -182,68 +179,16 @@ class SubtitleRepository(
                 parseTimedTextSubtitleCues(decoded)
             }
             if (cues.isEmpty()) throw SubtitleException("This subtitle file has no readable cues")
-            if (!BuildConfig.IS_TV && track.id.startsWith("flixer:"))
+            if (track.id.startsWith("flixer:"))
                 cues.filterNot { it.text.contains("hoofoot.ru", ignoreCase = true) } else cues
         }
-    }.onFailure { if (!BuildConfig.IS_TV && it is CancellationException) throw it }
+    }.onFailure { if (it is CancellationException) throw it }
 
     private suspend fun readText(url: String): String = decodeSubtitleText(readBytes(url))
 
     private suspend fun readBytes(url: String): ByteArray =
-        if (BuildConfig.IS_TV) readLegacyBytes(url) else readMobileSubtitleBytes(url)
+        readMobileSubtitleBytes(url)
 
-    private fun readLegacyBytes(url: String, redirectCount: Int = 0): ByteArray {
-        if (redirectCount > 5) throw SubtitleException("Too many redirects downloading subtitle")
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = NETWORK_TIMEOUT_MILLIS
-            readTimeout = NETWORK_TIMEOUT_MILLIS
-            instanceFollowRedirects = true
-            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
-            setRequestProperty("Accept", "application/json, application/zip, text/plain, text/vtt, application/octet-stream, */*")
-            setRequestProperty("Accept-Encoding", "identity")
-        }
-        try {
-            val status = connection.responseCode
-            if (status in listOf(HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_MOVED_TEMP, HttpURLConnection.HTTP_SEE_OTHER, 307, 308)) {
-                val redirectUrl = connection.getHeaderField("Location")
-                if (!redirectUrl.isNullOrBlank()) {
-                    val target = URL(URL(url), redirectUrl).toString()
-                    return readLegacyBytes(target, redirectCount + 1)
-                }
-            }
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val bytes = stream?.use(::readBounded) ?: ByteArray(0)
-            if (status !in 200..299) {
-                val message = runCatching {
-                    JSONObject(decodeSubtitleText(bytes)).optJSONObject("error")?.optString("message")
-                }.getOrNull().takeUnless(String?::isNullOrBlank)
-                throw SubtitleException(message ?: "Subtitles are temporarily unavailable ($status)")
-            }
-            return bytes
-        } finally {
-            connection.disconnect()
-        }
-    }
-
-    private fun readBounded(input: java.io.InputStream): ByteArray {
-        val output = ByteArrayOutputStream()
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-        var total = 0
-        while (true) {
-            val read = input.read(buffer)
-            if (read < 0) break
-            total += read
-            if (total > MAX_SUBTITLE_BYTES) throw SubtitleException("Subtitle file is too large")
-            output.write(buffer, 0, read)
-        }
-        return output.toByteArray()
-    }
-
-    private companion object {
-        const val NETWORK_TIMEOUT_MILLIS = 15_000
-        const val MAX_SUBTITLE_BYTES = 8 * 1024 * 1024
-    }
 }
 
 internal fun directSubtitleUrl(token: String): String? {

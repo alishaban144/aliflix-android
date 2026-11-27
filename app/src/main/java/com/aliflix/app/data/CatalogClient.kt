@@ -110,7 +110,6 @@ data class RottenTomatoesSnapshot(
     val state: com.aliflix.app.model.RatingSourceState,
 )
 
-
 internal fun allocateUniqueHomeRails(
 
     rails: List<ContentRail>,
@@ -218,13 +217,13 @@ private class CatalogRequestScheduler {
         val hostGate = hostGates.computeIfAbsent(host) {
             Semaphore(MAX_CONCURRENT_REQUESTS_PER_HOST)
         }
-        
+
         suspend fun acquireGlobalAndHost(): T {
             return globalGate.withPermit {
                 hostGate.withPermit { block() }
             }
         }
-        
+
         return if (!foreground) {
             backgroundGate.withPermit { acquireGlobalAndHost() }
         } else {
@@ -626,7 +625,6 @@ class CatalogClient(
             ContentRail(spec.title, it)
         }
     }
-
 
     private suspend fun fetchGenreRail(
         spec: GenreSpec,
@@ -1173,7 +1171,7 @@ class CatalogClient(
                 }
 
                 var rt = rottenTomatoesClient.loadRating(current)
-                if(!com.aliflix.app.BuildConfig.IS_TV && rt.state==RatingSourceState.UNAVAILABLE && !current.imdbId.isNullOrBlank()) {
+                if(rt.state==RatingSourceState.UNAVAILABLE && !current.imdbId.isNullOrBlank()) {
                     val originalYear=kotlinx.coroutines.withTimeoutOrNull(1_000) { imdbJob.await() }
                     if(originalYear!=null&&originalYear!=current.year.take(4).toIntOrNull())
                         rt=rottenTomatoesClient.loadRating(current.copy(year=originalYear.toString()))
@@ -1223,7 +1221,6 @@ class CatalogClient(
                 throw cancelled
             } catch (_: Throwable) {}
         }
-
 
         imdbJob.await()
         rtJob.await()
@@ -1817,7 +1814,7 @@ class CatalogClient(
         val cachedRottenTomatoes = rottenTomatoesRatingsCache[item.key]
             ?: cacheStore?.loadRottenTomatoesRating(item.key, 24 * 60 * 60 * 1000L)
                 ?.also { rottenTomatoesRatingsCache[item.key] = it }
-                
+
         val ratings = supervisorScope {
             val imdb = async {
                 try {
@@ -2467,7 +2464,6 @@ class CatalogClient(
                 }
             }
         }
-
 
         suspend fun postJson(url: String, body: String): String {
             val payload = body.toByteArray(StandardCharsets.UTF_8)

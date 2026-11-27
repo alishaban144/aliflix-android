@@ -9,9 +9,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import com.aliflix.app.player.WebPlayerController
 import com.aliflix.app.ui.AliflixApp
-import com.aliflix.app.ui.AliflixTvApp
 import com.aliflix.app.ui.theme.AliflixMobileTheme
-import com.aliflix.app.ui.theme.AliflixTheme
 
 open class MainActivity : ComponentActivity() {
     protected open val conversationTitle: com.aliflix.app.model.Media? get() = null
@@ -21,44 +19,29 @@ open class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (BuildConfig.IS_TV) {
-            enableEdgeToEdge()
-        } else {
-            enableEdgeToEdge(
-                statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
-            )
-        }
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+        )
         playerController = WebPlayerController(this, viewModel.playbackProgressStore)
 
         setContent {
-            if (BuildConfig.IS_TV) {
-                AliflixTheme {
-                    AliflixTvApp(
-                        viewModel = viewModel,
-                        playerController = playerController,
-                    )
-                }
-            } else {
-                AliflixMobileTheme {
-                    AliflixApp(
-                        viewModel = viewModel,
-                        playerController = playerController,
-                        initialMedia = conversationTitle,
-                        assistantAction = conversationAction,
-                        onInitialDetailClosed = { finish() },
-                    )
-                }
+            AliflixMobileTheme {
+                AliflixApp(
+                    viewModel = viewModel,
+                    playerController = playerController,
+                    initialMedia = conversationTitle,
+                    assistantAction = conversationAction,
+                    onInitialDetailClosed = { finish() },
+                )
             }
         }
     }
 
     override fun onResume() {
         super.onResume()
-        if (!BuildConfig.IS_TV) {
-            androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
-                .show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-            androidx.core.view.ViewCompat.requestApplyInsets(window.decorView)
-        }
+        androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+            .show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+        androidx.core.view.ViewCompat.requestApplyInsets(window.decorView)
     }
 
     override fun onDestroy() {

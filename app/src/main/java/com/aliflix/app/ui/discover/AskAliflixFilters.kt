@@ -175,7 +175,7 @@ fun AskAliflixFilters(
                     expanded = genresOpen,
                     onToggle = { genresOpen = !genresOpen },
                 ) {
-                    if(com.aliflix.app.BuildConfig.IS_TV)FilterSubheading("TMDB GENRES")
+
                     FilterChipGrid(
                         values = genreChoices,
                         selected = selectedGenreChoices,

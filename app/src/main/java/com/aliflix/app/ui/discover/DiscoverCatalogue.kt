@@ -113,7 +113,7 @@ internal class DiscoverCatalogueStore(
                     )
                 }
             }
-            val recovered = if (!com.aliflix.app.BuildConfig.IS_TV && category == null &&
+            val recovered = if (category == null &&
                 filter != "People" && !more && titleSearch != null) titleSearch.search(query, items,
                     cacheScope = if (filter in setOf("Movies", "Series")) filter else "") else null
             val visible = recovered?.items?.filter { item ->
@@ -136,7 +136,7 @@ internal class DiscoverCatalogueStore(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
-            if (session.items.isEmpty() && session.people.isEmpty() && !more && !com.aliflix.app.BuildConfig.IS_TV) {
+            if (session.items.isEmpty() && session.people.isEmpty() && !more) {
                 val rails = homeContent()?.rails.orEmpty()
                 val source = when (category) {
                     null -> rails.flatMap { it.items }.filter { it.title.contains(query.trim(), ignoreCase = true) }

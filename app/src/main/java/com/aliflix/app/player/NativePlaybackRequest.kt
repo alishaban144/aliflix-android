@@ -116,8 +116,8 @@ internal fun nativePlaybackOriginRules(sourceHost: String): Set<String> =
 
 /** A resolver may follow the provider's explicit external-player action. Grant
  * that one HTTPS origin the temporary stream-discovery bridge, never all frames. */
-internal fun trustedNativeEmbedOrigin(url:String?,preparing:Boolean,isTv:Boolean):String? {
-    if(!preparing || isTv || url==null) return null
+internal fun trustedNativeEmbedOrigin(url: String?, preparing: Boolean): String? {
+    if (!preparing || url == null) return null
     return try {
         val uri=URI(url)
         if(uri.scheme!="https" || uri.host==null || uri.userInfo!=null || uri.port !in setOf(-1,443)) null

@@ -192,17 +192,7 @@ fun AskAliflixResults(
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                 )
-                if (!com.aliflix.app.BuildConfig.IS_TV) AliflixLiquidToggle(hideMySpaceTitles, null)
-                else Switch(
-                    checked = hideMySpaceTitles,
-                    onCheckedChange = null,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = AliflixAccentPrimary,
-                        checkedTrackColor = AliflixAccentSecondary.copy(alpha = 0.35f),
-                        uncheckedThumbColor = AliflixContentTertiary,
-                        uncheckedTrackColor = AliflixSurfaceElevated,
-                    ),
-                )
+                AliflixLiquidToggle(hideMySpaceTitles, null)
             }
         }
 
@@ -428,10 +418,8 @@ private fun ResultCard(
     editorial: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    if (!com.aliflix.app.BuildConfig.IS_TV) {
-        MobileAskResultCard(item, onClick, inMyList, onToggleMyList, editorial, modifier)
-        return
-    }
+    MobileAskResultCard(item, onClick, inMyList, onToggleMyList, editorial, modifier)
+    return
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
@@ -535,7 +523,6 @@ private fun ResultCard(
                         Text("${if (editorial) "AI " else "TMDB "}${"%.1f".format(if (editorial) item.matchScore else item.media.rating)}", color = AliflixContentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
-
 
                 Spacer(Modifier.height(9.dp))
                 Row(
@@ -666,7 +653,6 @@ internal fun visibleAskAliflixItems(
     items
 }
 
-
 @Composable
 private fun AskLoadingState() {
     val infinite = rememberInfiniteTransition(label = "ask-loading")
@@ -683,8 +669,7 @@ private fun AskLoadingState() {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.height(24.dp))
-        if (com.aliflix.app.BuildConfig.IS_TV) ComposingThinkingOrb(modifier = Modifier.size(148.dp))
-        else Box(Modifier.size(148.dp), contentAlignment = Alignment.Center) { AliflixLumaSpin(Modifier.size(65.dp)) }
+        Box(Modifier.size(148.dp), contentAlignment = Alignment.Center) { AliflixLumaSpin(Modifier.size(65.dp)) }
         Spacer(Modifier.height(13.dp))
         Text("Finding matches", color = AliflixContentPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
         Spacer(Modifier.height(20.dp))

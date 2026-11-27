@@ -33,15 +33,10 @@ import kotlin.math.sin
 @Composable
 internal fun DiscoverAskCard(touchTracker: DiscoverTouchTracker = remember { DiscoverTouchTracker() }, onMode: (Int) -> Unit) {
     val context=androidx.compose.ui.platform.LocalContext.current
-    val phase = if (com.aliflix.app.BuildConfig.IS_TV) {
-        val orbit = rememberInfiniteTransition(label = "ask-orbit")
-        val value by orbit.animateFloat(0f, if (!ValueAnimator.areAnimatorsEnabled()) 0f else 1f,
-            infiniteRepeatable(tween(48000, easing = LinearEasing)), label = "subtle-orbit")
-        value
-    } else 0f
+    val phase = 0f
     AliflixSurface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Small)
-            .then(if(!com.aliflix.app.BuildConfig.IS_TV)Modifier.clickable { openAskConversation(context) } else Modifier),
+            .then(Modifier.clickable { openAskConversation(context) }),
         shape = AliflixCorners.Panel,
         level = AliflixSurfaceLevel.Content,
     ) {
@@ -51,7 +46,7 @@ internal fun DiscoverAskCard(touchTracker: DiscoverTouchTracker = remember { Dis
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().height(84.dp)
-                    .then(if(!com.aliflix.app.BuildConfig.IS_TV)Modifier.clip(RoundedCornerShape(22.dp)).discoverSmokeBackground()else Modifier),
+                    .then(Modifier.clip(RoundedCornerShape(22.dp)).discoverSmokeBackground()),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -61,39 +56,14 @@ internal fun DiscoverAskCard(touchTracker: DiscoverTouchTracker = remember { Dis
                     lineHeight = 31.sp,
                     fontWeight = FontWeight.Bold,
                     color = AliflixContentPrimary,
-                    modifier = Modifier.weight(1f).padding(start = if(com.aliflix.app.BuildConfig.IS_TV)9.dp else 18.dp),
+                    modifier = Modifier.weight(1f).padding(start = 18.dp),
                 )
-                if (!com.aliflix.app.BuildConfig.IS_TV) {
-                    DiscoverLiveOrb(touchTracker, Modifier.size(76.dp))
-                } else Box(Modifier.size(76.dp), contentAlignment = Alignment.Center) {
-                    Canvas(Modifier.fillMaxSize()) {
-                        val r = size.minDimension * .41f
-                        val angle = phase * (2f * PI.toFloat())
-                        drawCircle(
-                            Brush.radialGradient(
-                                listOf(AliflixAccentSecondary.copy(alpha = .19f + .035f * sin(angle)), Color.Transparent),
-                                center, r * 1.22f,
-                            ),
-                            radius = r * 1.22f,
-                        )
-                        listOf(.67f, .91f).forEachIndexed { index, fraction ->
-                            val radius = r * fraction
-                            drawCircle(AliflixAccentSecondary.copy(alpha = .25f), radius, style = Stroke(.65.dp.toPx()))
-                            val theta = angle * if (index == 0) 1f else -.65f + index * 2.4f
-                            drawCircle(
-                                AliflixAccentSecondary.copy(alpha = .80f),
-                                1.65.dp.toPx(),
-                                Offset(center.x + cos(theta) * radius, center.y + sin(theta) * radius),
-                            )
-                        }
-                    }
-                    AliflixLogoMark(modifier = Modifier.size(32.dp))
-                }
+                DiscoverLiveOrb(touchTracker, Modifier.size(76.dp))
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                (if(com.aliflix.app.BuildConfig.IS_TV)listOf("Describe", "Find similar")else listOf("Ask", "Talk")).forEachIndexed { index, label ->
+                (listOf("Ask", "Talk")).forEachIndexed { index, label ->
                     Button(
-                        onClick = { if(!com.aliflix.app.BuildConfig.IS_TV&&index==1)context.startActivity(android.content.Intent().setClassName(context,"com.aliflix.app.talk.TalkVoiceActivity")) else if(!com.aliflix.app.BuildConfig.IS_TV)openAskConversation(context)else onMode(index) },
+                        onClick = { if(index==1)context.startActivity(android.content.Intent().setClassName(context,"com.aliflix.app.talk.TalkVoiceActivity")) else openAskConversation(context) },
                         modifier = Modifier.weight(1f).height(48.dp),
                         shape = AliflixCorners.Small,
                         contentPadding = PaddingValues(horizontal = 9.dp),
@@ -102,10 +72,7 @@ internal fun DiscoverAskCard(touchTracker: DiscoverTouchTracker = remember { Dis
                             contentColor = if (index == 0) com.aliflix.app.ui.theme.AliflixContentInverse else Color.White,
                         ),
                     ) {
-                        if(com.aliflix.app.BuildConfig.IS_TV){
-                            Text(label,modifier=Modifier.weight(1f),fontWeight=FontWeight.SemiBold,fontSize=14.sp,maxLines=1)
-                            Spacer(Modifier.width(8.dp));Icon(Icons.AutoMirrored.Rounded.ArrowForward,null,Modifier.size(16.dp))
-                        }else Box(Modifier.fillMaxWidth(),contentAlignment=Alignment.Center){
+                        Box(Modifier.fillMaxWidth(),contentAlignment=Alignment.Center){
                             Text(label,Modifier.padding(horizontal=27.dp),fontWeight=FontWeight.SemiBold,fontSize=17.sp,maxLines=1,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
                             Box(Modifier.align(Alignment.CenterEnd).size(24.dp),contentAlignment=Alignment.Center){if(index==1)AliflixCompanionIcon(Modifier.size(21.dp),Color.White)else Icon(Icons.AutoMirrored.Rounded.ArrowForward,null,Modifier.size(17.dp))}
                         }

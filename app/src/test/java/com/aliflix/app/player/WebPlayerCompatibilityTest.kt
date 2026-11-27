@@ -21,7 +21,7 @@ class WebPlayerCompatibilityTest {
         )
         val movie = episode.copy(media = Media(27205, MediaType.MOVIE, "Inception"))
 
-        val expectedBootstrap = if (!com.aliflix.app.BuildConfig.IS_TV) "https://moviepire.ru/series/86831" else null
+        val expectedBootstrap = "https://moviepire.ru/series/86831"
         assertEquals(expectedBootstrap, mobileMoviepireEpisodeBootstrapUrl(episode))
         assertEquals(null, mobileMoviepireEpisodeBootstrapUrl(movie))
         assertEquals("https://moviepire.ru/watch/86831?s=1&e=4", episode.entryUrl)

@@ -35,7 +35,7 @@ class RecommendationStore(context: Context) {
     }
 
     fun migrateCloudflareDefaultForScope(scope: String) {
-        if (!com.aliflix.app.BuildConfig.IS_TV && !defaultMigrations.getBoolean(scope, false)) {
+        if (!defaultMigrations.getBoolean(scope, false)) {
             setAiModel(RecommendationAiModel.CLOUDFLARE_GPT_OSS_120B)
             defaultMigrations.edit { putBoolean(scope, true) }
         }

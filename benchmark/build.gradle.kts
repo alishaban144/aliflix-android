@@ -20,9 +20,6 @@ android {
         create("mobile") {
             dimension = "formFactor"
         }
-        create("tv") {
-            dimension = "formFactor"
-        }
     }
 
     buildTypes {
@@ -40,11 +37,7 @@ android {
 
 androidComponents {
     beforeVariants(selector().all()) { variantBuilder ->
-        val isMobile = variantBuilder.productFlavors.any { (_, flavor) ->
-            flavor == "mobile"
-        }
-        variantBuilder.enable =
-            variantBuilder.buildType == "benchmark" && isMobile
+        variantBuilder.enable = variantBuilder.buildType == "benchmark"
     }
 }
 

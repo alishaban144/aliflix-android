@@ -153,7 +153,7 @@ fun AskAliflixSimilar(
                 )
 
                 Spacer(Modifier.height(10.dp))
-                if (!com.aliflix.app.BuildConfig.IS_TV && !suggestionsLoading) {
+                if (!suggestionsLoading) {
                     com.aliflix.app.data.TypoTolerantTitleSearch.correctionLabel(query, suggestions)?.let { title ->
                         Text("Showing results for $title", color = AliflixContentTertiary,
                             fontSize = 11.sp, modifier = Modifier.padding(bottom = 6.dp))

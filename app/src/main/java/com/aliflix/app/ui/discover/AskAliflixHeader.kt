@@ -66,12 +66,10 @@ fun AskAliflixHeader(
             )
         }
 
-        if (!com.aliflix.app.BuildConfig.IS_TV) {
-            AliflixIconButton(onClick = {
-                context.startActivity(android.content.Intent().setClassName(context, "com.aliflix.app.talk.TalkVoiceActivity"))
-            }) {
-                AliflixCompanionIcon(Modifier.size(27.dp))
-            }
+        AliflixIconButton(onClick = {
+            context.startActivity(android.content.Intent().setClassName(context, "com.aliflix.app.talk.TalkVoiceActivity"))
+        }) {
+            AliflixCompanionIcon(Modifier.size(27.dp))
         }
 
         if (showNewSearch) {

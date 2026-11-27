@@ -253,7 +253,7 @@ class DefaultImdbRatingRepository(
                         }
                         episode.number to snapshot
                     }
-                    if (com.aliflix.app.BuildConfig.IS_TV) return resolved
+
                     resolved.filterValues { it.state == RatingSourceState.VERIFIED || it.state == RatingSourceState.NOT_RATED }
                         .forEach { (number, snapshot) -> fresh[number] = snapshot }
                     if (requested.all { it.number in fresh }) return resolved
@@ -281,7 +281,7 @@ class DefaultImdbRatingRepository(
         if (snapshot.identity.type != media.type) return false
         if (media.imdbId?.matches(IMDB_ID_PATTERN) == true && media.imdbId != snapshot.identity.imdbId) return false
 
-        if(!com.aliflix.app.BuildConfig.IS_TV && media.imdbId?.matches(IMDB_ID_PATTERN)==true &&
+        if(media.imdbId?.matches(IMDB_ID_PATTERN)==true &&
             media.year.take(4).toIntOrNull()?.let { it==snapshot.identity.year }==true) return true
         val titleMatches = titleIdentityScore(
             normalize(media.title.replace(Regex("\\(\\d{4}\\)"), "").trim()),
@@ -498,10 +498,10 @@ class DefaultImdbRatingRepository(
         val type = json.optString("@type").lowercase()
         if (type !in if (identity.type == MediaType.TV) setOf("tvseries", "tvminiseries") else setOf("movie")) return false
         val year = json.optString("datePublished").take(4).toIntOrNull()
-        val canonicalMobileIdentity = !com.aliflix.app.BuildConfig.IS_TV && identity.year != null && year == identity.year
+        val canonicalMobileIdentity = identity.year != null && year == identity.year
         if (!canonicalMobileIdentity && titleIdentityScore(normalize(identity.title), normalize(json.optString("name"))) < 70) return false
         return identity.year == null || (year != null && kotlin.math.abs(identity.year - year) <= 1) ||
-            (!com.aliflix.app.BuildConfig.IS_TV && titleIdentityScore(normalize(identity.title),normalize(json.optString("name")))>=85)
+            (titleIdentityScore(normalize(identity.title),normalize(json.optString("name")))>=85)
     }
 
     private fun unavailableSnapshot(media: Media) = ImdbRatingSnapshot(
@@ -579,13 +579,11 @@ class DefaultImdbRatingRepository(
         if (snapshot.seasonNumber != episode.seasonNumber || snapshot.episodeNumber != episode.number) {
             return false
         }
-        if (com.aliflix.app.BuildConfig.IS_TV && episode.title.equals("Episode ${episode.number}", ignoreCase = true)) return true
-        if (!com.aliflix.app.BuildConfig.IS_TV) {
-            episode.imdbId?.takeIf(IMDB_ID_PATTERN::matches)?.let { return it == snapshot.imdbId }
-            // Returned nodes belong to the verified parent and exact S/E. IMDb's
-            // original title may differ completely from the localized catalogue.
-            return snapshot.imdbId?.matches(IMDB_ID_PATTERN) == true
-        }
+
+        episode.imdbId?.takeIf(IMDB_ID_PATTERN::matches)?.let { return it == snapshot.imdbId }
+        // Returned nodes belong to the verified parent and exact S/E. IMDb's
+        // original title may differ completely from the localized catalogue.
+        return snapshot.imdbId?.matches(IMDB_ID_PATTERN) == true
         return titleIdentityScore(normalize(episode.title), normalize(snapshot.title)) >= 65
     }
 
@@ -644,7 +642,7 @@ class DefaultImdbRatingRepository(
             ?.optString("text")
             .orEmpty()
         val score = titleIdentityScore(normalize(expected.title), normalize(returnedTitle))
-        val canonicalMobileIdentity = !com.aliflix.app.BuildConfig.IS_TV && expected.year != null &&
+        val canonicalMobileIdentity = expected.year != null &&
             payload.optJSONObject("releaseYear")?.optInt("year") == expected.year
         if (!canonicalMobileIdentity && score < 45 && !normalize(returnedTitle).contains(normalize(expected.title)) && !normalize(expected.title).contains(normalize(returnedTitle))) {
             return false
@@ -658,7 +656,7 @@ class DefaultImdbRatingRepository(
             kotlin.math.abs(expected.year - returnedYear) > 1 &&
             // A catalogue may date a re-release. Exact IMDb ID + matching title/type
             // is stronger evidence than that distribution date (e.g. Incoherence).
-            (com.aliflix.app.BuildConfig.IS_TV || score < 85)
+            (score < 85)
         ) {
             return false
         }

@@ -195,7 +195,7 @@ internal fun MobilePlayerMoreSheet(
                         Spacer(Modifier.height(8.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             MoreOptionRow(Icons.Rounded.Dns, "Streaming source",
-                                if(com.aliflix.app.BuildConfig.IS_TV) listOfNotNull(activeProvider.displayName, selectedServer?.takeUnless { it == activeProvider.displayName }).joinToString(" · ") else activeProvider.displayName,
+                                activeProvider.displayName,
                                 onClick = { page = MorePage.SOURCES }, modifier = Modifier.weight(1f))
                             onTryAlternativeProvider?.let { tryProvider ->
                                 IconButton(
@@ -229,13 +229,11 @@ internal fun MobilePlayerMoreSheet(
                     MorePage.SOURCES -> {
                         sources.forEach { option ->
                             MoreOptionRow(Icons.Rounded.Dns, option.provider.displayName,
-                                if (com.aliflix.app.BuildConfig.IS_TV && option.selected) "Playing now" else "",
+                                "",
                                 selected = option.selected,
-                                showChevron = com.aliflix.app.BuildConfig.IS_TV,
+                                showChevron = false,
                                 onClick = {
-                                    if(com.aliflix.app.BuildConfig.IS_TV) {
-                                        drilledProvider = option.provider;page = MorePage.SERVERS;onSelectProvider(option.provider)
-                                    } else { if(!option.selected)onSelectProvider(option.provider);onDismiss() }
+                                    if(!option.selected)onSelectProvider(option.provider);onDismiss()
                                 })
                         }
                     }

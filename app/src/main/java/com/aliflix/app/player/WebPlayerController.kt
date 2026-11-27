@@ -5,18 +5,14 @@ import com.aliflix.app.model.MobilePlaybackProvider
 
 import android.annotation.SuppressLint
 import android.app.Activity
-import android.content.Intent
 import android.content.MutableContextWrapper
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
-import android.os.Build
 import android.os.SystemClock
-import android.view.InputDevice
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
 import android.webkit.JsPromptResult
@@ -34,8 +30,6 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.Toast
 import android.view.KeyEvent
-import android.view.MotionEvent
-import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.ComponentActivity
 import androidx.core.net.toUri
 import androidx.core.view.WindowCompat
@@ -50,7 +44,6 @@ import com.aliflix.app.BuildConfig
 import com.aliflix.app.data.PlaybackProgress
 import com.aliflix.app.data.PlaybackProgressStore
 import com.aliflix.app.model.MediaType
-import com.aliflix.app.model.PlaybackProvider
 import com.aliflix.app.model.PlaybackSelection
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -149,7 +142,7 @@ class WebPlayerController(
     }
 
     private fun preparationScript() = if (nativePreparation) "\n" + nativePreparationScript() else ""
-    private val resolvedEmbedOrigin get()=trustedNativeEmbedOrigin(nativeEmbedUrl,nativePreparation,BuildConfig.IS_TV)
+    private val resolvedEmbedOrigin get()=trustedNativeEmbedOrigin(nativeEmbedUrl, nativePreparation)
     private fun nativeOriginRules(sourceHost:String)=nativePlaybackOriginRules(sourceHost)+setOfNotNull(resolvedEmbedOrigin)
     private var webView: WebView? = null
     private var loadedKey: String? = null
@@ -290,7 +283,7 @@ class WebPlayerController(
         label: String,
     ) {
         if (
-            BuildConfig.IS_TV || !selection.source.identity.usesMoviepire ||
+            !selection.source.identity.usesMoviepire ||
             activeSelection?.let(::subtitleContentKey) != subtitleContentKey(selection)
         ) return
 
@@ -372,7 +365,7 @@ class WebPlayerController(
     fun selectMoviepireServer(option: MoviepireServerOption) {
         val selection = activeSelection ?: return
         val view = webView ?: return
-        if (BuildConfig.IS_TV || !selection.source.identity.usesMoviepire) return
+        if (!selection.source.identity.usesMoviepire) return
         if (_moviepireServers.value.none { it.key == option.key }) return
         if (option.selected || _moviepireServers.value.any { it.key == option.key && it.selected }) {
             return
@@ -516,7 +509,7 @@ class WebPlayerController(
     fun requestMoviepireFullscreen(): Boolean {
         val selection = activeSelection ?: return false
         val view = webView ?: return false
-        if (BuildConfig.IS_TV || !selection.source.identity.usesMoviepire) return false
+        if (!selection.source.identity.usesMoviepire) return false
         if (nativeFullscreenRequested) {
             exitNativeFullscreenMode()
             view.requestLayout()
@@ -695,7 +688,7 @@ class WebPlayerController(
         selection: PlaybackSelection,
     ) {
         if (nativePreparation && nativeEmbedUrl != null) {
-            if(!BuildConfig.IS_TV && selection.source.identity in setOf(MobilePlaybackProvider.FILMO,MobilePlaybackProvider.ANIWORLD,MobilePlaybackProvider.SERIENSTREAM)) {
+            if(selection.source.identity in setOf(MobilePlaybackProvider.FILMO,MobilePlaybackProvider.ANIWORLD,MobilePlaybackProvider.SERIENSTREAM)) {
                 // The site's external-player action may forbid framing. Load
                 // its normal document directly in the temporary muted resolver.
                 view.loadUrl(nativeEmbedUrl)
@@ -725,18 +718,7 @@ class WebPlayerController(
         view: WebView,
         selection: PlaybackSelection,
     ) {
-        if (BuildConfig.IS_TV) {
-            val sourceHost = selection.source.cleanDomain.lowercase().removePrefix("www.")
-            if (moviepireDocumentStartScriptHandler != null && moviepireProtectedSourceHost == sourceHost) return
-            moviepireDocumentStartScriptHandler?.remove()
-            moviepireProtectedSourceHost = sourceHost
-            installMoviepireMessageListener(view, sourceHost)
-            if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-                moviepireDocumentStartScriptHandler = WebViewCompat.addDocumentStartJavaScript(
-                    view, mobileMoviepireProgressBridgeScript(), nativeOriginRules(sourceHost))
-            }
-            return
-        }
+
         if (!selection.source.identity.usesMoviepire) {
             val sourceHost = selection.source.cleanDomain.lowercase().removePrefix("www.")
             if (moviepireDocumentStartScriptHandler != null && moviepireProtectedSourceHost == sourceHost && !moviepireProtectedNativeMode) return
@@ -760,7 +742,7 @@ class WebPlayerController(
         }
 
         val sourceHost = selection.source.cleanDomain.lowercase().removePrefix("www.")
-        val nativeMode = !BuildConfig.IS_TV && selection.source.identity.usesMoviepire
+        val nativeMode = selection.source.identity.usesMoviepire
         if (
             moviepireDocumentStartScriptHandler != null &&
             moviepireProtectedSourceHost == sourceHost &&
@@ -827,7 +809,7 @@ class WebPlayerController(
         selection: PlaybackSelection,
     ): Boolean {
         if (!origin.scheme.equals("https", ignoreCase = true)) return false
-        resolvedEmbedOrigin?.let { if(trustedNativeEmbedOrigin(origin.toString(),true,false)==it) return true }
+        resolvedEmbedOrigin?.let { if(trustedNativeEmbedOrigin(origin.toString(), preparing = true)==it) return true }
         val host = origin.host?.lowercase()?.removePrefix("www.") ?: return false
         val approved = PlaybackNavigationPolicy.moviepirePlayerDocumentHosts + PlaybackNavigationPolicy.defaultApprovedPlaybackHosts +
             selection.source.cleanDomain.lowercase().removePrefix("www.")
@@ -1005,31 +987,12 @@ class WebPlayerController(
         }
         return object : WebView(MutableContextWrapper(activity)) {
             override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-                if (BuildConfig.IS_TV) {
-                    when (event.keyCode) {
-                        KeyEvent.KEYCODE_DPAD_CENTER,
-                        KeyEvent.KEYCODE_ENTER,
-                        KeyEvent.KEYCODE_NUMPAD_ENTER,
-                        KeyEvent.KEYCODE_BUTTON_A,
-                        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
-                        KeyEvent.KEYCODE_MEDIA_PLAY,
-                        KeyEvent.KEYCODE_MEDIA_PAUSE,
-                        KeyEvent.KEYCODE_DPAD_LEFT,
-                        KeyEvent.KEYCODE_DPAD_RIGHT,
-                        KeyEvent.KEYCODE_DPAD_UP,
-                        KeyEvent.KEYCODE_DPAD_DOWN,
-                        KeyEvent.KEYCODE_MEDIA_REWIND,
-                        KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
-                        KeyEvent.KEYCODE_BACK,
-                        KeyEvent.KEYCODE_ESCAPE,
-                        -> return false
-                    }
-                }
+
                 return super.dispatchKeyEvent(event)
             }
         }.apply {
             setBackgroundColor(Color.BLACK)
-            if (nativePreparation && !BuildConfig.IS_TV && WebViewFeature.isFeatureSupported(WebViewFeature.MUTE_AUDIO)) {
+            if (nativePreparation && WebViewFeature.isFeatureSupported(WebViewFeature.MUTE_AUDIO)) {
                 WebViewCompat.setAudioMuted(this, true)
             }
             isVerticalScrollBarEnabled = false
@@ -1064,13 +1027,12 @@ class WebPlayerController(
                     activePlayerReplyProxy = null
                     view?.alpha = 1f
                     val selection = activeSelection
-                    if (!BuildConfig.IS_TV && selection?.source?.identity?.usesMoviepire == true) {
+                    if (selection?.source?.identity?.usesMoviepire == true) {
                         _moviepireServers.value = emptyList()
                     }
                     if (
                         view != null &&
-                        selection?.source?.identity?.usesMoviepire == true &&
-                        !BuildConfig.IS_TV
+                        selection?.source?.identity?.usesMoviepire == true
                     ) {
                         // Document-start injection is the primary path. These short retries are a
                         // deterministic fallback for devices whose WebView provider is too old to
@@ -1116,22 +1078,10 @@ class WebPlayerController(
                         _loading.value = false
                         if (playerVisible) {
                             view.requestFocus()
-                            prepareTvWebFocus(view)
                         }
-                        if (
-                            BuildConfig.IS_TV &&
-                            url.toUri().host
-                                ?.removePrefix("www.")
-                                ?.let { it == "soap2night.cc" || it.endsWith(".soap2night.cc") } == true
-                        ) {
-                            view.postDelayed(
-                                { promoteTvPlayerFrame(view, attempt = 0) },
-                                900L,
-                            )
-                        }
+
                         if (selection != null) {
                             if (
-                                !BuildConfig.IS_TV &&
                                 selection.source.identity.usesMoviepire
                             ) {
                                 installMobileMoviepireAdShield(view, selection)
@@ -1157,7 +1107,6 @@ class WebPlayerController(
                                     {
                                         if (isActiveSelection(view, selection)) {
                                             alignProviderContent(view, selection)
-                                            if (playerVisible) prepareTvWebFocus(view)
                                         }
                                     },
                                     3_000L,
@@ -1212,7 +1161,7 @@ class WebPlayerController(
                     request: WebResourceRequest?,
                 ): WebResourceResponse? {
                     if (
-                        (isMobileMoviepireSelection() || (!BuildConfig.IS_TV && nativePreparation)) &&
+                        (isMobileMoviepireSelection() || nativePreparation) &&
                         request != null &&
                         PlaybackNavigationPolicy.isBlockedMoviepireResource(
                             request.url.toString(),
@@ -1379,8 +1328,7 @@ class WebPlayerController(
         activeSelection?.source?.approvedTopLevelHosts.orEmpty()+setOfNotNull(resolvedEmbedOrigin?.let { URI(it).host })
 
     private fun isMobileMoviepireSelection(): Boolean =
-        !BuildConfig.IS_TV &&
-            activeSelection?.source?.identity?.usesMoviepire == true
+        activeSelection?.source?.identity?.usesMoviepire == true
 
     private fun isMoviepireWrapper(view: WebView): Boolean {
         val selection = activeSelection ?: return false
@@ -1389,450 +1337,6 @@ class WebPlayerController(
             URI(view.url.orEmpty()).host?.removePrefix("www.")
         }.getOrNull()
         return currentHost.equals(selection.source.cleanDomain, ignoreCase = true)
-    }
-
-    private fun prepareTvWebFocus(view: WebView) {
-        if (!BuildConfig.IS_TV) return
-        view.evaluateJavascript(
-            """
-            (() => {
-              const visible = (element) => {
-                const rect = element.getBoundingClientRect();
-                const style = getComputedStyle(element);
-                return rect.width > 8 && rect.height > 8 &&
-                  style.display !== "none" && style.visibility !== "hidden";
-              };
-              const frames = Array.from(document.querySelectorAll("iframe"))
-                .filter(visible)
-                .sort((a, b) => {
-                  const ar = a.getBoundingClientRect();
-                  const br = b.getBoundingClientRect();
-                  return (br.width * br.height) - (ar.width * ar.height);
-                });
-              frames.forEach((frame) => frame.tabIndex = 0);
-              const play = Array.from(
-                document.querySelectorAll(
-                  "#pl_but, #pl_but_background, #play, .btn-watchnow"
-                )
-              ).find(visible);
-              if (play) {
-                play.tabIndex = 0;
-                play.setAttribute("role", "button");
-                play.setAttribute("aria-label", "Play video");
-                play.focus({ preventScroll: true });
-              } else {
-                frames[0]?.focus({ preventScroll: true });
-              }
-              return frames.length + (play ? 1 : 0);
-            })();
-            """.trimIndent(),
-            null,
-        )
-    }
-
-    private fun moveTvWebFocus(view: WebView, keyCode: Int) {
-        val direction = when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_LEFT -> "left"
-            KeyEvent.KEYCODE_DPAD_RIGHT -> "right"
-            KeyEvent.KEYCODE_DPAD_UP -> "up"
-            else -> "down"
-        }
-        view.evaluateJavascript(
-            """
-            (() => {
-              const direction = "$direction";
-              const visible = (element) => {
-                const rect = element.getBoundingClientRect();
-                const style = getComputedStyle(element);
-                return rect.width > 8 && rect.height > 8 &&
-                  style.display !== "none" && style.visibility !== "hidden" &&
-                  style.opacity !== "0";
-              };
-              const candidates = Array.from(document.querySelectorAll(
-                'iframe, #pl_but, #pl_but_background, #play, .btn-watchnow, ' +
-                'a[href], button, input, select, ' +
-                '[role="button"], [onclick], [tabindex]'
-              )).filter((element, index, all) =>
-                visible(element) && !element.disabled && all.indexOf(element) === index
-              );
-              candidates.forEach((element) => {
-                if (element.tabIndex < 0) element.tabIndex = 0;
-              });
-              if (!candidates.length) return false;
-
-              let current = document.activeElement;
-              if (!candidates.includes(current)) {
-                current = candidates
-                  .filter((element) => element.tagName === "IFRAME")
-                  .sort((a, b) => {
-                    const ar = a.getBoundingClientRect();
-                    const br = b.getBoundingClientRect();
-                    return (br.width * br.height) - (ar.width * ar.height);
-                  })[0] || candidates[0];
-                current.focus({ preventScroll: true });
-                return true;
-              }
-
-              const source = current.getBoundingClientRect();
-              const sx = source.left + source.width / 2;
-              const sy = source.top + source.height / 2;
-              const directional = candidates
-                .filter((candidate) => candidate !== current)
-                .map((candidate) => {
-                  const rect = candidate.getBoundingClientRect();
-                  const x = rect.left + rect.width / 2;
-                  const y = rect.top + rect.height / 2;
-                  const dx = x - sx;
-                  const dy = y - sy;
-                  const allowed =
-                    (direction === "left" && dx < -4) ||
-                    (direction === "right" && dx > 4) ||
-                    (direction === "up" && dy < -4) ||
-                    (direction === "down" && dy > 4);
-                  if (!allowed) return null;
-                  const primary = direction === "left" || direction === "right"
-                    ? Math.abs(dx) : Math.abs(dy);
-                  const secondary = direction === "left" || direction === "right"
-                    ? Math.abs(dy) : Math.abs(dx);
-                  return { candidate, score: primary + secondary * 2.4 };
-                })
-                .filter(Boolean)
-                .sort((a, b) => a.score - b.score);
-              const next = directional[0]?.candidate;
-              if (!next) return false;
-              next.focus({ preventScroll: true });
-              next.scrollIntoView({ block: "nearest", inline: "nearest" });
-              return true;
-            })();
-            """.trimIndent(),
-            null,
-        )
-    }
-
-    private fun activateTvPlayerSelection(view: WebView) {
-        view.evaluateJavascript(
-            """
-            (() => {
-              const visible = (element) => {
-                const rect = element.getBoundingClientRect();
-                const style = getComputedStyle(element);
-                return rect.width > 8 && rect.height > 8 &&
-                  style.display !== "none" && style.visibility !== "hidden";
-              };
-              const active = document.activeElement;
-              if (
-                active &&
-                active !== document.body &&
-                active !== document.documentElement &&
-                active.tagName !== "IFRAME"
-              ) {
-                const isPlayerBootstrap = active.matches(
-                  "#play, .btn-watchnow"
-                );
-                active.click();
-                if (isPlayerBootstrap) {
-                  window.setTimeout(() => {
-                    const frame = Array.from(document.querySelectorAll("iframe"))
-                      .filter((candidate) => {
-                        const rect = candidate.getBoundingClientRect();
-                        return rect.width > 100 && rect.height > 100 &&
-                          candidate.src && candidate.src !== "about:blank";
-                      })
-                      .sort((a, b) => {
-                        const ar = a.getBoundingClientRect();
-                        const br = b.getBoundingClientRect();
-                        return (br.width * br.height) - (ar.width * ar.height);
-                      })[0];
-                    if (frame?.src?.startsWith("https://")) {
-                      location.assign(frame.src);
-                    }
-                  }, 700);
-                }
-                return JSON.stringify({
-                  action: isPlayerBootstrap ? "clicked-play" : "clicked"
-                });
-              }
-              const directPlay = Array.from(
-                document.querySelectorAll(
-                  "#pl_but, #pl_but_background, #play, .btn-watchnow"
-                )
-              ).find(visible);
-              if (directPlay) {
-                directPlay.click();
-                window.setTimeout(() => {
-                  const frame = Array.from(document.querySelectorAll("iframe"))
-                    .filter((candidate) => {
-                      const rect = candidate.getBoundingClientRect();
-                      return rect.width > 100 && rect.height > 100 &&
-                        candidate.src && candidate.src !== "about:blank";
-                    })
-                    .sort((a, b) => {
-                      const ar = a.getBoundingClientRect();
-                      const br = b.getBoundingClientRect();
-                      return (br.width * br.height) - (ar.width * ar.height);
-                    })[0];
-                  if (frame?.src?.startsWith("https://")) {
-                    location.assign(frame.src);
-                  }
-                }, 700);
-                return JSON.stringify({ action: "clicked-play" });
-              }
-              const clickNestedPlayer = (root, depth = 0) => {
-                if (depth > 3) return false;
-                for (const nestedFrame of root.querySelectorAll("iframe")) {
-                  try {
-                    const nestedDocument = nestedFrame.contentDocument;
-                    if (!nestedDocument) continue;
-                    const nestedControl = Array.from(
-                      nestedDocument.querySelectorAll(
-                        "#pl_but, #pl_but_background, #play, .btn-watchnow"
-                      )
-                    ).find((element) => {
-                      const rect = element.getBoundingClientRect();
-                      const style = element.ownerDocument.defaultView
-                        .getComputedStyle(element);
-                      return rect.width > 8 && rect.height > 8 &&
-                        style.display !== "none" &&
-                        style.visibility !== "hidden";
-                    });
-                    if (nestedControl) {
-                      nestedControl.click();
-                      return true;
-                    }
-                    const nestedVideo = nestedDocument.querySelector("video");
-                    if (nestedVideo) {
-                      if (nestedVideo.paused) nestedVideo.play();
-                      else nestedVideo.pause();
-                      return true;
-                    }
-                    if (clickNestedPlayer(nestedDocument, depth + 1)) {
-                      return true;
-                    }
-                  } catch (_) {
-                    // Cross-origin frames are handled by the approved-host fallback.
-                  }
-                }
-                return false;
-              };
-              if (clickNestedPlayer(document)) {
-                return JSON.stringify({ action: "nested-player" });
-              }
-              const frames = Array.from(document.querySelectorAll("iframe"))
-                .filter(visible)
-                .sort((a, b) => {
-                  const ar = a.getBoundingClientRect();
-                  const br = b.getBoundingClientRect();
-                  return (br.width * br.height) - (ar.width * ar.height);
-                });
-              const frame = active?.tagName === "IFRAME" && visible(active)
-                ? active
-                : frames[0];
-              if (!frame) {
-                const video = document.querySelector("video");
-                if (video) {
-                  if (video.paused) video.play(); else video.pause();
-                  return JSON.stringify({ action: "video" });
-                }
-                return JSON.stringify({ action: "none" });
-              }
-              frame.focus({ preventScroll: true });
-              const rect = frame.getBoundingClientRect();
-              if (frame.src?.startsWith("https://")) {
-                return JSON.stringify({
-                  action: "promote",
-                  url: frame.src,
-                  x: rect.left + rect.width / 2,
-                  y: rect.top + rect.height / 2,
-                  viewportWidth: innerWidth,
-                  viewportHeight: innerHeight
-                });
-              }
-              return JSON.stringify({
-                action: "tap",
-                x: rect.left + rect.width / 2,
-                y: rect.top + rect.height / 2,
-                viewportWidth: innerWidth,
-                viewportHeight: innerHeight
-              });
-            })();
-            """.trimIndent(),
-        ) { result ->
-            val payload = runCatching {
-                JSONTokener(result).nextValue() as? String
-            }.getOrNull().orEmpty()
-            val value = runCatching { JSONObject(payload) }.getOrNull() ?: return@evaluateJavascript
-            when (value.optString("action")) {
-                "clicked-play" -> {
-                    view.postDelayed(
-                        { promoteTvPlayerFrame(view, attempt = 0) },
-                        700L,
-                    )
-                }
-                "promote" -> {
-                    val target = value.optString("url")
-                    if (
-                        PlaybackNavigationPolicy.isAllowedTopLevel(
-                            target,
-                            customHostsForActiveSelection(),
-                        )
-                    ) {
-                        view.loadUrl(target)
-                    } else {
-                        view.post {
-                            dispatchWebViewTap(
-                                view = view,
-                                x = value.optDouble("x").toFloat(),
-                                y = value.optDouble("y").toFloat(),
-                                viewportWidth = value.optDouble("viewportWidth").toFloat(),
-                                viewportHeight = value.optDouble("viewportHeight").toFloat(),
-                            )
-                        }
-                    }
-                }
-                "tap" -> {
-                    view.post {
-                        if (!clickTvPlayerAccessibilityNode(view)) {
-                            dispatchWebViewTap(
-                                view = view,
-                                x = value.optDouble("x").toFloat(),
-                                y = value.optDouble("y").toFloat(),
-                                viewportWidth = value.optDouble("viewportWidth").toFloat(),
-                                viewportHeight = value.optDouble("viewportHeight").toFloat(),
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private fun promoteTvPlayerFrame(view: WebView, attempt: Int) {
-        if (!BuildConfig.IS_TV || attempt > 8 || webView !== view) return
-        view.evaluateJavascript(
-            """
-            (() => {
-              const usable = (frame) => {
-                const rect = frame.getBoundingClientRect();
-                const style = getComputedStyle(frame);
-                return frame.src && frame.src !== "about:blank" &&
-                  style.display !== "none" && style.visibility !== "hidden" &&
-                  (rect.width > 100 || rect.height > 100);
-              };
-              const frame = Array.from(document.querySelectorAll("iframe"))
-                .filter((candidate) =>
-                  usable(candidate)
-                )
-                .sort((a, b) => {
-                  const ar = a.getBoundingClientRect();
-                  const br = b.getBoundingClientRect();
-                  return (br.width * br.height) - (ar.width * ar.height);
-                })[0];
-              return frame?.src || "";
-            })();
-            """.trimIndent(),
-        ) { result ->
-            if (webView !== view) return@evaluateJavascript
-            val target = runCatching {
-                JSONTokener(result).nextValue() as? String
-            }.getOrNull().orEmpty()
-            if (
-                target.isNotBlank() &&
-                PlaybackNavigationPolicy.isAllowedTopLevel(
-                    target,
-                    customHostsForActiveSelection(),
-                )
-            ) {
-                view.loadUrl(target)
-            } else if (attempt < 8) {
-                view.postDelayed(
-                    { promoteTvPlayerFrame(view, attempt + 1) },
-                    450L,
-                )
-            }
-        }
-    }
-
-    private fun clickTvPlayerAccessibilityNode(view: WebView): Boolean {
-        val root = view.createAccessibilityNodeInfo() ?: return false
-        val queue = ArrayDeque<AccessibilityNodeInfo>()
-        queue.add(root)
-        var bestNode: AccessibilityNodeInfo? = null
-        var bestScore = 0
-        var visited = 0
-
-        while (queue.isNotEmpty() && visited < 500) {
-            val node = queue.removeFirst()
-            visited += 1
-            val id = node.viewIdResourceName
-                ?.substringAfterLast('/')
-                ?.lowercase()
-                .orEmpty()
-            val score = when {
-                id == "pl_but" -> 100
-                id == "pl_but_background" -> 90
-                id == "play" -> 80
-                id.contains("play") && node.isClickable -> 50
-                else -> 0
-            }
-            if (node.isVisibleToUser && node.isEnabled && node.isClickable && score > bestScore) {
-                bestNode = node
-                bestScore = score
-            }
-            for (index in 0 until node.childCount) {
-                node.getChild(index)?.let(queue::addLast)
-            }
-        }
-        return bestNode?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
-    }
-
-    private fun dispatchWebViewTap(
-        view: WebView,
-        x: Float,
-        y: Float,
-        viewportWidth: Float,
-        viewportHeight: Float,
-    ) {
-        if (
-            !x.isFinite() ||
-            !y.isFinite() ||
-            viewportWidth <= 0f ||
-            viewportHeight <= 0f
-        ) {
-            return
-        }
-        val viewX = x * (view.width / viewportWidth)
-        val viewY = y * (view.height / viewportHeight)
-        val downTime = SystemClock.uptimeMillis()
-        val down = MotionEvent.obtain(
-            downTime,
-            downTime,
-            MotionEvent.ACTION_DOWN,
-            viewX,
-            viewY,
-            0,
-        ).apply {
-            source = InputDevice.SOURCE_TOUCHSCREEN
-        }
-        view.dispatchTouchEvent(down)
-        down.recycle()
-        view.postDelayed(
-            {
-                val upTime = SystemClock.uptimeMillis()
-                val up = MotionEvent.obtain(
-                    downTime,
-                    upTime,
-                    MotionEvent.ACTION_UP,
-                    viewX,
-                    viewY,
-                    0,
-                ).apply {
-                    source = InputDevice.SOURCE_TOUCHSCREEN
-                }
-                view.dispatchTouchEvent(up)
-                up.recycle()
-            },
-            70L,
-        )
     }
 
     private fun resolveRamoflixTitle(
@@ -1940,10 +1444,8 @@ class WebPlayerController(
             MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, MobilePlaybackProvider.MOVY, MobilePlaybackProvider.SEVEN_MOVIES -> Unit // Native mobile catalogues and exact TMDB routes.
             PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
             PlaybackProviderId.MOVIEPIRE -> {
-                if (!BuildConfig.IS_TV) installMobileMoviepireAdShield(view, selection)
-                if (!BuildConfig.IS_TV) {
-                    discoverMoviepireServers(view, selection)
-                }
+                installMobileMoviepireAdShield(view, selection)
+                discoverMoviepireServers(view, selection)
             }
             PlaybackProviderId.DORABY -> { /* Doraby webpage loads directly */ }
             PlaybackProviderId.MIRURO -> Unit // Resolved by the mobile native catalogue.
@@ -2023,7 +1525,6 @@ class WebPlayerController(
         selection: PlaybackSelection,
     ) {
         if (
-            BuildConfig.IS_TV ||
             !selection.source.identity.usesMoviepire ||
             !isActiveSelection(view, selection) ||
             !isMoviepireWrapper(view)
@@ -2065,13 +1566,11 @@ class WebPlayerController(
         view: WebView,
         selection: PlaybackSelection,
     ) {
-        if (BuildConfig.IS_TV || !selection.source.identity.usesMoviepire) return
+        if (!selection.source.identity.usesMoviepire) return
         if (!isActiveSelection(view, selection)) return
         view.evaluateJavascript(
-            mobileMoviepireAdShieldScript() + if (!BuildConfig.IS_TV) {
+            mobileMoviepireAdShieldScript() + kotlin.run {
                 "\n" + nativeStreamDiscoveryScript() + "\n" + mobileMoviepireProgressBridgeScript()
-            } else {
-                ""
             },
             null,
         )
@@ -2326,705 +1825,3 @@ internal fun playbackRestoreStillPending(
     pendingSeekSeconds: Double?,
 ): Boolean = pendingSeekSeconds != null &&
     reportedPositionSeconds < pendingSeekSeconds - 0.05
-
-internal fun shouldResolveMobileMoviepireEpisode(selection: PlaybackSelection): Boolean =
-    !BuildConfig.IS_TV &&
-        selection.source.identity.usesMoviepire &&
-        selection.media.type == MediaType.TV
-
-internal fun mobileMoviepireEpisodeBootstrapUrl(selection: PlaybackSelection): String? =
-    selection.takeIf(::shouldResolveMobileMoviepireEpisode)?.let {
-        "${it.source.baseUrl.trimEnd('/')}/series/${it.media.id}"
-    }
-
-/**
- * Replays Moviepire's own exact episode flow. Moviepire decides movie-versus-series from its
- * router query, while its details page supplies the authoritative episode link and `me` count.
- * Selecting the original season control and clicking that original link keeps this resilient to
- * player-source changes without constructing any embedded-player URL in Aliflix.
- */
-internal fun moviepireExactEpisodeResolverScript(
-    tmdbId: Int,
-    seasonNumber: Int,
-    episodeNumber: Int,
-): String =
-    """
-    (() => {
-      const expectedId = $tmdbId;
-      const expectedSeason = $seasonNumber;
-      const expectedEpisode = $episodeNumber;
-      const current = new URL(location.href);
-      const watchPath = "/watch/" + expectedId;
-      const seriesPath = "/series/" + expectedId;
-      const currentPath = current.pathname.replace(/\/+$/, "") || "/";
-
-      if (currentPath === watchPath) {
-        const exact = Number(current.searchParams.get("s")) === expectedSeason &&
-          Number(current.searchParams.get("e")) === expectedEpisode;
-        if (!exact) return "wrong-route";
-        return document.querySelector(".player iframe, iframe[title^='Video Player']")
-          ? "ready"
-          : "waiting-player";
-      }
-      if (currentPath !== seriesPath) return "wrong-route";
-
-      const seasonSelect = Array.from(document.querySelectorAll("select")).find((candidate) => {
-        const options = Array.from(candidate.options || []);
-        return options.some((option) => Number(option.value) === expectedSeason) &&
-          options.some((option) => /season/i.test(option.textContent || ""));
-      });
-      if (!seasonSelect) return "waiting-details";
-      if (Number(seasonSelect.value) !== expectedSeason) {
-        seasonSelect.value = String(expectedSeason);
-        seasonSelect.dispatchEvent(new Event("input", { bubbles: true }));
-        seasonSelect.dispatchEvent(new Event("change", { bubbles: true }));
-        return "season-changed";
-      }
-
-      const episodeLinks = Array.from(document.querySelectorAll("a[href]"));
-      const exactLink = episodeLinks.find((link) => {
-        try {
-          const target = new URL(link.href, location.href);
-          return target.pathname.replace(/\/+$/, "") === watchPath &&
-            Number(target.searchParams.get("s")) === expectedSeason &&
-            Number(target.searchParams.get("e")) === expectedEpisode;
-        } catch (_) {
-          return false;
-        }
-      });
-      if (exactLink) {
-        exactLink.click();
-        return "episode-clicked";
-      }
-
-      const episodeSection = Array.from(document.querySelectorAll("section,div")).find((node) => {
-        const heading = node.querySelector(":scope > h2, :scope > h3, :scope > .title-row h3");
-        return /episodes/i.test(heading?.textContent || "");
-      });
-      const expandButton = episodeSection?.querySelector(
-        ".title-extend button, button [class*='chevron-down']"
-      )?.closest("button");
-      if (expandButton) {
-        expandButton.click();
-        return "episodes-expanded";
-      }
-      return "waiting-episodes";
-    })();
-    """.trimIndent()
-
-internal fun mobileMoviepireShieldOriginRules(sourceHost: String): Set<String> {
-    val cleanSourceHost = sourceHost
-        .trim()
-        .lowercase()
-        .removePrefix("www.")
-        .takeIf { host ->
-            host.isNotBlank() &&
-                host.none(Char::isWhitespace) &&
-                host.all { character ->
-                    character.isLetterOrDigit() || character == '.' || character == '-'
-                }
-        }
-    return (PlaybackNavigationPolicy.moviepirePlayerDocumentHosts + listOfNotNull(cleanSourceHost))
-        .flatMapTo(linkedSetOf()) { host ->
-            listOf("https://$host", "https://*.$host")
-        }
-}
-
-/**
- * Finds Moviepire's own source selector without relying on a server label or a generated class
- * name. The selector is tagged before it is hidden so native choices can still dispatch the
- * original React input/change events.
- */
-internal fun moviepireServerDiscoveryScript(): String =
-    """
-    (() => {
-      const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
-      const candidates = Array.from(document.querySelectorAll("select"));
-      const select = candidates.find((candidate) => {
-        if (candidate.options.length < 1) return false;
-        const identity = normalize([
-          candidate.getAttribute("aria-label"),
-          candidate.getAttribute("name"),
-          candidate.id,
-          candidate.getAttribute("data-testid")
-        ].filter(Boolean).join(" ")).toLowerCase();
-        const positivelyNamed = /(?:video\s*)?(?:source|server|stream)/i.test(identity);
-        const controls = candidate.closest(".player-controls,[class*='player-controls']");
-        const playerContext = Boolean(controls && (
-          controls.parentElement?.querySelector("iframe,video") ||
-          document.querySelector("iframe[src],video")
-        ));
-        return positivelyNamed || playerContext;
-      });
-      if (!select) return "[]";
-
-      select.dataset.aliflixServerSelect = "true";
-      const wrapperControls = select.closest(".player-controls,[class*='player-controls']");
-      const servers = Array.from(select.options).map((option, index) => {
-        const label = normalize(option.label || option.textContent || option.value);
-        const key = "option:" + index + ":" + String(option.value || "");
-        option.dataset.aliflixServerKey = key;
-        return { key, label, selected: option.selected || select.selectedIndex === index };
-      }).filter((option) => option.label.length > 0);
-      if (servers.length === 0) return "[]";
-
-      select.style.setProperty("visibility", "hidden", "important");
-      select.style.setProperty("opacity", "0", "important");
-      select.style.setProperty("pointer-events", "none", "important");
-      select.setAttribute("aria-hidden", "true");
-      select.tabIndex = -1;
-      const downloadSelector = [
-        "a[download]",
-        "a[href*='download' i]",
-        "[aria-label*='download' i]",
-        "[title*='download' i]",
-        "[data-testid*='download' i]",
-        "[class*='download' i]"
-      ].join(",");
-      Array.from(document.querySelectorAll(downloadSelector)).forEach((control) => {
-        const target = control.closest("a,button") || control;
-        if (!target.querySelector("iframe,video")) {
-          target.style.setProperty("display", "none", "important");
-          target.setAttribute("aria-hidden", "true");
-          target.tabIndex = -1;
-        }
-      });
-      if (wrapperControls && !wrapperControls.querySelector("iframe,video")) {
-        wrapperControls.dataset.aliflixWrapperControls = "true";
-        wrapperControls.style.setProperty("display", "none", "important");
-      }
-      return JSON.stringify(servers);
-    })();
-    """.trimIndent()
-
-internal fun parseMoviepireServerDiscovery(payload: String): List<MoviepireServerOption> =
-    runCatching {
-        val array = JSONArray(payload)
-        (0 until array.length()).mapNotNull { index ->
-            val item = array.optJSONObject(index) ?: return@mapNotNull null
-            val key = item.optString("key").trim()
-            val label = item.optString("label").trim()
-            if (key.isBlank() || label.isBlank()) return@mapNotNull null
-            MoviepireServerOption(
-                key = key,
-                label = label,
-                selected = item.optBoolean("selected"),
-            )
-        }.distinctBy(MoviepireServerOption::key)
-    }.getOrDefault(emptyList())
-
-/** Runs only in origin-restricted Moviepire/player documents registered with AndroidX WebKit. */
-internal fun mobileMoviepireProgressBridgeScript(): String =
-    """
-    (() => {
-      "use strict";
-      if (window.__aliflixPlaybackProgressBridge === true) return true;
-      window.__aliflixPlaybackProgressBridge = true;
-      const bridge = window.AliflixPlaybackProgress;
-      if (!bridge || typeof bridge.postMessage !== "function") return false;
-
-      let activeVideo = null;
-      let lastTimeUpdateSentAt = 0;
-      let pendingSeekSeconds = null;
-      let seekGeneration = 0;
-      let subtitleCues = [];
-      let subtitleDelaySeconds = 0;
-      let subtitleFontPercent = 100;
-      let subtitleLanguage = "";
-      let subtitleLabel = "Aliflix";
-      const subtitleTracks = new WeakMap();
-      const minimumDurationSeconds = 60;
-      const validNumber = (value) => Number.isFinite(value) && value >= 0;
-      const videoScore = (video) => {
-        if (!video) return -1;
-        const rect = video.getBoundingClientRect();
-        const area = Math.max(0, rect.width) * Math.max(0, rect.height);
-        const playingScore = video.paused ? 0 : 1000000000;
-        const visibleScore = getComputedStyle(video).visibility === "hidden" ? 0 : 100000000;
-        return playingScore + visibleScore + area;
-      };
-      const activate = (video) => {
-        if (!activeVideo || !activeVideo.isConnected ||
-            video === activeVideo || videoScore(video) >= videoScore(activeVideo)) {
-          activeVideo = video;
-        }
-        return activeVideo === video;
-      };
-      const seekActiveVideo = () => {
-        const video = activeVideo && activeVideo.isConnected
-          ? activeVideo
-          : document.querySelector("video");
-        const seconds = pendingSeekSeconds;
-        if (!video || !validNumber(seconds) ||
-            !Number.isFinite(video.duration) || video.duration <= 0) return false;
-        activate(video);
-        let target = Math.min(seconds, Math.max(0, video.duration - 0.25));
-        try {
-          if (video.seekable && video.seekable.length > 0) {
-            const firstStart = video.seekable.start(0);
-            if (target < firstStart) target = firstStart;
-          }
-          if (Math.abs(video.currentTime - target) <= 0.05) {
-            pendingSeekSeconds = null;
-            return true;
-          }
-          video.currentTime = target;
-          return true;
-        } catch (_) {
-          return false;
-        }
-      };
-      const requestSeek = (seconds) => {
-        if (!validNumber(seconds)) return;
-        pendingSeekSeconds = seconds;
-        const generation = ++seekGeneration;
-        [0, 100, 300, 700, 1400, 2600, 4500, 7500, 11000].forEach((delay) => {
-          window.setTimeout(() => {
-            if (generation === seekGeneration && pendingSeekSeconds !== null) {
-              seekActiveVideo();
-            }
-          }, delay);
-        });
-      };
-      const controlPlayback = (shouldPlay) => {
-        const video = activeVideo && activeVideo.isConnected
-          ? activeVideo
-          : document.querySelector("video");
-        if (!video || video.ended) return false;
-        activate(video);
-        try {
-          if (shouldPlay === true) {
-            const result = video.play();
-            if (result && typeof result.catch === "function") result.catch(() => {});
-          } else {
-            video.pause();
-          }
-          return true;
-        } catch (_) {
-          return false;
-        }
-      };
-      const ensureSubtitleStyle = () => {
-        let style = document.getElementById("aliflix-native-subtitle-style");
-        if (!style) {
-          style = document.createElement("style");
-          style.id = "aliflix-native-subtitle-style";
-          (document.head || document.documentElement).appendChild(style);
-        }
-        style.textContent = `video::cue {
-          color: #ffffff;
-          background-color: rgba(8, 6, 16, 0.82);
-          font-size: ${'$'}{subtitleFontPercent}%;
-          font-family: system-ui, sans-serif;
-          font-weight: 650;
-          text-shadow: 0 1px 3px rgba(0, 0, 0, 0.96);
-        }`;
-      };
-      const clearVideoSubtitles = (video) => {
-        const previous = subtitleTracks.get(video);
-        if (!previous) return;
-        try {
-          previous.mode = "disabled";
-          Array.from(previous.cues || []).forEach((cue) => previous.removeCue(cue));
-        } catch (_) {}
-        subtitleTracks.delete(video);
-      };
-      const applySubtitles = (video) => {
-        if (!video) return;
-        clearVideoSubtitles(video);
-        ensureSubtitleStyle();
-        if (!Array.isArray(subtitleCues) || subtitleCues.length === 0) return;
-        const Cue = window.VTTCue || window.TextTrackCue;
-        if (typeof Cue !== "function" || typeof video.addTextTrack !== "function") return;
-        try {
-          const track = video.addTextTrack("subtitles", subtitleLabel, subtitleLanguage);
-          track.mode = "showing";
-          subtitleCues.forEach((raw, index) => {
-            if (!Array.isArray(raw) || raw.length < 3) return;
-            const start = Number(raw[0]) + subtitleDelaySeconds;
-            const end = Number(raw[1]) + subtitleDelaySeconds;
-            const text = String(raw[2] || "").slice(0, 500);
-            if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end <= 0 || !text) return;
-            const cue = new Cue(Math.max(0, start), Math.max(0.01, end), text);
-            cue.id = `aliflix-${'$'}{index}`;
-            try {
-              cue.snapToLines = true;
-              cue.line = -3;
-              cue.position = 50;
-              cue.align = "center";
-            } catch (_) {}
-            track.addCue(cue);
-          });
-          subtitleTracks.set(video, track);
-        } catch (_) {}
-      };
-      const applySubtitlesToAllVideos = () => {
-        document.querySelectorAll("video").forEach(applySubtitles);
-      };
-      const setSubtitles = (data) => {
-        const rawCues = Array.isArray(data.cues) ? data.cues.slice(0, 6000) : [];
-        subtitleCues = rawCues.filter((cue) =>
-          Array.isArray(cue) && cue.length >= 3 &&
-          Number.isFinite(Number(cue[0])) && Number.isFinite(Number(cue[1])) &&
-          Number(cue[1]) > Number(cue[0]) && String(cue[2] || "").length > 0
-        );
-        const delay = Number(data.delaySeconds);
-        subtitleDelaySeconds = Number.isFinite(delay) ? Math.max(-10, Math.min(10, delay)) : 0;
-        const font = Number(data.fontPercent);
-        subtitleFontPercent = Number.isFinite(font) ? Math.max(70, Math.min(180, font)) : 100;
-        subtitleLanguage = String(data.language || "").slice(0, 8).toLowerCase();
-        subtitleLabel = String(data.label || "Aliflix").slice(0, 80);
-        applySubtitlesToAllVideos();
-      };
-      const clearSubtitles = () => {
-        subtitleCues = [];
-        document.querySelectorAll("video").forEach(clearVideoSubtitles);
-      };
-      const post = (event, video) => {
-        if (!video || !validNumber(video.currentTime) ||
-            !Number.isFinite(video.duration) || video.duration < minimumDurationSeconds ||
-            !activate(video)) return;
-        if (pendingSeekSeconds !== null) {
-          if (Math.abs(video.currentTime - pendingSeekSeconds) <= 0.05) {
-            pendingSeekSeconds = null;
-          } else {
-            seekActiveVideo();
-          }
-        }
-        let bufferedSeconds = 0;
-        try {
-          if (video.buffered && video.buffered.length > 0) {
-            for (let i = video.buffered.length - 1; i >= 0; i--) {
-              if (video.buffered.start(i) <= video.currentTime + 0.5) {
-                bufferedSeconds = video.buffered.end(i);
-                break;
-              }
-            }
-          }
-        } catch (_) {}
-        try {
-          bridge.postMessage(JSON.stringify({
-            event,
-            positionSeconds: video.currentTime,
-            durationSeconds: video.duration,
-            bufferedSeconds: bufferedSeconds,
-            documentHidden: document.visibilityState !== "visible",
-            nativeStream: window.__aliflixNativeStream?.(video) || null
-          }));
-        } catch (_) {}
-      };
-      const onTimeUpdate = (event) => {
-        const now = Date.now();
-        if (now - lastTimeUpdateSentAt < 250) return;
-        lastTimeUpdateSentAt = now;
-        post("timeupdate", event.currentTarget);
-      };
-      const attach = (video) => {
-        if (!video || video.dataset.aliflixProgressAttached === "true") return;
-        video.dataset.aliflixProgressAttached = "true";
-        try {
-          video.controls = false;
-          video.removeAttribute("controls");
-        } catch (_) {}
-        activate(video);
-        applySubtitles(video);
-        video.addEventListener("loadedmetadata", (event) => {
-          seekActiveVideo();
-          post("loadedmetadata", event.currentTarget);
-        });
-        video.addEventListener("timeupdate", onTimeUpdate);
-        ["durationchange", "canplay", "progress"].forEach((eventName) => {
-          video.addEventListener(eventName, seekActiveVideo);
-        });
-        video.addEventListener("playing", (event) => {
-          seekActiveVideo();
-          post("playing", event.currentTarget);
-        });
-        ["play", "pause", "seeking", "seeked", "ended"].forEach((eventName) => {
-          video.addEventListener(eventName, (event) => post(eventName, event.currentTarget));
-        });
-        if (video.readyState >= 1) {
-          seekActiveVideo();
-          post("loadedmetadata", video);
-        }
-      };
-      const scan = () => document.querySelectorAll("video").forEach(attach);
-      new MutationObserver(scan).observe(document.documentElement || document, {
-        childList: true,
-        subtree: true
-      });
-      document.addEventListener("DOMContentLoaded", scan, { once: true });
-      scan();
-      window.setInterval(() => {
-        if (activeVideo && !activeVideo.paused) {
-          post("timeupdate", activeVideo);
-        }
-      }, 300);
-
-      const receiveCommand = (raw) => {
-        let data = raw;
-        if (typeof raw === "string") {
-          try { data = JSON.parse(raw); } catch (_) { return false; }
-        }
-        if (!data) return false;
-        if (data.type === "aliflix-seek") {
-          requestSeek(Number(data.seconds));
-          return true;
-        }
-        if (data.type === "aliflix-playback-control") {
-          controlPlayback(data.shouldPlay);
-          return true;
-        }
-        if (data.type === "aliflix-speed") {
-          const s = Number(data.speed);
-          if (Number.isFinite(s) && s > 0) {
-            const v = activeVideo || document.querySelector("video");
-            if (v) v.playbackRate = s;
-          }
-          return true;
-        }
-        if (data.type === "aliflix-subtitles") {
-          setSubtitles(data);
-          return true;
-        }
-        if (data.type === "aliflix-subtitles-clear") {
-          clearSubtitles();
-          return true;
-        }
-        return false;
-      };
-      bridge.onmessage = (event) => receiveCommand(event.data);
-      window.addEventListener("message", (event) => {
-        const data = event.data;
-        if (!receiveCommand(data)) return;
-        // Relay down through arbitrary iframe depth. Android also replies directly to the exact
-        // frame that reported progress, while this path covers players that become ready first.
-        document.querySelectorAll("iframe").forEach((frame) => {
-          try { frame.contentWindow?.postMessage(data, "*"); } catch (_) {}
-        });
-      });
-      return true;
-    })();
-    """.trimIndent()
-
-/**
- * Runs at document start in Moviepire and each of its player frames. Native interception remains
- * authoritative; this layer prevents inline/dynamically-generated ad code and removes scam UI
- * without altering video, player controls, fullscreen, or Cast APIs.
- */
-internal fun mobileMoviepireAdShieldScript(): String {
-    val blockedHostsJson = PlaybackNavigationPolicy.blockedAdvertisingHosts
-        .sorted()
-        .joinToString(separator = ",") { host -> JSONObject.quote(host) }
-    return """
-        (() => {
-          "use strict";
-          if (window.__aliflixMoviepireAdShield === true) return true;
-          try {
-            Object.defineProperty(window, "__aliflixMoviepireAdShield", {
-              value: true,
-              configurable: false,
-              writable: false
-            });
-          } catch (_) {
-            window.__aliflixMoviepireAdShield = true;
-          }
-
-          const blockedHosts = [$blockedHostsJson];
-          const cleanHost = (host) => String(host || "").toLowerCase().replace(/^www\./, "");
-          const hostBlocked = (host) => {
-            const clean = cleanHost(host);
-            return blockedHosts.some((blocked) =>
-              clean === blocked || clean.endsWith("." + blocked)
-            );
-          };
-          const urlBlocked = (raw) => {
-            if (!raw) return false;
-            try {
-              const target = new URL(String(raw), location.href);
-              if (hostBlocked(target.hostname)) return true;
-              const path = target.pathname.toLowerCase();
-              if (cleanHost(target.hostname).endsWith("vidrock.ru") && path === "/sbx.js") {
-                return true;
-              }
-              return ["/popunder", "/clickunder", "/push-sdk", "/adserver/", "/ads/"]
-                .some((token) => path.includes(token));
-            } catch (_) {
-              return false;
-            }
-          };
-          const resourceUrl = (node) => {
-            if (!node || !node.tagName) return "";
-            const tag = node.tagName.toUpperCase();
-            if (tag === "OBJECT") return node.getAttribute("data") || "";
-            if (tag === "SCRIPT" || tag === "IFRAME" || tag === "EMBED" || tag === "SOURCE") {
-              return node.getAttribute("src") || "";
-            }
-            if (tag === "A" || tag === "LINK") return node.getAttribute("href") || "";
-            return "";
-          };
-          const blockedNode = (node) => urlBlocked(resourceUrl(node));
-
-          const nativeAppendChild = Node.prototype.appendChild;
-          const nativeInsertBefore = Node.prototype.insertBefore;
-          Node.prototype.appendChild = function(node) {
-            if (blockedNode(node)) return node;
-            return nativeAppendChild.call(this, node);
-          };
-          Node.prototype.insertBefore = function(node, reference) {
-            if (blockedNode(node)) return node;
-            return nativeInsertBefore.call(this, node, reference);
-          };
-
-          const nativeAddEventListener = EventTarget.prototype.addEventListener;
-          EventTarget.prototype.addEventListener = function(type, listener, options) {
-            if (this === document && type === "click" && listener) {
-              let source = "";
-              try { source = Function.prototype.toString.call(listener).toLowerCase(); } catch (_) {}
-              if ([
-                "adnetworks", "adlastfired", "popunder", "clickunder",
-                "profiton", "hilltopads", "monetag"
-              ].some((token) => source.includes(token))) {
-                return;
-              }
-            }
-            return nativeAddEventListener.call(this, type, listener, options);
-          };
-
-          const noPopup = () => null;
-          try {
-            Object.defineProperty(window, "open", {
-              value: noPopup,
-              configurable: false,
-              writable: false
-            });
-          } catch (_) {
-            window.open = noPopup;
-          }
-
-          const adSelector = [
-            "#paldo-ad",
-            "ins.adsbygoogle",
-            "[id^='google_ads']",
-            "[id^='ad-']",
-            "[id^='ads-']",
-            "[class~='ad']",
-            "[class^='ad-']",
-            "[class*=' ad-']",
-            "[class*='ad-container']",
-            "[class*='ad-banner']",
-            "[class*='advertisement']",
-            "[class*='adsbox']",
-            "[data-ad-slot]",
-            "[data-ad-unit]",
-            "[data-advertisement]",
-            "[aria-label='advertisement']",
-            "[aria-label='sponsored']"
-          ].join(",");
-          const scamPhrases = [
-            "system warning detected",
-            "device has been infected",
-            "security alert",
-            "file is ready to download",
-            "install the recommended security app",
-            "run the app to remove all threats",
-            "tap the button below",
-            "time remaining",
-            "your sim card",
-            "remove all threats"
-          ];
-          const ownsVideo = (node) => Boolean(
-            node && (
-              node.matches && node.matches("video, audio") ||
-              node.querySelector && node.querySelector("video, audio")
-            )
-          );
-          const removeNode = (node) => {
-            if (!node || ownsVideo(node)) return;
-            try { node.remove(); } catch (_) {}
-          };
-          const ensureStyle = () => {
-            if (document.getElementById("aliflix-moviepire-ad-style")) return;
-            const parent = document.head || document.documentElement;
-            if (!parent) return;
-            const style = document.createElement("style");
-            style.id = "aliflix-moviepire-ad-style";
-            style.textContent = adSelector + "{" +
-              "display:none!important;visibility:hidden!important;" +
-              "pointer-events:none!important;width:0!important;height:0!important;" +
-              "min-width:0!important;min-height:0!important;margin:0!important;padding:0!important}";
-            nativeAppendChild.call(parent, style);
-          };
-          const cleanup = () => {
-            ensureStyle();
-            try {
-              document.querySelectorAll(adSelector).forEach(removeNode);
-              document.querySelectorAll(
-                "script[src],iframe[src],object[data],embed[src],source[src],link[href]"
-              ).forEach((node) => {
-                if (blockedNode(node)) removeNode(node);
-              });
-              document.querySelectorAll("a[href]").forEach((anchor) => {
-                if (urlBlocked(anchor.getAttribute("href"))) {
-                  removeNode(anchor);
-                  return;
-                }
-                const style = getComputedStyle(anchor);
-                const rect = anchor.getBoundingClientRect();
-                const viewport = Math.max(1, innerWidth * innerHeight);
-                const coverage = (rect.width * rect.height) / viewport;
-                const external = (() => {
-                  try {
-                    return cleanHost(new URL(anchor.href, location.href).hostname) !==
-                      cleanHost(location.hostname);
-                  } catch (_) { return false; }
-                })();
-                if (
-                  external &&
-                  !ownsVideo(anchor) &&
-                  (style.position === "fixed" || style.position === "sticky") &&
-                  coverage > 0.2
-                ) {
-                  removeNode(anchor);
-                }
-              });
-              document.querySelectorAll(
-                "[role='dialog'],dialog,aside,[class*='modal'],[class*='popup'],[class*='overlay']"
-              ).forEach((node) => {
-                if (ownsVideo(node)) return;
-                const copy = String(node.innerText || node.textContent || "").toLowerCase();
-                const matches = scamPhrases.reduce(
-                  (count, phrase) => count + (copy.includes(phrase) ? 1 : 0),
-                  0
-                );
-                if (matches >= 2) removeNode(node);
-              });
-            } catch (_) {}
-          };
-
-          let cleanupScheduled = false;
-          const scheduleCleanup = () => {
-            if (cleanupScheduled) return;
-            cleanupScheduled = true;
-            requestAnimationFrame(() => {
-              cleanupScheduled = false;
-              cleanup();
-            });
-          };
-          const observer = new MutationObserver(scheduleCleanup);
-          observer.observe(document, { childList: true, subtree: true });
-          nativeAddEventListener.call(document, "DOMContentLoaded", cleanup, { once: true });
-          nativeAddEventListener.call(document, "click", (event) => {
-            const anchor = event.target && event.target.closest
-              ? event.target.closest("a[href]")
-              : null;
-            if (!anchor || !urlBlocked(anchor.getAttribute("href"))) return;
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            removeNode(anchor);
-          }, true);
-          scheduleCleanup();
-          return true;
-        })();
-    """.trimIndent()
-}

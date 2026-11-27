@@ -1,0 +1,60 @@
+name: Repository checks
+
+on:
+  pull_request:
+    paths-ignore: ['docs/archive/**']
+  push:
+    branches: [main]
+    paths-ignore: ['docs/archive/**']
+
+permissions:
+  contents: read
+
+jobs:
+  formatting:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Check whitespace in changed lines
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ "$BASE" =~ ^0+$ ]]; then
+            BASE="$(git hash-object -t tree -w /dev/null)"
+          fi
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check "$BASE" HEAD -- . ':(exclude)docs/archive/**'
+      - name: Test release preflight, manifests, and promotion
+        run: python .github/scripts/test_mobile_release.py
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Install Android SDK packages
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
+      - name: Build, test, and lint mobile
+        run: bash gradlew :app:testMobileDebugUnitTest :app:lintMobileDebug :app:assembleMobileDebug
+
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: recommendation-worker/package-lock.json
+      - name: Typecheck and test Worker
+        working-directory: recommendation-worker
+        run: |
+          npm ci
+          npm run typecheck
+          npm test -- --maxWorkers=4
+          node --test ../.github/scripts/verify-ask-readiness.test.mjs

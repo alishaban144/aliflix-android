@@ -49,7 +49,7 @@ internal fun MobilePlayerControlsVisibility(
 @Composable
 internal fun Modifier.playerActionReveal(rotate: Boolean = true): Modifier {
     val phase = LocalPlayerReveal.current ?: return this
-    if (com.aliflix.app.BuildConfig.IS_TV) return this
+
     return graphicsLayer {
         val p = phase.value
         scaleX = .9f + .1f * p; scaleY = scaleX

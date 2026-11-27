@@ -12,8 +12,6 @@ val recommendationBaseUrl = providers.gradleProperty("ALIFLIX_RECOMMENDATION_BAS
     .get()
 require(recommendationBaseUrl.matches(Regex("https://[A-Za-z0-9.:/_-]+")))
 
-val tvVersionCode = 159
-val tvVersionName = "3.1.69"
 val releaseKeystoreFile = System.getenv("ALIFLIX_KEYSTORE_FILE")
 val releaseKeystorePassword = System.getenv("ALIFLIX_KEYSTORE_PASSWORD")
 val releaseKeyAlias = System.getenv("ALIFLIX_KEY_ALIAS")
@@ -30,10 +28,6 @@ val mobileUpdateManifestUrl = providers
     .gradleProperty("ALIFLIX_MOBILE_UPDATE_MANIFEST_URL")
     .orElse("$githubReleaseBaseUrl/update-mobile-arm64.json")
     .get()
-val tvUpdateManifestUrl = providers
-    .gradleProperty("ALIFLIX_TV_UPDATE_MANIFEST_URL")
-    .orElse("$githubReleaseBaseUrl/update-tv.json")
-    .get()
 
 android {
     namespace = "com.aliflix.app"
@@ -43,8 +37,8 @@ android {
         applicationId = "com.aliflix.app"
         minSdk = 29
         targetSdk = 37
-        versionCode = 175
-        versionName = "3.1.85"
+        versionCode = if (compatibilityBridge) 265 else mobileVersionCode
+        versionName = if (compatibilityBridge) "3.1.175" else mobileVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField(
@@ -52,35 +46,19 @@ android {
             "RECOMMENDATION_AI_BASE_URL",
             "\"$recommendationBaseUrl\""
         )
+        buildConfigField(
+            "String",
+            "UPDATE_MANIFEST_URL",
+            "\"${mobileUpdateManifestUrl.replace("\"", "\\\"")}\"",
+        )
     }
 
+    // Keep the published mobile task names, APK path, and source sets stable.
     flavorDimensions += "formFactor"
     productFlavors {
         create("mobile") {
             dimension = "formFactor"
             proguardFile("mobile-proguard-rules.pro")
-            versionCode = if (compatibilityBridge) 265 else mobileVersionCode
-            versionName = if (compatibilityBridge) "3.1.175" else mobileVersionName
-            buildConfigField("boolean", "IS_TV", "false")
-            buildConfigField(
-                "String",
-                "UPDATE_MANIFEST_URL",
-                "\"${mobileUpdateManifestUrl.replace("\"", "\\\"")}\"",
-            )
-        }
-        create("tv") {
-            dimension = "formFactor"
-            applicationIdSuffix = ".tv"
-            versionCode = tvVersionCode
-            versionName = tvVersionName
-            versionNameSuffix = "-tv"
-            minSdk = 30
-            buildConfigField("boolean", "IS_TV", "true")
-            buildConfigField(
-                "String",
-                "UPDATE_MANIFEST_URL",
-                "\"${tvUpdateManifestUrl.replace("\"", "\\\"")}\"",
-            )
         }
     }
 
@@ -140,17 +118,15 @@ android {
     }
 }
 
-// Compress the original native bytes. TV keeps its existing packaging.
-androidComponents.onVariants(androidComponents.selector().withFlavor("formFactor" to "mobile")) { variant ->
+// Compress the original native bytes for all variants.
+val unusedProtobufResources = file("mobile-unused-protobuf-resources.txt").readLines().filter(String::isNotBlank)
+androidComponents.onVariants { variant ->
     variant.packaging.jniLibs.useLegacyPackaging.set(true)
     variant.packaging.jniLibs.useLegacyPackagingFromBundle.set(true)
-    file("mobile-unused-protobuf-resources.txt").readLines().filter { it.isNotBlank() }.forEach { resource ->
-        variant.packaging.resources.excludes.add(resource)
-    }
+    variant.packaging.resources.excludes.addAll(unusedProtobufResources)
 }
 
-androidComponents.onVariants(androidComponents.selector()
-    .withFlavor("formFactor" to "mobile").withBuildType("release")) { variant ->
+androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
     if (!compatibilityBridge) {
         // Packaging only: never rebuild, strip differently, quantize or replace a library.
         // Debug retains emulator ABIs; the signed migration bridge remains universal.
@@ -171,6 +147,9 @@ val validateReleaseSigning by tasks.registering {
     }
 }
 
+tasks.matching { it.name in setOf("packageMobileRelease", "packageMobileReleaseBundle", "signMobileReleaseBundle") }
+    .configureEach { dependsOn(validateReleaseSigning) }
+
 // Optional real Windows JNI validation; ordinary CI still runs the portable
 // labelled-speech and alignment regressions. No emulator or JVM VAD substitute.
 tasks.withType<Test>().matching { it.name.startsWith("testMobile") }.configureEach {
@@ -185,15 +164,6 @@ tasks.withType<Test>().matching { it.name.startsWith("testMobile") }.configureEa
             }
         }
     })
-}
-
-// The Firebase project currently registers only the mobile application ID.
-// Account UI and Firebase initialization are intentionally mobile-only; keep
-// the TV flavor buildable until a deliberate TV account experience is designed.
-tasks.matching {
-    it.name.startsWith("processTv") && it.name.endsWith("GoogleServices")
-}.configureEach {
-    enabled = false
 }
 
 dependencies {

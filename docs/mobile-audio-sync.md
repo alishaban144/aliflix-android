@@ -61,8 +61,8 @@ unobserved streaming scene cannot be verified without additional reference evide
 
 ## Native detector selection and overhead
 
-See [measured results](validation/audio-sync-vad.json) and
-[`compare_vad.py`](../tools/audio-sync/compare_vad.py).
+See [measured results](../docs\archive\validation\audio-sync-vad.json) and
+[`compare_vad.py`](../tools\audio-sync\compare_vad.py).
 The benchmark uses thirty manually labelled human-speech recordings (262.08 s)
 from [TEN VAD's testset](https://github.com/TEN-framework/ten-vad/tree/22a3bcd4509d0faaa8eef4881e8af5f39c178950/testset).
 
@@ -84,7 +84,7 @@ below 0.1 speech probability (1.024 seconds), the session starts fresh. Ordinary
 pauses and uncertain speech retain history. In the continuous phone fixture this
 improved Silero F1 from 0.8735 to 0.9321; WebRTC measured 0.8858. Android Silero mean
 inference was 0.367 ms, p95 0.416 ms per 32 ms chunk, compared with WebRTC mean
-0.0051 ms per 20 ms frame. See [device measurements](validation/native-vad-device.json).
+0.0051 ms per 20 ms frame. See [device measurements](../docs\archive\validation\native-vad-device.json).
 
 One background CPU worker uses ONNX Runtime Android 1.30.0 with one inference
 thread, a 128-frame queue (~40 KiB transient PCM), and a bounded pair of compact
@@ -176,12 +176,12 @@ the action ended as Unable to Verify in 19,040 ms, without changing any timing.
 After normal playback naturally accumulated 85 seconds of soundtrack, one tap
 verified the correction in 506 ms: offset -7.28 seconds, rate 1.0, confidence
 0.8014, zero position discontinuities and zero rebuffer events. Playback remained
-running. See [actual-film phone report](validation/quick-sync-real-film-device.txt).
+running. See [actual-film phone report](../docs\archive\validation\quick-sync-real-film-device.txt).
 The preparation time is ordinary playback before the tap; it is not claimed as
 cold-start synchronization in 506 ms.
 
 Measured fingerprints from another actual phone playback are committed as a
-small permanent [regression input](../app/src/testMobile/resources/audio-sync-tears-of-steel.json).
+small permanent [regression input](../app\src\testMobile\resources\audio-sync-tears-of-steel.json).
 It contains binary speech decisions and numeric published caption times; it
 contains neither PCM nor movie transcript text. This tests film offset correction,
 direct-clock reference verification and FPS correction against a verified full
@@ -190,12 +190,12 @@ subtitle reference, without a network download in CI.
 Normal streaming playback separately verified a -46.92-second offset in 746 ms
 and a 25/24 FPS correction in 509 ms, after 130 and 200 seconds of automatically
 accumulated normal-speed history respectively. Cancel prevented a stale commit.
-See [streaming offset](validation/quick-sync-streaming-offset-device.txt) and
-[streaming FPS](validation/quick-sync-streaming-drift-device.txt) reports.
+See [streaming offset](../docs\archive\validation\quick-sync-streaming-offset-device.txt) and
+[streaming FPS](../docs\archive\validation\quick-sync-streaming-drift-device.txt) reports.
 
 The independent downloaded-media test uses thirty public manually labelled human
 recordings, concatenated with silent boundaries by
-[`phone_fixture.py`](../tools/audio-sync/phone_fixture.py). The complete 322-second
+[`phone_fixture.py`](../tools\audio-sync\phone_fixture.py). The complete 322-second
 cache is analysed with its fixture server shut down. Physical results:
 
 | Case | Verified result | Tap to result |
@@ -205,7 +205,7 @@ cache is analysed with its fixture server shut down. Physical results:
 | Edited scenes | Two regions; -46.93 initial offset | 6,623 ms |
 | Ambiguous edits | Rejected; original times preserved | 7,687 ms |
 
-See [downloaded-media phone report](validation/quick-sync-offline-device.txt).
+See [downloaded-media phone report](../docs\archive\validation\quick-sync-offline-device.txt).
 Every accepted corrected cue must be within 0.6 seconds of its separate human
 annotation. Tests also check unchanged originals, manual delay applied separately,
 zero playback discontinuities/rebuffer events, cache storage and Reset preserving
@@ -244,7 +244,7 @@ Cast receiver or sustained battery test is claimed.
 The final v3.1.148 minified APK passed the real-film driver: one tap verified
 -7.32 seconds against the known -7.25-second offset in 1,043 ms, then Reset
 restored original timestamps. This used normal-speed, automatically accumulated
-playback evidence. See [minified phone report](validation/quick-sync-minified-device.txt).
+playback evidence. See [minified phone report](../docs\archive\validation\quick-sync-minified-device.txt).
 
 Original cue ownership, independent manual delay, stable signed-URL-free identity
 and Firebase confidence schema 4 remain intact. Arabic paragraph direction and
@@ -259,7 +259,7 @@ recognition disconnections retry in the background; unlabeled audio can try the
 English decoder when English captions are selected. This selects a candidate
 decoder, and never proves the soundtrack language or accepts a correction on its
 own. Independent word matches, held dialogue and contradictory-scene rejection
-still determine acceptance. See [normal-route evidence](mobile-v3.1.153-validation.md).
+still determine acceptance. See [normal-route evidence](../docs\archive\mobile-v3.1.153-validation.md).
 
 ## Japanese anime startup
 
@@ -287,7 +287,7 @@ their previous direct stream before fetching each catalogue again.
 Actual fresh starts on the Pixel decoded video and audio through Miruro for One
 Piece S1E1 in 2,689 ms and Attack on Titan S1E1 in 1,826 ms. Both passed a forward
 seek to 180 seconds with audio retained; playback progress identity remains
-provider independent. See [startup measurements](validation/anime-startup-device.txt).
+provider independent. See [startup measurements](../docs\archive\validation\anime-startup-device.txt).
 AniKuro's primary CDN timed out during investigation; the race lets the verified
 Miruro result start promptly. These measurements are examples, not a guarantee
 of zero latency for every title or third-party CDN state.

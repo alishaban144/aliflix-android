@@ -457,14 +457,14 @@ class RottenTomatoesClient internal constructor(
             ) >= 65
             val episodeMatches = episode.title.equals("Episode ${episode.number}", ignoreCase = true) ||
                 titleIdentityScore(
-                    if(com.aliflix.app.BuildConfig.IS_TV) normalizeText(episode.title) else normalizedEpisodeRatingTitle(episode.title),
-                    if(com.aliflix.app.BuildConfig.IS_TV) normalizeText(returnedTitle) else normalizedEpisodeRatingTitle(returnedTitle)) >= 55
+                    normalizedEpisodeRatingTitle(episode.title),
+                    normalizedEpisodeRatingTitle(returnedTitle)) >= 55
             // Current RT episode JSON-LD can omit episodeNumber and the part
             // suffix. The exact canonical S/E path plus primary series/season
             // identity still distinguishes adjacent parts without guessing.
             val exactEpisodePath = canonicalPath == runCatching { URI(finalUrl).path.trimEnd('/') }.getOrNull()
             val returnedSeason = json.optJSONObject("partOfSeason")?.optString("seasonNumber")?.toIntOrNull()
-            val mobilePrimaryMatch = !BuildConfig.IS_TV && returnedNumber == null && exactEpisodePath &&
+            val mobilePrimaryMatch = returnedNumber == null && exactEpisodePath &&
                 returnedSeason == episode.seasonNumber &&
                 normalizedEpisodeRatingTitle(returnedTitle) == episodeRatingTitleBase(episode.title)
             if (seriesMatches && ((returnedNumber == episode.number && episodeMatches) || mobilePrimaryMatch)) {
@@ -477,8 +477,7 @@ class RottenTomatoesClient internal constructor(
         return pageTitle.contains(normalizeText(series.title)) &&
             (
                 episode.title.equals("Episode ${episode.number}", ignoreCase = true) ||
-                    (if(com.aliflix.app.BuildConfig.IS_TV) pageTitle.contains(normalizeText(episode.title))
-                    else normalizedEpisodeRatingTitle(document.title()).contains(episodeRatingTitleBase(episode.title)))
+                    (normalizedEpisodeRatingTitle(document.title()).contains(episodeRatingTitleBase(episode.title)))
                 )
     }
 
@@ -690,7 +689,7 @@ class RottenTomatoesClient internal constructor(
         doc.selectFirst("[slot=releaseYear], [data-qa=release-year]")?.text()?.take(4)?.toIntOrNull()?.let(::add)
         // Current title headers publish the year as an exact metadata prop,
         // including unrated shorts that have no JSON-LD release date.
-        if (!BuildConfig.IS_TV) doc.select("media-hero [slot=metadata-prop]").forEach {
+        doc.select("media-hero [slot=metadata-prop]").forEach {
             it.text().trim().takeIf { value -> value.matches(Regex("[0-9]{4}")) }?.toIntOrNull()?.let(::add)
         }
         SLUG_YEAR_PATTERN.findAll(canonical.ifBlank { doc.location() }).forEach { match ->

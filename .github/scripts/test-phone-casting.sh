@@ -7,7 +7,7 @@ export ANDROID_AVD_HOME="$HOME/.android/avd"
 export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
 mkdir -p "$ANDROID_AVD_HOME" .validation
 (yes | sdkmanager --licenses >/dev/null) || true
-sdkmanager --install "platforms;android-$API" "build-tools;37.0.0" platform-tools emulator "system-images;android-$API;google_apis;x86_64" >/dev/null
+sdkmanager --install "platforms;android-37.0" "build-tools;37.0.0" platform-tools emulator "system-images;android-$API;google_apis;x86_64" >/dev/null
 echo no | avdmanager create avd --name casting-phone --package "system-images;android-$API;google_apis;x86_64"
 # The generic phone profile avoids the Pixel profile's broken Linux virtual-display buffers.
 printf 'hw.cpu.ncore=4\nhw.ramSize=3072M\nhw.heapSize=512M\n' >> "$ANDROID_AVD_HOME/casting-phone.avd/config.ini"

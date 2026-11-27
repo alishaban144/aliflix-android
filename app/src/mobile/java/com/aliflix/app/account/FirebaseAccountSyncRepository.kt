@@ -663,7 +663,7 @@ class FirebaseAccountSyncRepository(
     private fun applySettingsSnapshot(settings: AccountSettingsSnapshot) {
         val playback = PlaybackPreferences(
             generalProvider = PlaybackProvider.fromStoredValue(settings.generalProvider)
-                ?: defaultGeneralPlaybackProvider(isTv = false),
+                ?: defaultGeneralPlaybackProvider(),
             ramoflixConfig = RamoflixConfig(
                 RamoflixConfig.normalizeBaseUrl(settings.ramoflixUrl)
                     ?: RamoflixConfig.DEFAULT_URL,

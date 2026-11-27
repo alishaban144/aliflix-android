@@ -147,11 +147,7 @@ class MediaTest {
     fun newInstallDefaultChangesOnlyForMobile() {
         assertEquals(
             MobilePlaybackProvider.FLIXER,
-            defaultGeneralPlaybackProvider(isTv = false),
-        )
-        assertEquals(
-            PlaybackProviderId.RAMOFLIX,
-            defaultGeneralPlaybackProvider(isTv = true),
+            defaultGeneralPlaybackProvider(),
         )
     }
 

@@ -5,7 +5,6 @@ import com.aliflix.app.model.PlaybackProviderId
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
-import com.aliflix.app.BuildConfig
 import com.aliflix.app.model.PlaybackPreferences
 import com.aliflix.app.model.PlaybackProvider
 import com.aliflix.app.model.SubtitleLanguage
@@ -99,14 +98,14 @@ class PlaybackProviderRepository(private val context: Context) {
     }
 
     fun selectPreferredSubtitleLanguage(language: SubtitleLanguage) {
-        if (!BuildConfig.IS_TV) clearLegacySubtitleChoice()
+        clearLegacySubtitleChoice()
         prefs.edit { putString(KEY_PREFERRED_SUBTITLE_LANGUAGE, language.code) }
         _preferences.value = _preferences.value.copy(preferredSubtitleLanguage = language)
         recordLocalChange()
     }
 
     fun setAutoDisplaySubtitles(enabled: Boolean) {
-        if (!BuildConfig.IS_TV) clearLegacySubtitleChoice()
+        clearLegacySubtitleChoice()
         prefs.edit { putBoolean(KEY_AUTO_DISPLAY_SUBTITLES, enabled) }
         _preferences.value = _preferences.value.copy(autoDisplaySubtitles = enabled)
         recordLocalChange()
@@ -121,7 +120,7 @@ class PlaybackProviderRepository(private val context: Context) {
 
     /** Applies cloud/account-scope settings without creating a write-back loop. */
     fun applySyncedPreferences(value: PlaybackPreferences, updatedAtMillis: Long) {
-        if (!BuildConfig.IS_TV && value.preferredSubtitleLanguage != _preferences.value.preferredSubtitleLanguage) {
+        if (value.preferredSubtitleLanguage != _preferences.value.preferredSubtitleLanguage) {
             clearLegacySubtitleChoice()
         }
         val provider = value.effectiveGeneralProvider
@@ -148,7 +147,7 @@ class PlaybackProviderRepository(private val context: Context) {
     }
 
     private fun loadPreferences(): PlaybackPreferences {
-        if (!BuildConfig.IS_TV && !prefs.getBoolean("flixer_default_v1", false)) {
+        if (!prefs.getBoolean("flixer_default_v1", false)) {
             prefs.edit {
                 putBoolean("flixer_default_v1", true)
                 putString(KEY_GENERAL_PROVIDER_ID, com.aliflix.app.model.MobilePlaybackProvider.FLIXER.name)
@@ -180,7 +179,7 @@ class PlaybackProviderRepository(private val context: Context) {
             ?: prefs.getString(KEY_LEGACY_ACTIVE_SOURCE_ID, null)
         val generalProvider = PlaybackProvider.fromStoredValue(storedProvider)
             ?.takeIf(PlaybackProvider::supportsGeneralPlayback)
-            ?: defaultGeneralPlaybackProvider(isTv = BuildConfig.IS_TV)
+            ?: defaultGeneralPlaybackProvider()
         if (storedProvider != null) {
             prefs.edit {
                 putString(KEY_GENERAL_PROVIDER_ID, generalProvider.name)
@@ -199,7 +198,7 @@ class PlaybackProviderRepository(private val context: Context) {
             preferredSubtitleLanguage = SubtitleLanguage.fromCode(
                 prefs.getString(KEY_PREFERRED_SUBTITLE_LANGUAGE, null),
             ),
-            autoDisplaySubtitles = prefs.getBoolean(KEY_AUTO_DISPLAY_SUBTITLES, !BuildConfig.IS_TV),
+            autoDisplaySubtitles = prefs.getBoolean(KEY_AUTO_DISPLAY_SUBTITLES, true),
         )
     }
 

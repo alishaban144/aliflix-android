@@ -21,11 +21,10 @@ class LinkedSiteCatalogTest {
         assertFalse(serienstreamSearchProvesAbsence(Jsoup.parse("""<h1>Checking browser</h1>""")))
     }
     @Test fun externalPlayerDiscoveryIsGrantedOnlyToTheTemporaryExactHttpsOriginAndNeverTv() {
-        assertEquals("https://player.example",trustedNativeEmbedOrigin("https://player.example:443/e/movie",true,false))
-        assertNull(trustedNativeEmbedOrigin("https://player.example/e/movie",false,false))
-        assertNull(trustedNativeEmbedOrigin("https://player.example/e/movie",true,true))
+        assertEquals("https://player.example",trustedNativeEmbedOrigin("https://player.example:443/e/movie", preparing = true))
+        assertNull(trustedNativeEmbedOrigin("https://player.example/e/movie", preparing = false))
         for(url in listOf("http://player.example/e/movie","https://user@player.example/e/movie","https://player.example:8443/e/movie"))
-            assertNull(trustedNativeEmbedOrigin(url,true,false))
+            assertNull(trustedNativeEmbedOrigin(url, preparing = true))
     }
     @Test fun ownerBlockedMirrorsAreNotAdvertisedAsPlayable() {
         val page=Jsoup.parse("""<div class="provider-row"><span class="provider-row__lang">English</span>

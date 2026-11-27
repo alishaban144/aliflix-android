@@ -16,7 +16,7 @@ sealed interface PlaybackProvider {
     companion object {
         fun fromStoredValue(value: String?): PlaybackProvider? =
             PlaybackProviderId.fromStoredValue(value) ?: MobilePlaybackProvider.entries.firstOrNull {
-                !com.aliflix.app.BuildConfig.IS_TV && (it.name.equals(value, true) || it.displayName.equals(value, true))
+                (it.name.equals(value, true) || it.displayName.equals(value, true))
             }
 
         fun valueOf(value: String): PlaybackProvider =
@@ -35,11 +35,11 @@ enum class MobilePlaybackProvider(
     SEVEN_MOVIES("7Movies", "https://7movies.ac/"),
     MOVY("Movy", "https://www.movy.sx/");
 
-    override val supportsGeneralPlayback: Boolean get() = !com.aliflix.app.BuildConfig.IS_TV && this != ANIWORLD
+    override val supportsGeneralPlayback: Boolean get() = this != ANIWORLD
     override val isBeta: Boolean = false
     override val usesMoviepire: Boolean = false
     override val isAnimeNative: Boolean get() = this == ANIWORLD
-    override fun isAvailableFor(media: Media): Boolean = !com.aliflix.app.BuildConfig.IS_TV && when(this) {
+    override fun isAvailableFor(media: Media): Boolean = when(this) {
         SERIENSTREAM -> media.type == MediaType.TV
         FILMO -> media.type == MediaType.MOVIE
         ANIWORLD -> media.type == MediaType.TV && media.isJapaneseAnime
@@ -92,7 +92,7 @@ enum class PlaybackProviderId(
         get() = this == MIRURO || this == ANIKURO
 
     override fun isAvailableFor(media: Media): Boolean =
-        (supportsGeneralPlayback && (this != CINEJOY || !com.aliflix.app.BuildConfig.IS_TV)) || (isAnimeNative && !com.aliflix.app.BuildConfig.IS_TV && media.isJapaneseAnime)
+        (supportsGeneralPlayback) || (isAnimeNative && media.isJapaneseAnime)
 
     companion object {
         fun fromStoredValue(value: String?): PlaybackProviderId? =
@@ -120,11 +120,9 @@ enum class PlaybackProviderId(
     }
 }
 
-internal fun defaultGeneralPlaybackProvider(isTv: Boolean): PlaybackProvider =
-    if (isTv) PlaybackProviderId.RAMOFLIX else MobilePlaybackProvider.FLIXER
+internal fun defaultGeneralPlaybackProvider(): PlaybackProvider = MobilePlaybackProvider.FLIXER
 
-internal val PlaybackProvider.hasSourceEditions: Boolean get() = !com.aliflix.app.BuildConfig.IS_TV &&
-    this in setOf(MobilePlaybackProvider.SERIENSTREAM,MobilePlaybackProvider.FILMO,MobilePlaybackProvider.ANIWORLD)
+internal val PlaybackProvider.hasSourceEditions: Boolean get() = this in setOf(MobilePlaybackProvider.SERIENSTREAM,MobilePlaybackProvider.FILMO,MobilePlaybackProvider.ANIWORLD)
 
 internal fun mobileGeneralPlaybackProviders(): List<PlaybackProvider> = buildList {
     add(MobilePlaybackProvider.FLIXER)
@@ -272,11 +270,11 @@ data class PlaybackPreferences(
     val autoDisplaySubtitles: Boolean = false,
 ) {
     val safeGeneralProvider: PlaybackProviderId
-        get() = (generalProvider as? PlaybackProviderId)?.takeIf { it.supportsGeneralPlayback && (!com.aliflix.app.BuildConfig.IS_TV || it != PlaybackProviderId.CINEJOY) }
+        get() = (generalProvider as? PlaybackProviderId)?.takeIf { it.supportsGeneralPlayback }
             ?: PlaybackProviderId.RAMOFLIX
 
     val effectiveGeneralProvider: PlaybackProvider
-        get() = generalProvider.takeIf { !com.aliflix.app.BuildConfig.IS_TV && it.supportsGeneralPlayback }
+        get() = generalProvider.takeIf { it.supportsGeneralPlayback }
             ?: safeGeneralProvider
 
     fun sourceFor(
@@ -286,11 +284,11 @@ data class PlaybackPreferences(
         val provider = requestedProvider
             ?.takeIf { candidate -> candidate.isAvailableFor(media) }
             ?: when {
-                !com.aliflix.app.BuildConfig.IS_TV && media.type == MediaType.TV && media.isJapaneseAnime -> MobilePlaybackProvider.ANIWORLD
-                !com.aliflix.app.BuildConfig.IS_TV && media.type == MediaType.TV -> MobilePlaybackProvider.SERIENSTREAM
-                !com.aliflix.app.BuildConfig.IS_TV && media.type == MediaType.MOVIE -> MobilePlaybackProvider.FILMO
+                media.type == MediaType.TV && media.isJapaneseAnime -> MobilePlaybackProvider.ANIWORLD
+                media.type == MediaType.TV -> MobilePlaybackProvider.SERIENSTREAM
+                media.type == MediaType.MOVIE -> MobilePlaybackProvider.FILMO
                 effectiveGeneralProvider.isAvailableFor(media) -> effectiveGeneralProvider
-                else -> defaultGeneralPlaybackProvider(com.aliflix.app.BuildConfig.IS_TV)
+                else -> defaultGeneralPlaybackProvider()
             }
         return when (provider) {
             PlaybackProviderId.CINEJOY -> PlaybackSource(PlaybackProviderId.CINEJOY)
