@@ -66,3 +66,54 @@ it('cannot renew another owner, expired session or a session deleted during toke
   }finally{e.GEMINI_API_KEY=old;}
  });
 });
+it('recovers cooled keys after 60s and automatically fails over when a pinned renew project returns 429',async()=>{
+ await runInDurableObject(env.TALK_SESSIONS.getByName('cooldown-recovery-'+crypto.randomUUID()),async(_,state)=>{
+  const keys=['primary-','secondary-','tertiary-'].map(prefix=>prefix+crypto.randomUUID());
+  const service=new TalkSession(state,{...env,CURSOR_SIGNING_SECRET:'test-only',GEMINI_API_KEY:keys[0],GEMINI_API_KEY_SECONDARY:keys[1],GEMINI_API_KEY_TERTIARY:keys[2]} as RecommendationEnv);
+  const id=crypto.randomUUID(),expires=Date.now()+600000;
+  // Simulate primary & secondary previously cooled, now expired, while tertiary is active.
+  state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)','live:'+id,JSON.stringify({
+   keySlot:'tertiary',keyCooldowns:{primary:Date.now()-1000,secondary:Date.now()-1000},
+   context:TalkContextSchema.parse({voice:'Aoede',responseLanguage:'en'}),expires,calls:4,searches:0,grants:[],
+  }),expires);
+  vi.spyOn(Math,'random').mockReturnValue(0);
+  const fetcher=vi.spyOn(globalThis,'fetch').mockImplementation(async()=>Response.json({name:'auth_tokens/recovered'}));
+  const rotated=await service.renew(id,'en',true);
+  expect(rotated.session).toBe(id);
+  expect(new Headers(fetcher.mock.calls[0][1]?.headers).get('x-goog-api-key')).toBe(keys[0]);
+  // Now simulate pinned renewal failing with 429 on primary -> automatically fails over to secondary!
+  fetcher.mockReset();
+  fetcher.mockResolvedValueOnce(new Response(null,{status:429}))
+   .mockResolvedValueOnce(Response.json({name:'auth_tokens/auto-failover'}));
+  const failover=await service.renew(id,'en',false);
+  expect(failover.token).toBe('auth_tokens/auto-failover');
+  expect(fetcher.mock.calls.map(c=>new Headers(c[1]?.headers).get('x-goog-api-key'))).toEqual([keys[0],keys[1]]);
+ });
+});
+it('routes Talk recommendations to gemini-4-hydrogen when GEMINI_GENERATION_MODEL is gemini-4-hydrogen with standard 3 keys',async()=>{
+ await runInDurableObject(env.TALK_SESSIONS.getByName('talk-hydrogen-routing-'+crypto.randomUUID()),async(_,state)=>{
+  let capturedInput:any;
+  const fakeAsk={
+   recommend:vi.fn(async(_session:string,raw:any)=>{
+    capturedInput=raw;
+    return {results:[{tmdbId:27205,mediaType:'movie',title:'Inception',releaseDate:'2010-07-16',posterPath:'/p.jpg',genres:['Science Fiction'],originCountries:['US'],matchLevel:'Strong',finalScore:1,matchReasons:['Layered dream heist thriller'],retrievalSources:['https://www.themoviedb.org/movie/27205']}],metrics:{}};
+   }),
+   daily:vi.fn(async()=>({results:[],publishedAt:0})),
+   catalogueDaily:vi.fn(async()=>[]),
+   tmdbFallback:vi.fn(async()=>[]),
+  };
+  const service=new TalkSession(state,{
+   ...env,CURSOR_SIGNING_SECRET:'test-only',GEMINI_GENERATION_MODEL:'gemini-4-hydrogen',
+   GEMINI_API_KEY:'k1-'+crypto.randomUUID(),GEMINI_API_KEY_SECONDARY:'k2-'+crypto.randomUUID(),GEMINI_API_KEY_TERTIARY:'k3-'+crypto.randomUUID(),
+   ASK_RESEARCH:{getByName:()=>fakeAsk} as any,
+  } as RecommendationEnv);
+  const id=crypto.randomUUID(),expires=Date.now()+600000;
+  state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)','live:'+id,JSON.stringify({
+   keySlot:'primary',context:TalkContextSchema.parse({companionVersion:19,textMode:true,voice:'Aoede',responseLanguage:'en'}),expires,calls:0,searches:0,grants:[],
+  }),expires);
+  const res=await service.research(id,crypto.randomUUID(),'recommendations',{query:'mind-bending sci-fi movies',mediaType:'movie'},'Recommend mind-bending sci-fi movies') as any;
+  expect(capturedInput.aiModel).toBe('gemini-4-hydrogen');
+  expect(res.results).toHaveLength(1);
+  expect(res.summary).toContain('Inception');
+ });
+});

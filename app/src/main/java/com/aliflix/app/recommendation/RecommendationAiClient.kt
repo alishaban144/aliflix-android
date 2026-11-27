@@ -2,18 +2,44 @@ package com.aliflix.app.recommendation
 
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collect
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.ConnectionPool
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+
+private val sharedGetHttpClient: OkHttpClient by lazy {
+    OkHttpClient.Builder()
+        .connectionPool(ConnectionPool(8, 2, TimeUnit.MINUTES))
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .build()
+}
+
+private val sharedPostHttpClient: OkHttpClient by lazy {
+    sharedGetHttpClient.newBuilder()
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)
+        .build()
+}
+
+private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
 class RecommendationAiClientException(
     val code: String = "NETWORK_ERROR",
@@ -142,67 +168,73 @@ class RecommendationAiClient(
         V3TvNetworkFeed.fromJson(JSONObject(getJson("$baseUrl/v3/tv-networks?region=$safeRegion")))
     }
 
-    private suspend fun getJson(url: String): String = suspendCancellableCoroutine { continuation ->
-        var connection: HttpURLConnection? = null
-        try {
-            connection = URL(url).openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 8_000
-            connection.readTimeout = 20_000
-            connection.setRequestProperty("Accept", "application/json")
-            continuation.invokeOnCancellation { connection.disconnect() }
-            val status = connection.responseCode
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val response = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
-            if (status !in 200..299) {
-                val error = runCatching { JSONObject(response).optJSONObject("error") }.getOrNull()
-                throw RecommendationAiClientException(
-                    code = error?.optString("code")?.takeIf(String::isNotBlank) ?: "WORKER_ERROR",
-                    retryable = error?.optBoolean("retryable", status == 429 || status >= 500) ?: (status == 429 || status >= 500),
-                    message = error?.optString("message")?.takeIf(String::isNotBlank) ?: "TMDB request failed ($status)",
-                )
+    private suspend fun getJson(url: String): String {
+        var lastError: Throwable? = null
+        repeat(2) { attempt ->
+            try {
+                val request = Request.Builder()
+                    .url(url)
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                return executeRequest(sharedGetHttpClient, request, "TMDB request failed")
+            } catch (error: RecommendationAiClientException) {
+                lastError = error
+                if (!error.retryable || attempt == 1) throw error
+                delay(240L)
             }
-            if (continuation.isActive) continuation.resume(response)
-        } catch (error: Throwable) {
-            if (continuation.isActive) continuation.resumeWithException(
-                if (error is RecommendationAiClientException) error else RecommendationAiClientException(message = "Network error", cause = error),
-            )
-        } finally {
-            connection?.disconnect()
         }
+        throw (lastError ?: RecommendationAiClientException(message = "Network error"))
     }
 
-    private suspend fun postJson(url: String, jsonBody: JSONObject): String = suspendCancellableCoroutine { continuation ->
-        var connection: HttpURLConnection? = null
-        try {
-            connection = URL(url).openConnection() as HttpURLConnection
-            connection.requestMethod = "POST"
-            connection.connectTimeout = 8_000
-            // The Worker generates an editorial list, then resolves
-            // identities and metadata through TMDB. Keep the mobile deadline
-            // above the bounded generation and identity-resolution pipeline.
-            connection.readTimeout = 120_000
-            connection.doOutput = true
-            connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-            continuation.invokeOnCancellation { connection.disconnect() }
-            connection.outputStream.use { it.write(jsonBody.toString().toByteArray(StandardCharsets.UTF_8)) }
-            val status = connection.responseCode
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val response = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
-            if (status !in 200..299) {
-                val error = runCatching { JSONObject(response).optJSONObject("error") }.getOrNull()
-                throw RecommendationAiClientException(
-                    code = error?.optString("code")?.takeIf(String::isNotBlank) ?: "WORKER_ERROR",
-                    retryable = error?.optBoolean("retryable", status == 429 || status >= 500) ?: (status == 429 || status >= 500),
-                    message = error?.optString("message")?.takeIf(String::isNotBlank) ?: "Recommendation request failed ($status)",
-                )
+    private suspend fun postJson(url: String, jsonBody: JSONObject): String {
+        val request = Request.Builder()
+            .url(url)
+            .post(jsonBody.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Accept", "application/json")
+            .build()
+        return executeRequest(sharedPostHttpClient, request, "Recommendation request failed")
+    }
+
+    private suspend fun executeRequest(
+        client: OkHttpClient,
+        request: Request,
+        fallbackErrorPrefix: String,
+    ): String = suspendCancellableCoroutine { continuation ->
+        val call = client.newCall(request)
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                if (continuation.isActive) {
+                    continuation.resumeWithException(
+                        RecommendationAiClientException(message = "Network error", cause = e),
+                    )
+                }
             }
-            if (continuation.isActive) continuation.resume(response)
-        } catch (error: Throwable) {
-            if (continuation.isActive) continuation.resumeWithException(
-                if (error is RecommendationAiClientException) error else RecommendationAiClientException(message = "Network error", cause = error),
-            )
-        } finally { connection?.disconnect() }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.use { res ->
+                    val status = res.code
+                    val body = runCatching { res.body?.string().orEmpty() }.getOrElse { "" }
+                    if (status !in 200..299) {
+                        val error = runCatching { JSONObject(body).optJSONObject("error") }.getOrNull()
+                        if (continuation.isActive) {
+                            continuation.resumeWithException(
+                                RecommendationAiClientException(
+                                    code = error?.optString("code")?.takeIf(String::isNotBlank) ?: "WORKER_ERROR",
+                                    retryable = error?.optBoolean("retryable", status == 429 || status >= 500)
+                                        ?: (status == 429 || status >= 500),
+                                    message = error?.optString("message")?.takeIf(String::isNotBlank)
+                                        ?: "$fallbackErrorPrefix ($status)",
+                                ),
+                            )
+                        }
+                        return
+                    }
+                    if (continuation.isActive) continuation.resume(body)
+                }
+            }
+        })
     }
 }
 

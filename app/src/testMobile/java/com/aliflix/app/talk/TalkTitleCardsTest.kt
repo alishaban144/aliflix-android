@@ -41,4 +41,17 @@ class TalkTitleCardsTest {
         val chat=TalkChat(java.util.UUID.randomUUID().toString(),"A mystery",123,listOf(TalkLine("assistant","Try Dark.",titles=cards)))
         assertEquals(chat,parseTalkChat(chat.json()))
     }
+    @Test fun explicitDismissDoesNotAllowDiscoveryPromptsToWipeCommittedCards() {
+        assertFalse(talkExplicitDismissCards("Recommend mind-bending sci-fi films"))
+        assertFalse(talkExplicitDismissCards("Something like Dark"))
+        assertFalse(talkExplicitDismissCards("Show me hidden gem thrillers"))
+        assertTrue(talkExplicitDismissCards("Hide the cards"))
+        assertTrue(talkExplicitDismissCards("Let's change subjects"))
+    }
+    @Test fun cardReasonsRoundTripWhenPresentWithoutChangingEmptyCards() {
+        val parsed=parseTalkTitles(JSONArray("""[{"tmdbId":27205,"mediaType":"movie","title":"Inception","year":"2010","posterPath":"/p.jpg","why":"Layered dream heist"}]"""))
+        assertEquals("Layered dream heist",parsed.single().why)
+        assertEquals("Layered dream heist",parsed.single().json().getString("why"))
+        assertFalse(TalkTitleCard(1,MediaType.MOVIE,"Plain").json().has("why"))
+    }
 }

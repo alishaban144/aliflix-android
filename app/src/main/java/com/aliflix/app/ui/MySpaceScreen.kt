@@ -63,7 +63,9 @@ import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -202,46 +204,96 @@ internal fun RecentRail(
                         )
                     }
                     if (progress != null) {
-                        PlaybackProgressRing(
-                            fraction = progress.progressFraction.toFloat(),
+                        val remainingMinutes = ((progress.durationSeconds - progress.positionSeconds).coerceAtLeast(0.0) / 60.0).toInt()
+                        Box(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
-                                .padding(10.dp),
-                        )
+                                .padding(10.dp)
+                                .clip(AliflixCorners.Small)
+                                .background(Color.Black.copy(alpha = 0.72f))
+                                .padding(horizontal = 7.dp, vertical = 4.dp),
+                        ) {
+                            Text(
+                                text = when {
+                                    progress.completed -> "Watched"
+                                    remainingMinutes >= 1 -> "${remainingMinutes}m left"
+                                    else -> "${(progress.progressFraction * 100).toInt().coerceIn(1, 99)}%"
+                                },
+                                color = AliflixAccentSecondary,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
                     }
-                    Column(
+                    Row(
                         modifier = Modifier
                             .align(Alignment.BottomStart)
                             .fillMaxWidth()
-                            .padding(13.dp),
-                        verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Tiny),
+                            .padding(start = 13.dp, end = 10.dp, bottom = 12.dp),
+                        verticalAlignment = Alignment.Bottom,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text(
-                            text = item.title,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = progressPresentation?.episodeDescription ?: buildList {
-                                add(if (item.type == MediaType.MOVIE) "Movie" else "Series")
-                                if (item.year.isNotBlank()) add(item.year)
-                            }.joinToString("  •  "),
-                            color = if (progressPresentation?.episodeDescription != null) {
-                                AliflixAccentSecondary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            fontSize = 11.sp,
-                            fontWeight = if (progressPresentation?.episodeDescription != null) {
-                                FontWeight.Bold
-                            } else {
-                                FontWeight.Normal
-                            },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Tiny),
+                        ) {
+                            Text(
+                                text = item.title,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = progressPresentation?.episodeDescription ?: buildList {
+                                    add(if (item.type == MediaType.MOVIE) "Movie" else "Series")
+                                    if (item.year.isNotBlank()) add(item.year)
+                                }.joinToString("  •  "),
+                                color = if (progressPresentation?.episodeDescription != null) {
+                                    AliflixAccentSecondary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                fontSize = 11.sp,
+                                fontWeight = if (progressPresentation?.episodeDescription != null) {
+                                    FontWeight.Bold
+                                } else {
+                                    FontWeight.Normal
+                                },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(AliflixAccentPrimary.copy(alpha = 0.92f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Rounded.PlayArrow,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                    if (progress != null && progress.progressFraction > 0.0) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .fillMaxWidth()
+                                .height(3.5.dp)
+                                .background(Color.White.copy(alpha = 0.16f)),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(progress.progressFraction.toFloat().coerceIn(0.03f, 1f))
+                                    .height(3.5.dp)
+                                    .background(AliflixAccentSecondary),
+                            )
+                        }
                     }
                 }
             }
@@ -679,6 +731,8 @@ internal fun MySpaceScreen(
                     items = myList,
                     onOpen = onOpen,
                     gridState = listGridState,
+                    emptyTitle = "Your watchlist is empty",
+                    emptyMessage = "Tap + on any movie or series to save it here for later.",
                     useGenreSections = true,
                 )
             } else if (targetPage == 1) {
@@ -687,7 +741,7 @@ internal fun MySpaceScreen(
                     onOpen = onOpen,
                     gridState = favoritesGridState,
                     emptyTitle = "No favorites yet",
-                    emptyMessage = "",
+                    emptyMessage = "Tap the heart on titles you love to tune Ask Aliflix to your taste.",
                 )
             } else if (targetPage == 3) {
                 com.aliflix.app.downloads.DownloadsSection()
@@ -713,11 +767,43 @@ private fun GenreOrganizedList(
     emptyMessage: String = "",
     useGenreSections: Boolean = false,
 ) {
-    if (!useGenreSections || items.isEmpty()) {
+    if (items.isEmpty()) {
         GroupedGenreList(items, onOpen, gridState, emptyTitle, emptyMessage)
         return
     }
-    val groups = remember(items) { groupMyListByMainGenre(items) }
+    var mediaFilter by rememberSaveable(emptyTitle) { mutableStateOf("All") }
+    var sortMode by rememberSaveable(emptyTitle) { mutableStateOf("Default") }
+    val filteredItems = remember(items, mediaFilter, sortMode) {
+        val typed = when (mediaFilter) {
+            "Movies" -> items.filter { it.type == MediaType.MOVIE }
+            "Series" -> items.filter { it.type == MediaType.TV }
+            else -> items
+        }
+        when (sortMode) {
+            "Top Rated" -> typed.sortedByDescending { it.imdbRating ?: it.rating }
+            "A–Z" -> typed.sortedBy { it.title.lowercase(java.util.Locale.ROOT) }
+            else -> typed
+        }
+    }
+    if (!useGenreSections) {
+        Column(Modifier.fillMaxSize()) {
+            if (items.size >= 3) LibraryFilterBar(
+                selectedType = mediaFilter,
+                onSelectType = { mediaFilter = it },
+                sortMode = sortMode,
+                onCycleSort = {
+                    sortMode = when (sortMode) {
+                        "Default" -> "Top Rated"
+                        "Top Rated" -> "A–Z"
+                        else -> "Default"
+                    }
+                },
+            )
+            GroupedGenreList(filteredItems, onOpen, gridState, emptyTitle, emptyMessage)
+        }
+        return
+    }
+    val groups = remember(filteredItems) { groupMyListByMainGenre(filteredItems) }
     val sectionIndices = remember(groups) { libraryGenreSectionIndices(groups) }
     val genres = remember(groups) { groups.filter { it.key.isNotEmpty() } }
     val scope = rememberCoroutineScope()
@@ -736,7 +822,22 @@ private fun GenreOrganizedList(
         }
     }
     var scrollToGenre by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    Row(Modifier.fillMaxSize().padding(start = 10.dp, end = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxSize()) {
+        if (items.size >= 3) LibraryFilterBar(
+            selectedType = mediaFilter,
+            onSelectType = { mediaFilter = it },
+            sortMode = sortMode,
+            onCycleSort = {
+                sortMode = when (sortMode) {
+                    "Default" -> "Top Rated"
+                    "Top Rated" -> "A–Z"
+                    else -> "Default"
+                }
+            },
+        )
+        if (filteredItems.isEmpty()) {
+            EmptyMessage(title = "No matching titles", message = "Switch the filter back to All to see everything saved.")
+        } else Row(Modifier.weight(1f).fillMaxWidth().padding(start = 10.dp, end = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         if (genres.isNotEmpty()) {
             LazyColumn(
                 state = genreTabs,
@@ -775,6 +876,50 @@ private fun GenreOrganizedList(
                     MediaPoster(item = item, width = 132.dp, showLibraryMetadata = true,
                         onClick = { onOpen(item) })
                 }
+            }
+        }
+    }
+    }
+}
+
+@Composable
+private fun LibraryFilterBar(
+    selectedType: String,
+    onSelectType: (String) -> Unit,
+    sortMode: String,
+    onCycleSort: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        listOf("All", "Movies", "Series").forEach { option ->
+            val active = option == selectedType
+            AliflixChip(
+                selected = active,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp),
+                modifier = Modifier.clickable { onSelectType(option) },
+            ) {
+                Text(
+                    text = option,
+                    color = if (active) AliflixAccentSecondary else AliflixContentSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        AliflixChip(
+            selected = sortMode != "Default",
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp),
+            modifier = Modifier.clickable(onClick = onCycleSort),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Icon(Icons.Rounded.Sort, null, tint = AliflixAccentSecondary, modifier = Modifier.size(13.dp))
+                Text(sortMode, color = AliflixContentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
     }

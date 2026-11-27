@@ -12,6 +12,11 @@ import com.aliflix.app.ui.common.*
 
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.material.icons.rounded.Sort
+import androidx.compose.runtime.mutableStateOf
+import com.aliflix.app.ui.discover.ShimmerBox
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
@@ -83,7 +88,23 @@ internal fun PersonCreditsScreen(
     modifier: Modifier = Modifier,
 ) {
     val creator = state.creator
-    val items = remember(state.items) { state.items.distinctBy(Media::key) }
+    val allItems = remember(state.items) { state.items.distinctBy(Media::key) }
+    val hasMovies = remember(allItems) { allItems.any { it.type == MediaType.MOVIE } }
+    val hasSeries = remember(allItems) { allItems.any { it.type == MediaType.TV } }
+    var typeFilter by rememberSaveable(creator?.tmdbId) { mutableStateOf("All") }
+    var sortMode by rememberSaveable(creator?.tmdbId) { mutableStateOf("Popular") }
+    val items = remember(allItems, typeFilter, sortMode) {
+        val typed = when (typeFilter) {
+            "Movies" -> allItems.filter { it.type == MediaType.MOVIE }
+            "Series" -> allItems.filter { it.type == MediaType.TV }
+            else -> allItems
+        }
+        when (sortMode) {
+            "Top Rated" -> typed.sortedByDescending { it.imdbRating ?: it.rating }
+            "Newest" -> typed.sortedByDescending { it.year.toIntOrNull() ?: 0 }
+            else -> typed
+        }
+    }
 
     Column(
         modifier = modifier
@@ -144,14 +165,10 @@ internal fun PersonCreditsScreen(
         }
 
         when {
-            state.loading -> Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .weight(1f),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator(color = AliflixAccentPrimary)
-            }
+            state.loading -> GenreLoadingGrid(
+                mediaLabel = "works",
+                modifier = Modifier.weight(1f),
+            )
             state.error != null -> GenreExploreStatePanel(
                 title = "Credits unavailable",
                 message = state.error,
@@ -159,7 +176,7 @@ internal fun PersonCreditsScreen(
                 onAction = onRetry,
                 modifier = Modifier.weight(1f),
             )
-            items.isEmpty() -> GenreExploreStatePanel(
+            allItems.isEmpty() -> GenreExploreStatePanel(
                 title = "No works found",
                 message = "No TMDB credits are available.",
                 modifier = Modifier.weight(1f),
@@ -178,13 +195,55 @@ internal fun PersonCreditsScreen(
                 modifier = Modifier.weight(1f),
             ) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    Text(
-                        text = "Works",
-                        color = AliflixContentPrimary,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 2.dp),
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "Works",
+                                color = AliflixContentPrimary,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f),
+                            )
+                            AliflixChip(
+                                selected = sortMode != "Popular",
+                                contentPadding = PaddingValues(horizontal = 11.dp, vertical = 7.dp),
+                                modifier = Modifier.clickable {
+                                    sortMode = when (sortMode) {
+                                        "Popular" -> "Top Rated"
+                                        "Top Rated" -> "Newest"
+                                        else -> "Popular"
+                                    }
+                                },
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Icon(Icons.Rounded.Sort, null, tint = AliflixAccentSecondary, modifier = Modifier.size(14.dp))
+                                    Text(sortMode, color = AliflixContentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                        if (hasMovies && hasSeries) {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(listOf("All", "Movies", "Series")) { option ->
+                                    val active = typeFilter == option
+                                    AliflixChip(
+                                        selected = active,
+                                        contentPadding = PaddingValues(horizontal = 13.dp, vertical = 8.dp),
+                                        modifier = Modifier.clickable { typeFilter = option },
+                                    ) {
+                                        Text(
+                                            text = option,
+                                            color = if (active) AliflixAccentSecondary else AliflixContentSecondary,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 items(items, key = { item -> "person:${item.key}" }) { item ->
                     MediaPoster(
@@ -210,8 +269,14 @@ internal fun GenreExploreScreen(
     gridState: LazyGridState,
     modifier: Modifier = Modifier,
 ) {
-    val items = remember(state.items, mediaType) {
-        state.items.filter { it.type == mediaType }.distinctBy(Media::key)
+    var sortMode by rememberSaveable(genreName, mediaType) { mutableStateOf("Default") }
+    val items = remember(state.items, mediaType, sortMode) {
+        val base = state.items.filter { it.type == mediaType }.distinctBy(Media::key)
+        when (sortMode) {
+            "Top Rated" -> base.sortedByDescending { it.imdbRating ?: it.rating }
+            "Newest" -> base.sortedByDescending { it.year.toIntOrNull() ?: 0 }
+            else -> base
+        }
     }
     val mediaLabel = when (mediaType) {
         MediaType.MOVIE -> "Movies"
@@ -339,12 +404,22 @@ internal fun GenreExploreScreen(
                                 fontSize = 11.sp,
                             )
                         }
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(AliflixAccentPrimary),
-                        )
+                        AliflixChip(
+                            selected = sortMode != "Default",
+                            contentPadding = PaddingValues(horizontal = 11.dp, vertical = 7.dp),
+                            modifier = Modifier.clickable {
+                                sortMode = when (sortMode) {
+                                    "Default" -> "Top Rated"
+                                    "Top Rated" -> "Newest"
+                                    else -> "Default"
+                                }
+                            },
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(Icons.Rounded.Sort, null, tint = AliflixAccentSecondary, modifier = Modifier.size(14.dp))
+                                Text(sortMode, color = AliflixContentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                 }
                 items(visibleItems, key = { "genre:${it.key}" }) { item ->
@@ -424,25 +499,23 @@ private fun GenreLoadingGrid(
         }
         items(count = 9) {
             Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                Box(
+                ShimmerBox(
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(2f / 3f)
-                        .aliflixSurface(shape = AliflixCorners.Card),
+                        .clip(AliflixCorners.Card),
                 )
-                Box(
+                ShimmerBox(
                     modifier = Modifier
                         .fillMaxWidth(0.78f)
                         .height(10.dp)
-                        .clip(CircleShape)
-                        .background(AliflixSurfacePressed),
+                        .clip(CircleShape),
                 )
-                Box(
+                ShimmerBox(
                     modifier = Modifier
                         .fillMaxWidth(0.48f)
                         .height(8.dp)
-                        .clip(CircleShape)
-                        .background(AliflixSurfaceSecondary),
+                        .clip(CircleShape),
                 )
             }
         }

@@ -4,7 +4,9 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
@@ -24,6 +26,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import com.aliflix.app.ui.theme.*
 
@@ -96,13 +100,25 @@ object AliflixSurfaceDefaults {
     }
     val Focus = AliflixAccentSecondary.copy(alpha = AliflixAlpha.Focus)
 
+    fun borderColor(level: AliflixSurfaceLevel = AliflixSurfaceLevel.Content): Color = when (level) {
+        AliflixSurfaceLevel.Ambient -> Color.Transparent
+        AliflixSurfaceLevel.Content -> Color.White.copy(alpha = 0.08f)
+        AliflixSurfaceLevel.Chrome -> Color.White.copy(alpha = 0.11f)
+        AliflixSurfaceLevel.Elevated -> Color.White.copy(alpha = 0.12f)
+        AliflixSurfaceLevel.Selected -> AliflixAccentSecondary.copy(alpha = 0.34f)
+        AliflixSurfaceLevel.Critical -> AliflixError.copy(alpha = 0.36f)
+    }
+
+    fun border(level: AliflixSurfaceLevel = AliflixSurfaceLevel.Content): BorderStroke? =
+        if (level == AliflixSurfaceLevel.Ambient) null else BorderStroke(0.75.dp, borderColor(level))
+
     @Composable
     fun textFieldColors() = OutlinedTextFieldDefaults.colors(
         focusedContainerColor = color(),
         unfocusedContainerColor = color(),
         disabledContainerColor = color(),
         focusedBorderColor = Focus,
-        unfocusedBorderColor = Color.Transparent,
+        unfocusedBorderColor = borderColor(AliflixSurfaceLevel.Content),
         disabledBorderColor = Color.Transparent,
         errorBorderColor = AliflixError.copy(alpha = AliflixAlpha.Focus),
         errorContainerColor = color(AliflixSurfaceLevel.Critical),
@@ -122,7 +138,9 @@ fun Modifier.aliflixSurface(
     level: AliflixSurfaceLevel = AliflixSurfaceLevel.Content,
     shape: Shape = AliflixCorners.Card,
     alpha: Float? = null,
-): Modifier = clip(shape).background(AliflixSurfaceDefaults.color(level, alpha))
+): Modifier = clip(shape)
+    .background(AliflixSurfaceDefaults.color(level, alpha))
+    .then(if (level != AliflixSurfaceLevel.Ambient) Modifier.border(0.75.dp, AliflixSurfaceDefaults.borderColor(level), shape) else Modifier)
     .ambientHighlight(level != AliflixSurfaceLevel.Ambient)
 
 @Composable
@@ -131,7 +149,11 @@ fun Modifier.aliflixSelection(selected: Boolean, shape: Shape = AliflixCorners.C
         if (selected) AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Selected) else Color.Transparent,
         AliflixMotion.selection(), label = "surface-selection",
     )
-    return clip(shape).background(color).ambientHighlight(selected)
+    val stroke by animateColorAsState(
+        if (selected) AliflixSurfaceDefaults.borderColor(AliflixSurfaceLevel.Selected) else Color.Transparent,
+        AliflixMotion.selection(), label = "surface-selection-border",
+    )
+    return clip(shape).background(color).border(0.75.dp, stroke, shape).ambientHighlight(selected)
 }
 
 @Composable
@@ -145,8 +167,11 @@ fun AliflixSurface(
 ) {
     val color by animateColorAsState(AliflixSurfaceDefaults.color(level, alpha),
         AliflixMotion.selection(), label = "surface-color")
+    val stroke by animateColorAsState(AliflixSurfaceDefaults.borderColor(level),
+        AliflixMotion.selection(), label = "surface-border")
     Surface(modifier, shape, color,
-        contentColor, tonalElevation = AliflixElevation.None, shadowElevation = AliflixElevation.None) {
+        contentColor, tonalElevation = AliflixElevation.None, shadowElevation = AliflixElevation.None,
+        border = if (level == AliflixSurfaceLevel.Ambient) null else BorderStroke(0.75.dp, stroke)) {
         Box(Modifier.ambientHighlight(level != AliflixSurfaceLevel.Ambient), propagateMinConstraints = true) { content() }
     }
 }
@@ -164,9 +189,12 @@ fun AliflixSurface(
 ) {
     val color by animateColorAsState(AliflixSurfaceDefaults.color(level, alpha),
         AliflixMotion.selection(), label = "action-surface-color")
+    val stroke by animateColorAsState(AliflixSurfaceDefaults.borderColor(level),
+        AliflixMotion.selection(), label = "action-surface-border")
     Surface(onClick = onClick, modifier = modifier, enabled = enabled, shape = shape,
         color = color, contentColor = contentColor,
-        tonalElevation = AliflixElevation.None, shadowElevation = AliflixElevation.None) {
+        tonalElevation = AliflixElevation.None, shadowElevation = AliflixElevation.None,
+        border = if (level == AliflixSurfaceLevel.Ambient) null else BorderStroke(0.75.dp, stroke)) {
         Box(Modifier.ambientHighlight(level != AliflixSurfaceLevel.Ambient), propagateMinConstraints = true) { content() }
     }
 }
@@ -179,11 +207,21 @@ fun AliflixIconButton(
     level: AliflixSurfaceLevel = AliflixSurfaceLevel.Ambient,
     content: @Composable () -> Unit,
 ) {
+    val haptic = LocalHapticFeedback.current
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.96f else 1f, AliflixMotion.press(), label = "icon-press")
-    IconButton(onClick, modifier.graphicsLayer { scaleX = scale; scaleY = scale }
-        .aliflixSurface(level, AliflixCorners.Small), enabled, interactionSource = source, content = content)
+    val scale by animateFloatAsState(if (pressed) 0.94f else 1f, AliflixMotion.press(), label = "icon-press")
+    IconButton(
+        onClick = {
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            onClick()
+        },
+        modifier = modifier.graphicsLayer { scaleX = scale; scaleY = scale }
+            .aliflixSurface(level, AliflixCorners.Small),
+        enabled = enabled,
+        interactionSource = source,
+        content = content,
+    )
 }
 
 /** Styling wrapper only: callers retain their selectable/toggleable semantics and padding. */
@@ -199,7 +237,11 @@ fun AliflixChip(
         AliflixSurfaceDefaults.color(if (selected) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content),
         AliflixMotion.selection(), label = "chip-selection",
     )
-    Box(modifier.clip(AliflixCorners.Card).background(color).ambientHighlight().padding(contentPadding),
+    val stroke by animateColorAsState(
+        AliflixSurfaceDefaults.borderColor(if (selected) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content),
+        AliflixMotion.selection(), label = "chip-border",
+    )
+    Box(modifier.clip(AliflixCorners.Card).background(color).border(0.75.dp, stroke, AliflixCorners.Card).ambientHighlight().padding(contentPadding),
         contentAlignment = contentAlignment, content = content)
 }
 
@@ -221,7 +263,8 @@ fun AliflixMediaCard(
     modifier: Modifier = Modifier,
     contentAlignment: Alignment = Alignment.TopStart,
     content: @Composable BoxScope.() -> Unit,
-) = Box(modifier.clip(AliflixCorners.Card).background(AliflixSurfaceDefaults.color()),
+) = Box(modifier.clip(AliflixCorners.Card).background(AliflixSurfaceDefaults.color())
+    .border(0.75.dp, Color.White.copy(alpha = 0.08f), AliflixCorners.Card),
     contentAlignment = contentAlignment, content = content)
 
 /** Keeps the caller's Dialog/ModalBottomSheet dismissal, insets and sizing contracts. */

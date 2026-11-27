@@ -131,7 +131,10 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
-      - run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
+      - run: |
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          (yes | sdkmanager --licenses >/dev/null) || true
+          sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - name: Build and verify signed APK
         env:
           RELEASE_VERSION_NAME: ${{ needs.prepare.outputs.version }}
@@ -168,7 +171,10 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
-      - run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
+      - run: |
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          (yes | sdkmanager --licenses >/dev/null) || true
+          sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - run: bash gradlew :app:testMobileDebugUnitTest :app:lintMobileDebug
 
   playback-device-tests:

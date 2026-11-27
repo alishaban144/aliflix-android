@@ -155,23 +155,23 @@ export class TmdbClient {
   trending(type: MediaType, page = 1): Promise<TmdbPage> {
     return this.request(`/trending/${type}/week`, { page, language: 'en-US' }, 900);
   }
-  searchTitle(type: MediaType, query: string, page = 1): Promise<TmdbPage> { return this.request(`/search/${type}`, { query, page, include_adult: false }); }
-  searchKeyword(query: string): Promise<TmdbPage<TmdbKeyword>> { return this.request('/search/keyword', { query, page: 1 }); }
-  searchPerson(query: string): Promise<TmdbPage<TmdbPerson>> { return this.request('/search/person', { query, page: 1, include_adult: false }); }
-  searchCompany(query: string): Promise<TmdbPage<TmdbCompany>> { return this.request('/search/company', { query, page: 1 }); }
+  searchTitle(type: MediaType, query: string, page = 1): Promise<TmdbPage> { return this.request(`/search/${type}`, { query, page, include_adult: false }, 3600); }
+  searchKeyword(query: string): Promise<TmdbPage<TmdbKeyword>> { return this.request('/search/keyword', { query, page: 1 }, 3600); }
+  searchPerson(query: string): Promise<TmdbPage<TmdbPerson>> { return this.request('/search/person', { query, page: 1, include_adult: false }, 3600); }
+  searchCompany(query: string): Promise<TmdbPage<TmdbCompany>> { return this.request('/search/company', { query, page: 1 }, 3600); }
   discover(type: MediaType, params: Record<string, string | number | boolean | undefined>): Promise<TmdbPage> {
-    return this.request(`/discover/${type}`, { include_adult: false, ...params });
+    return this.request(`/discover/${type}`, { include_adult: false, ...params }, 1800);
   }
   /** Identity/hard-filter verification needs structured metadata, not complete
    * casts, reviews and neighbouring catalogues for every candidate. */
   researchDetails(type: MediaType, id: number): Promise<TmdbDetails> {
-    return this.request(`/${type}/${id}`, { language:'en-US', ...(type==='tv'?{append_to_response:'external_ids'}:{}) });
+    return this.request(`/${type}/${id}`, { language:'en-US', ...(type==='tv'?{append_to_response:'external_ids'}:{}) }, 3600);
   }
   researchPosters(type:MediaType,id:number):Promise<{posters:Array<{file_path:string;iso_639_1?:string|null;vote_average?:number}>}> {
-    return this.request(`/${type}/${id}/images`,{include_image_language:'en,null'});
+    return this.request(`/${type}/${id}/images`,{include_image_language:'en,null'}, 3600);
   }
   researchAnchor(type: MediaType, id: number): Promise<TmdbDetails> {
-    return this.request(`/${type}/${id}`, {language:'en-US',append_to_response:type==='tv'?'keywords,recommendations':'keywords,credits,recommendations'});
+    return this.request(`/${type}/${id}`, {language:'en-US',append_to_response:type==='tv'?'keywords,recommendations':'keywords,credits,recommendations'}, 3600);
   }
   details(type: MediaType, id: number): Promise<TmdbDetails> {
     return this.request(`/${type}/${id}`, {
@@ -208,7 +208,7 @@ export class TmdbClient {
   person(id: number): Promise<TmdbPerson> {
     return this.request(`/person/${id}`, { language: 'en-US' });
   }
-  genres(type: MediaType): Promise<{ genres: TmdbGenre[] }> { return this.request(`/genre/${type}/list`); }
+  genres(type: MediaType): Promise<{ genres: TmdbGenre[] }> { return this.request(`/genre/${type}/list`, {}, 86400); }
   trendingAll(page: number): Promise<TmdbPage<TmdbTrendingItem>> {
     return this.request('/trending/all/week', { page, language: 'en-US' });
   }

@@ -1,4 +1,8 @@
-@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+@file:OptIn(
+    androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+)
 
 package com.aliflix.app.ui
 
@@ -61,11 +65,14 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.DeleteSweep
@@ -77,6 +84,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import coil.imageLoader
+import coil.request.ImageRequest
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableFloatStateOf
@@ -148,35 +161,54 @@ internal fun HomeScreen(
     previousFilter: HomeFilter = HomeFilter.FOR_YOU,
     onSelectFilter: (HomeFilter) -> Unit,
     modifier: Modifier = Modifier,
+    myListKeys: Set<String> = emptySet(),
+    onToggleMyList: ((Media) -> Unit)? = null,
 ) {
     val movieListState = rememberLazyListState()
     val tvListState = rememberLazyListState()
     val activeListState = when (selectedFilter) { HomeFilter.MOVIES -> movieListState; HomeFilter.TV -> tvListState; else -> listState }
+    var pullRefreshing by remember { mutableStateOf(false) }
+    LaunchedEffect(pullRefreshing, state.loading) {
+        if (pullRefreshing && !state.loading) {
+            delay(500L)
+            pullRefreshing = false
+        }
+    }
     when {
-        state.content != null -> MobileHomeSearchFrame(selectedFilter != HomeFilter.NEW,
-            modifier.fillMaxSize().aliflixScreenBackground(),
-            header = { Column(Modifier.scrollable(activeListState, Orientation.Vertical, reverseDirection = true)) { MobileTopSafeArea(extraPadding = 0.dp); HomeHeader(onSearch) } },
-        ) { headerBottom ->
-            AnimatedContent(
-                targetState = selectedFilter,
-                modifier = Modifier.fillMaxSize(),
-                transitionSpec = {
-                    val direction = if (targetState.ordinal > initialState.ordinal) 1 else -1
-                    ((fadeIn(tween(320)) + slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { direction * it / 10 }) togetherWith
-                        (fadeOut(tween(AliflixMotion.Content)) + slideOutHorizontally(tween(380, easing = FastOutSlowInEasing)) { -direction * it / 10 }))
-                        .using(androidx.compose.animation.SizeTransform(clip = false))
-                },
-                label = "home-filter-transition",
-            ) { visibleFilter ->
-                val filterListState = when (visibleFilter) { HomeFilter.MOVIES -> movieListState; HomeFilter.TV -> tvListState; else -> listState }
-                HomeFeed(
-                    content = state.content, tvNetworks = tvNetworks, editorialPicks = state.editorialPicks,
-                    recent = recent, likes = likes, playbackProgress = playbackProgress, catalogueStore = catalogueStore,
-                    onRetryTvNetworks = onRetryTvNetworks, onOpen = onOpen, onPlay = onPlay, onSearch = onSearch,
-                    listState = filterListState, selectedFilter = visibleFilter, previousFilter = previousFilter,
-                    onSelectFilter = onSelectFilter, modifier = Modifier.fillMaxSize(), controlsOutside = true,
-                    pinnedHeaderBottom = { headerBottom }, showFilters = visibleFilter == selectedFilter,
-                )
+        state.content != null -> PullToRefreshBox(
+            isRefreshing = pullRefreshing || state.loading,
+            onRefresh = {
+                pullRefreshing = true
+                onRetry()
+            },
+            modifier = modifier.fillMaxSize().aliflixScreenBackground(),
+        ) {
+            MobileHomeSearchFrame(selectedFilter != HomeFilter.NEW,
+                Modifier.fillMaxSize(),
+                header = { Column(Modifier.scrollable(activeListState, Orientation.Vertical, reverseDirection = true)) { MobileTopSafeArea(extraPadding = 0.dp); HomeHeader(onSearch) } },
+            ) { headerBottom ->
+                AnimatedContent(
+                    targetState = selectedFilter,
+                    modifier = Modifier.fillMaxSize(),
+                    transitionSpec = {
+                        val direction = if (targetState.ordinal > initialState.ordinal) 1 else -1
+                        ((fadeIn(tween(320)) + slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { direction * it / 10 }) togetherWith
+                            (fadeOut(tween(AliflixMotion.Content)) + slideOutHorizontally(tween(380, easing = FastOutSlowInEasing)) { -direction * it / 10 }))
+                            .using(androidx.compose.animation.SizeTransform(clip = false))
+                    },
+                    label = "home-filter-transition",
+                ) { visibleFilter ->
+                    val filterListState = when (visibleFilter) { HomeFilter.MOVIES -> movieListState; HomeFilter.TV -> tvListState; else -> listState }
+                    HomeFeed(
+                        content = state.content, tvNetworks = tvNetworks, editorialPicks = state.editorialPicks,
+                        recent = recent, likes = likes, playbackProgress = playbackProgress, catalogueStore = catalogueStore,
+                        onRetryTvNetworks = onRetryTvNetworks, onOpen = onOpen, onPlay = onPlay, onSearch = onSearch,
+                        listState = filterListState, selectedFilter = visibleFilter, previousFilter = previousFilter,
+                        onSelectFilter = onSelectFilter, modifier = Modifier.fillMaxSize(), controlsOutside = true,
+                        pinnedHeaderBottom = { headerBottom }, showFilters = visibleFilter == selectedFilter,
+                        myListKeys = myListKeys, onToggleMyList = onToggleMyList,
+                    )
+                }
             }
         }
         state.loading -> HomeSkeleton(modifier = modifier)
@@ -209,6 +241,8 @@ internal fun HomeFeed(
     controlsOutside: Boolean = false,
     pinnedHeaderBottom: () -> Float = { 0f },
     showFilters: Boolean = true,
+    myListKeys: Set<String> = emptySet(),
+    onToggleMyList: ((Media) -> Unit)? = null,
 ) {
     if (selectedFilter == HomeFilter.NEW && catalogueStore != null) {
         Column(modifier.fillMaxSize().aliflixScreenBackground()) {
@@ -303,6 +337,18 @@ internal fun HomeFeed(
         }
     }
 
+    val heroContext = LocalContext.current
+    LaunchedEffect(pagerState.currentPage, heroCandidates) {
+        if (heroCandidates.size > 1) {
+            val nextHero = heroCandidates[(pagerState.currentPage + 1) % heroCandidates.size]
+            (nextHero.backdropUrl ?: nextHero.posterUrl)?.let { artworkUrl ->
+                heroContext.imageLoader.enqueue(
+                    ImageRequest.Builder(heroContext).data(artworkUrl).build(),
+                )
+            }
+        }
+    }
+
     // The poster is drawn by the hero item below, so it scrolls away with the hero and the rails
     // underneath it sit on this plain Aliflix background. Only the base colour stays out here.
     val feed: @Composable (androidx.compose.ui.unit.Dp) -> Unit = { filterHeight ->
@@ -351,8 +397,10 @@ internal fun HomeFeed(
                                 (if (automaticHeroTransition) 1f else -1f),
                         activeShot = pagerState.currentPage == page && listState.firstVisibleItemIndex == 0,
                         personalMatch = PersonalizationEngine.match(featured, likes),
+                        inMyList = featured.key in myListKeys,
                         onPlay = { onPlay(featured) },
                         onInfo = { onOpen(featured) },
+                        onToggleMyList = onToggleMyList?.let { toggle -> { toggle(featured) } },
                         modifier = Modifier
                             .zIndex(if (pagerState.currentPage == page) 1f else 0f)
                             .then(if (pagerState.currentPage != page) Modifier.clearAndSetSemantics {} else Modifier)
@@ -362,6 +410,31 @@ internal fun HomeFeed(
                             alpha = (1f - pageOffset).coerceIn(0f, 1f)
                         },
                     )
+                }
+
+                if (heroCandidates.size > 1) {
+                    val activeHeroIndex = Math.floorMod(heroPage, heroCandidates.size)
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        heroCandidates.indices.forEach { dotIndex ->
+                            val selected = dotIndex == activeHeroIndex
+                            Box(
+                                modifier = Modifier
+                                    .width(if (selected) 20.dp else 6.dp)
+                                    .height(4.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (selected) AliflixAccentSecondary
+                                        else Color.White.copy(alpha = 0.28f),
+                                    ),
+                            )
+                        }
+                    }
                 }
 
                 if (!controlsOutside) HomeHeader(
@@ -466,26 +539,62 @@ private fun HomeHeader(
     onSearch: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     Row(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = AliflixSpacing.Content, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.End,
+        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        AliflixIconButton(
-            onClick = onSearch,
+        Row(
             modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape)
-                .aliflixSurface(AliflixSurfaceLevel.Chrome, CircleShape),
+                .aliflixSurface(AliflixSurfaceLevel.Chrome, CircleShape)
+                .padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Icon(
-                Icons.Outlined.Search,
-                contentDescription = "Search",
-                tint = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(22.dp),
+            AliflixLogoMark(Modifier.width(22.dp).height(18.dp))
+            Text(
+                text = "ALIFLIX",
+                color = AliflixContentPrimary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = 1.8.sp,
             )
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AliflixIconButton(
+                onClick = { com.aliflix.app.ui.discover.openAskConversation(context) },
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(CircleShape)
+                    .aliflixSurface(AliflixSurfaceLevel.Selected, CircleShape),
+            ) {
+                Icon(
+                    Icons.Rounded.AutoAwesome,
+                    contentDescription = "Ask Aliflix",
+                    tint = AliflixAccentSecondary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            AliflixIconButton(
+                onClick = onSearch,
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(CircleShape)
+                    .aliflixSurface(AliflixSurfaceLevel.Chrome, CircleShape),
+            ) {
+                Icon(
+                    Icons.Outlined.Search,
+                    contentDescription = "Search",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
         }
     }
 }
@@ -505,9 +614,12 @@ private fun HeroBanner(
     modifier: Modifier = Modifier,
     motionOffset: Float = 0f,
     activeShot: Boolean = false,
+    inMyList: Boolean = false,
+    onToggleMyList: (() -> Unit)? = null,
 ) {
     val fontScale = LocalDensity.current.fontScale
     val heroHeight = homeHeroHeight(fontScale)
+    val haptic = LocalHapticFeedback.current
 
     Box(
         modifier = modifier
@@ -608,10 +720,14 @@ private fun HeroBanner(
             )
             Row(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Button(
-                    onClick = onPlay,
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onPlay()
+                    },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -631,13 +747,13 @@ private fun HeroBanner(
                 OutlinedButton(
                     onClick = onInfo,
                     colors = ButtonDefaults.outlinedButtonColors(
-                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.74f),
                         contentColor = MaterialTheme.colorScheme.onSurface,
                     ),
                     shape = AliflixCorners.Card,
                     contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
                     modifier = Modifier.heightIn(min = 50.dp),
-                    border = null,
+                    border = androidx.compose.foundation.BorderStroke(0.75.dp, Color.White.copy(alpha = 0.14f)),
                 ) {
                     Icon(
                         Icons.Rounded.Info,
@@ -646,6 +762,26 @@ private fun HeroBanner(
                     )
                     Spacer(Modifier.width(7.dp))
                     Text("More Info", fontWeight = FontWeight.Bold)
+                }
+                if (onToggleMyList != null) {
+                    AliflixSurface(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onToggleMyList()
+                        },
+                        modifier = Modifier.size(50.dp),
+                        shape = AliflixCorners.Card,
+                        level = if (inMyList) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Chrome,
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (inMyList) Icons.Filled.Check else Icons.Filled.Add,
+                                contentDescription = if (inMyList) "Saved in My List" else "Add to My List",
+                                tint = if (inMyList) AliflixAccentSecondary else AliflixContentPrimary,
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
+                    }
                 }
             }
         }

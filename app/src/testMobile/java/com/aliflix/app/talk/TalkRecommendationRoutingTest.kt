@@ -32,4 +32,9 @@ class TalkRecommendationRoutingTest {
             assertFalse(question,talkDiscoveryQuestion(question,true))
         }
     }
+    @Test fun naturalRealLifeDiscoveryPromptsRouteToRecommendations() {
+        for(question in listOf("Mind-bending sci-fi films","Hidden gem thrillers","Something like Dark","Surprise me","Ended mystery series like Dark","Feel-good movies under 100 min","Best Korean thrillers")) {
+            assertTrue(question,talkDiscoveryQuestion(question,false))
+        }
+    }
 }

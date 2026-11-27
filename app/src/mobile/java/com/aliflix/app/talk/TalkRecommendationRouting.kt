@@ -15,10 +15,12 @@ internal fun talkDiscoveryQuestion(question:String,hasRecommendations:Boolean=fa
     if(media&&Regex("\\b(?:recommend|suggest|empfiehl|empfehle|recomienda|sugiere)\\b|اقترح|رشح").containsMatchIn(text))return true
     if(Regex("\\b(?:cards?|posters?|restore|bring back|release dates?|news|reviews?|cast|trailers?|box office|budget|awards?|who|director|explain|ending|episode|season|called|named)\\b|بطاق|karte").containsMatchIn(text))return false
     if(Regex("\\b(?:show|display|retrieve)\\b.*\\bagain\\b").containsMatchIn(text))return false
-    if(media&&Regex("\\b(?:find|give me|give us|show me|looking for|recommendations for)\\b").containsMatchIn(text))return true
+    if(media&&Regex("\\b(?:find|give me|give us|show me|looking for|recommendations for|want to watch|in the mood for)\\b").containsMatchIn(text))return true
     if(media&&Regex("\\b(?:search|look up)\\b").containsMatchIn(text)&&Regex("\\b(?:movies|films|shows|titles|one|two|three|some|[1-9])\\b").containsMatchIn(text))return true
-    if(Regex("^(?:(?:some|good|great|best|recent|thoughtful|science fiction|sci.?fi)\\s+)*(?:movies|films|series|shows)\\b").containsMatchIn(text))return true
-    if(Regex("\\bwhat (?:should|can|could) (?:i|we) watch(?:[?.!]|$| tonight)").containsMatchIn(text))return true
+    if(Regex("^(?:movies?|films?|series|shows?)\\s+(?:about|with|for|like|featuring|set in|starring)\\b").containsMatchIn(text))return true
+    if(Regex("^(?:(?:some|good|great|best|top|recent|hidden gem|underrated|mind[- ]bending|feel[- ]good|cozy|dark|gripping|funny|scary|thoughtful|ended|running|korean|japanese|spanish|french|german|science fiction|sci.?fi|horror|thriller|comedy|drama|action|mystery|crime|romance|documentary|anime)\\s+)+(?:movies?|films?|series|shows?|thrillers?|comedies|dramas?|mysteries|horrors?|gems?)\\b").containsMatchIn(text))return true
+    if(Regex("\\b(?:something|anything|movies?|films?|series|shows?)\\s+(?:similar to|like)\\s+\\p{L}").containsMatchIn(text))return true
+    if(Regex("\\b(?:what (?:should|can|could) (?:i|we) watch|surprise me|pick something(?: to watch)?|anything good to watch)\\b").containsMatchIn(text))return true
     return hasRecommendations&&Regex("^(?:something|anything|more like those)\\b.*\\b(?:less|more|lighter|darker|similar|like)\\b").containsMatchIn(text)
 }
 

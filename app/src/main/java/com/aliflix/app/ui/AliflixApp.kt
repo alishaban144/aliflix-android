@@ -490,10 +490,24 @@ fun AliflixApp(
     }
 
     fun showRoot(tab: AppTab) {
+        val reselect = tab == selectedTab && destinationStack.size == 1
         if (tab == AppTab.HOME) {
             homeFilterName = HomeFilter.FOR_YOU.name
             previousHomeFilterName = HomeFilter.FOR_YOU.name
-            updateScope.launch { homeScrollState.scrollToItem(0) }
+            updateScope.launch {
+                if (reselect) homeScrollState.animateScrollToItem(0)
+                else homeScrollState.scrollToItem(0)
+            }
+        } else if (reselect && tab == AppTab.SEARCH) {
+            updateScope.launch { searchScrollState.animateScrollToItem(0) }
+        } else if (reselect && tab == AppTab.MY_SPACE) {
+            updateScope.launch {
+                when (libraryPage) {
+                    0 -> listScrollState.animateScrollToItem(0)
+                    1 -> favoritesScrollState.animateScrollToItem(0)
+                    2 -> historyScrollState.animateScrollToItem(0)
+                }
+            }
         }
         destinationStack = listOf(MobileDestination.Root(tab))
         viewModel.closeDetails()
@@ -1248,6 +1262,8 @@ fun AliflixApp(
                             if (it != HomeFilter.NEW) previousHomeFilterName = it.name
                             homeFilterName = it.name
                         },
+                        myListKeys = myList.mapTo(linkedSetOf(), Media::key),
+                        onToggleMyList = viewModel::toggleMyList,
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
 
@@ -1429,6 +1445,7 @@ private fun AliflixBottomBar(
     selected: AppTab,
     onSelect: (AppTab) -> Unit,
 ) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     AliflixBottomChrome(
         modifier = Modifier
             .fillMaxWidth()
@@ -1452,7 +1469,7 @@ private fun AliflixBottomBar(
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .height(56.dp)
+                        .height(58.dp)
                         .scale(navigationScale)
                         .clip(AliflixCorners.Card)
                         .aliflixSelection(isSelected)
@@ -1460,7 +1477,10 @@ private fun AliflixBottomBar(
                             selected = isSelected,
                             interactionSource = interactionSource,
                             indication = null,
-                        ) { onSelect(tab) }
+                        ) {
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                            onSelect(tab)
+                        }
                         .testTag(
                             when (tab) {
                                 AppTab.HOME -> "bottom-tab-home"
@@ -1484,7 +1504,7 @@ private fun AliflixBottomBar(
                             }
                         },
                         contentDescription = tab.label,
-                        tint = if (isSelected) AliflixContentPrimary else AliflixContentTertiary,
+                        tint = if (isSelected) com.aliflix.app.ui.theme.AliflixAccentSecondary else AliflixContentTertiary,
                         modifier = Modifier
                             .size(23.dp)
                             .then(
@@ -1503,7 +1523,14 @@ private fun AliflixBottomBar(
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                         maxLines = 1,
                     )
-
+                    Spacer(Modifier.height(3.dp))
+                    Box(
+                        modifier = Modifier
+                            .width(if (isSelected) 18.dp else 0.dp)
+                            .height(2.5.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(if (isSelected) com.aliflix.app.ui.theme.AliflixAccentSecondary else Color.Transparent),
+                    )
                 }
             }
         }

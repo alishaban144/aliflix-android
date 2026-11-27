@@ -398,11 +398,11 @@ internal fun DiscoverScreen(
                                 value = fieldValue,
                                 onValueChange = { updated ->
                                     fieldValue = updated
-
+                                    onQueryChange(updated.text)
                                 },
                                 placeholder = {
                                     Text(
-                                        text = "What are you looking for?",
+                                        text = "Search movies, series, actors…",
                                         color = AliflixContentTertiary,
                                         fontSize = 14.sp,
                                     )
@@ -410,7 +410,10 @@ internal fun DiscoverScreen(
                                 leadingIcon = {
                                     AliflixIconButton(onClick = {
                                         keyboard?.hide()
-                                        fieldValue = fieldValue.copy(text = fieldValue.text.trim())
+                                        val trimmed = fieldValue.text.trim()
+                                        fieldValue = fieldValue.copy(text = trimmed)
+                                        onQueryChange(trimmed)
+                                        onSubmitSearch(trimmed)
                                     }) {
                                         Icon(Icons.Filled.Search, "Search catalogue", tint = AliflixContentSecondary)
                                     }
@@ -420,7 +423,7 @@ internal fun DiscoverScreen(
                                         AliflixIconButton(
                                             onClick = {
                                                 fieldValue = TextFieldValue("")
-
+                                                onQueryChange("")
                                             }
                                         ) {
                                             Icon(
@@ -435,9 +438,11 @@ internal fun DiscoverScreen(
                                 keyboardActions = KeyboardActions(
                                     onSearch = {
                                         keyboard?.hide()
-                                        fieldValue = fieldValue.copy(text = fieldValue.text.trim())
-
-                            },
+                                        val trimmed = fieldValue.text.trim()
+                                        fieldValue = fieldValue.copy(text = trimmed)
+                                        onQueryChange(trimmed)
+                                        onSubmitSearch(trimmed)
+                                    },
                                 ),
                                 textStyle = MaterialTheme.typography.bodyLarge.copy(
                                     color = AliflixContentPrimary,
@@ -446,7 +451,7 @@ internal fun DiscoverScreen(
                                     focusedContainerColor = AliflixSurfaceDefaults.color(),
                                     unfocusedContainerColor = AliflixSurfaceDefaults.color(),
                                     focusedBorderColor = AliflixSurfaceDefaults.Focus,
-                                    unfocusedBorderColor = Color.Transparent,
+                                    unfocusedBorderColor = AliflixSurfaceDefaults.borderColor(),
                                     cursorColor = AliflixAccentSecondary,
                                     focusedTextColor = AliflixContentPrimary,
                                     unfocusedTextColor = AliflixContentPrimary,
@@ -495,8 +500,42 @@ internal fun DiscoverScreen(
                             },
                             onFilters = ::editFilters,
                             filterCount = appliedFilters?.let{selectedFilterCount(it)}?:0,
-                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp)
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = if (appliedFilters != null) 6.dp else 12.dp)
                         )
+                        appliedFilters?.let { activeSpec ->
+                            val count = selectedFilterCount(activeSpec)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    text = buildString {
+                                        if (count > 0) append("$count ${if (count == 1) "filter" else "filters"} active")
+                                        else append("Custom sort active")
+                                    },
+                                    color = AliflixAccentSecondary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Row(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(AliflixError.copy(alpha = 0.14f))
+                                        .border(0.75.dp, AliflixError.copy(alpha = 0.35f), CircleShape)
+                                        .clickable { appliedFilters = null }
+                                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Icon(Icons.Rounded.Close, null, tint = AliflixError, modifier = Modifier.size(13.dp))
+                                    Text("Clear filters", color = AliflixError, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
 
                     } }
                     if(catalogueStore!=null&&appliedFilters!=null)DiscoverFilteredCatalogue(
@@ -506,6 +545,7 @@ internal fun DiscoverScreen(
                         onOpen = { if (fieldValue.text.isNotBlank()) { shelves.record("search", it); recentSearches = shelves.read("search") }; onOpen(it) },
                         onPerson = onPerson, onCategory = onCategory,
                         modifier = Modifier.fillMaxSize(), header = catalogueHeader,
+                        showMoodPills = aiEnabled,
                     ) else catalogueHeader()
 
                 }
@@ -607,15 +647,37 @@ internal fun DiscoverPosterCard(
             .semantics { contentDescription = "Open ${item.title}" },
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        AsyncImage(
-            model = item.posterUrl,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(2f / 3f)
                 .aliflixSurface(shape = AliflixCorners.Card),
-        )
+        ) {
+            AsyncImage(
+                model = item.posterUrl,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+            val cardRating = item.imdbRating ?: item.rating.takeIf { it > 0.0 }
+            if (cardRating != null && cardRating > 0.0) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(6.dp)
+                        .clip(AliflixCorners.Small)
+                        .background(Color.Black.copy(alpha = 0.78f))
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                ) {
+                    Text(
+                        text = String.format(java.util.Locale.US, "★ %.1f", cardRating),
+                        color = if (item.imdbRating != null) Color(0xFFF5C518) else AliflixAccentSecondary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
         Text(
             text = item.title,
             color = AliflixContentPrimary,

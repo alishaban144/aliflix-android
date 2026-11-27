@@ -39,17 +39,22 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.semantics.*
 
-internal data class TalkTitleCard(val id:Int,val type:MediaType,val title:String,val year:String="",val posterPath:String?=null,val originalTitle:String?=null) {
+internal data class TalkTitleCard(val id:Int,val type:MediaType,val title:String,val year:String="",val posterPath:String?=null,val originalTitle:String?=null,val why:String="") {
     val key get()="${type.routeName}:$id"
     fun media()=Media(id,type,title,year=year,posterPath=posterPath)
-    fun json()=JSONObject().put("id",id).put("type",type.routeName).put("title",title).put("year",year).apply{posterPath?.let{put("posterPath",it)};originalTitle?.let{put("originalTitle",it)}}
+    fun json()=JSONObject().put("id",id).put("type",type.routeName).put("title",title).put("year",year).apply{
+        posterPath?.let{put("posterPath",it)}
+        originalTitle?.let{put("originalTitle",it)}
+        if(why.isNotBlank())put("why",why)
+    }
 }
 internal fun parseTalkTitles(rows:JSONArray?,limit:Int=8):List<TalkTitleCard> =
     (0 until (rows?.length()?:0)).mapNotNull { i -> runCatching {
         val row=rows!!.getJSONObject(i);val id=row.optInt("tmdbId",row.optInt("id"));val title=row.getString("title").trim()
         val type=row.optString("mediaType",row.optString("type"));require(id>0&&title.isNotBlank()&&type in setOf("movie","tv"))
         val poster=talkPosterPath(row.optString("posterPath",row.optString("poster_path")))
-        TalkTitleCard(id,MediaType.from(type),title.take(180),row.optString("year",row.optString("releaseDate")).take(4),poster,row.optString("originalTitle").takeIf{it.isNotBlank()&&it!="null"})
+        val why=row.optString("why").takeIf{it.isNotBlank()&&it!="null"}.orEmpty().take(120)
+        TalkTitleCard(id,MediaType.from(type),title.take(180),row.optString("year",row.optString("releaseDate")).take(4),poster,row.optString("originalTitle").takeIf{it.isNotBlank()&&it!="null"},why)
     }.getOrNull() }.distinctBy{it.key}.take(limit.coerceIn(1,24))
 
 internal fun talkPosterPath(value:String?):String? {
@@ -74,25 +79,26 @@ internal fun talkPosterPath(value:String?):String? {
       Column(verticalArrangement=Arrangement.spacedBy(14.dp)) {
         titles.chunked(columns).forEach { row ->
             Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                row.forEach { title -> key(title.key) { TalkRailCard(title,onOpen,Modifier.width(width),motion,focusedKey==title.key,onBounds) } }
+                row.forEach { title -> key(title.key) { TalkRailCard(title,onOpen,Modifier.width(width),motion,focusedKey==title.key,onBounds,showWhy=true) } }
             }
         }
       }
     }
 }
 
-@Composable internal fun TalkRailCard(title:TalkTitleCard,onOpen:(TalkTitleCard)->Unit,modifier:Modifier,motion:Boolean,focused:Boolean,onBounds:(String,Rect)->Unit,enabled:Boolean=true) {
+@Composable internal fun TalkRailCard(title:TalkTitleCard,onOpen:(TalkTitleCard)->Unit,modifier:Modifier,motion:Boolean,focused:Boolean,onBounds:(String,Rect)->Unit,enabled:Boolean=true,showWhy:Boolean=false) {
     val depth by animateFloatAsState(if(focused)1f else .96f,spring(dampingRatio=1f,stiffness=if(motion)170f else 10000f),label="rail-depth")
     Column(modifier.graphicsLayer{scaleX=depth;scaleY=depth}.onGloballyPositioned{onBounds(title.key,it.findRootCoordinates().localBoundingBoxOf(it,clipBounds=false))}
-        .clickable(enabled=enabled,role=Role.Button,onClick={onOpen(title)}).semantics(mergeDescendants=true){}.testTag("talk-title-${title.key}"),verticalArrangement=Arrangement.spacedBy(7.dp)) {
+        .clickable(enabled=enabled,role=Role.Button,onClick={onOpen(title)}).semantics(mergeDescendants=true){}.testTag("talk-title-${title.key}"),verticalArrangement=Arrangement.spacedBy(6.dp)) {
         Box(Modifier.fillMaxWidth().aspectRatio(2f/3f).clip(RoundedCornerShape(16.dp))
-            .border(if(focused)1.5.dp else .5.dp,if(focused)AliflixAccentSecondary else Color.White.copy(alpha=.12f),RoundedCornerShape(16.dp))) {
+            .border(if(focused)1.5.dp else .75.dp,if(focused)AliflixAccentSecondary else Color.White.copy(alpha=.14f),RoundedCornerShape(16.dp))) {
             TalkPoster(title,Modifier.fillMaxSize())
-            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha=.18f),Color.Transparent,Color.Black.copy(alpha=.18f)))))
-            if(title.year.isNotBlank())Text(title.year,color=Color.White,fontSize=10.sp,lineHeight=12.sp,fontWeight=FontWeight.Medium,
-                modifier=Modifier.padding(8.dp).clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha=.68f)).padding(horizontal=6.dp,vertical=3.dp))
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha=.24f),Color.Transparent,Color.Black.copy(alpha=.22f)))))
+            if(title.year.isNotBlank())Text(title.year,color=Color.White,fontSize=10.sp,lineHeight=12.sp,fontWeight=FontWeight.SemiBold,
+                modifier=Modifier.align(Alignment.TopStart).padding(7.dp).clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha=.72f)).padding(horizontal=6.dp,vertical=3.dp))
         }
-        Text(title.title,color=AliflixContentPrimary,fontSize=13.sp,lineHeight=17.sp,fontWeight=FontWeight.Medium,maxLines=2,overflow=TextOverflow.Ellipsis)
-        Text(if(title.type==MediaType.TV)"Series" else "Film",color=AliflixContentTertiary,fontSize=11.sp,lineHeight=13.sp)
+        Text(title.title,color=AliflixContentPrimary,fontSize=13.sp,lineHeight=17.sp,fontWeight=FontWeight.SemiBold,maxLines=2,overflow=TextOverflow.Ellipsis)
+        Text(if(title.type==MediaType.TV)"Series" else "Film",color=AliflixAccentSecondary.copy(alpha=.85f),fontSize=10.sp,lineHeight=12.sp,fontWeight=FontWeight.Medium)
+        if(showWhy&&title.why.isNotBlank())Text(title.why,color=AliflixContentSecondary,fontSize=11.sp,lineHeight=14.sp,maxLines=2,overflow=TextOverflow.Ellipsis)
     }
 }

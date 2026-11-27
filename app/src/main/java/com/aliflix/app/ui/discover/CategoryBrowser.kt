@@ -12,6 +12,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -19,12 +20,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
@@ -83,24 +89,58 @@ internal fun CategoryBrowser(
         ) { visibleBase ->
             if (visibleBase == "categories") {
                 LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = AliflixSpacing.Large)) {
-                    if (failed) item { TextButton(onClick = { retry++ }) { Text("Retry categories") } }
-                    if (categories.isEmpty() && !failed) item { CircularProgressIndicator(Modifier.padding(20.dp).size(24.dp)) }
+                    if (failed) item { TextButton(onClick = { retry++ }, modifier = Modifier.padding(horizontal = 16.dp)) { Text("Retry categories") } }
+                    if (categories.isEmpty() && !failed) {
+                        items(4) {
+                            Row(
+                                Modifier.padding(horizontal = 16.dp, vertical = 5.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                ShimmerBox(Modifier.weight(1f).height(82.dp).clip(AliflixCorners.Panel))
+                                ShimmerBox(Modifier.weight(1f).height(82.dp).clip(AliflixCorners.Panel))
+                            }
+                        }
+                    }
                     categories.groupBy { it.third }.forEach { (type, entries) ->
-                        item { Text(if (type == "movie") "Movies" else "Series", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(16.dp)) }
+                        item { Text(if (type == "movie") "Movies" else "Series", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) }
                         items(entries.chunked(2), key = { pair -> pair.joinToString("|") { it.first } }) { pair ->
                             Row(Modifier.padding(horizontal = 16.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 pair.forEach { (key, name, _) ->
-                                    AliflixSurface(onClick = { selected = key; selectedName = name }, modifier = Modifier.weight(1f).heightIn(min = 76.dp),
+                                    val (accent, icon) = genreVisualStyle(name)
+                                    AliflixSurface(
+                                        onClick = { selected = key; selectedName = name },
+                                        modifier = Modifier.weight(1f).height(86.dp),
                                         shape = AliflixCorners.Panel,
                                         level = AliflixSurfaceLevel.Content,
                                     ) {
-                                        Column(
+                                        Box(
                                             Modifier
+                                                .fillMaxSize()
+                                                .background(
+                                                    Brush.linearGradient(
+                                                        listOf(accent.copy(alpha = 0.24f), Color.Transparent),
+                                                    ),
+                                                )
                                                 .padding(14.dp),
-                                            verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Medium),
                                         ) {
-                                            Text(name, style = MaterialTheme.typography.titleSmall, fontSize = 14.sp,
-                                                minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                            Icon(
+                                                imageVector = icon,
+                                                contentDescription = null,
+                                                tint = accent.copy(alpha = 0.42f),
+                                                modifier = Modifier
+                                                    .align(Alignment.BottomEnd)
+                                                    .size(34.dp),
+                                            )
+                                            Text(
+                                                text = name,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = AliflixContentPrimary,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.align(Alignment.TopStart).padding(end = 26.dp),
+                                            )
                                         }
                                     }
                                 }
@@ -145,8 +185,22 @@ private fun CategorySections(
         if (sections.isEmpty()) {
             item {
                 when {
-                    root.error != null -> TextButton(onClick = { scope.launch { store.load(base, "", "All", force = true) } }) { Text("Retry category") }
-                    root.updatedAt == 0L -> CircularProgressIndicator(Modifier.padding(20.dp).size(24.dp))
+                    root.error != null -> TextButton(onClick = { scope.launch { store.load(base, "", "All", force = true) } }, modifier = Modifier.padding(16.dp)) { Text("Retry category") }
+                    root.updatedAt == 0L -> Column(
+                        Modifier.fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        repeat(2) {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                ShimmerBox(Modifier.width(150.dp).height(18.dp).clip(CircleShape))
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    repeat(3) {
+                                        ShimmerBox(Modifier.weight(1f).aspectRatio(2f / 3f).clip(AliflixCorners.Card))
+                                    }
+                                }
+                            }
+                        }
+                    }
                     else -> Text("Preparing category sections…", modifier = Modifier.padding(20.dp), color = AliflixContentSecondary)
                 }
             }
@@ -193,4 +247,27 @@ private fun BrowseRail(
         CircularProgressIndicator(Modifier.size(20.dp))
     } else if (session.error != null) TextButton(onClick = { retry++ }) { Text("$title · Retry") }
     else Text("$title · No titles", modifier = Modifier.padding(16.dp), color = AliflixContentTertiary)
+}
+
+private fun genreVisualStyle(name: String): Pair<Color, ImageVector> {
+    val lower = name.lowercase(java.util.Locale.ROOT)
+    return when {
+        "sci" in lower -> Color(0xFF6E59D9) to Icons.Rounded.RocketLaunch
+        "horror" in lower -> Color(0xFFD94A5A) to Icons.Rounded.NightsStay
+        "comedy" in lower -> Color(0xFFF1B967) to Icons.Rounded.SentimentVerySatisfied
+        "action" in lower || "adventure" in lower -> Color(0xFFE87A45) to Icons.Rounded.LocalFireDepartment
+        "thriller" in lower || "mystery" in lower -> Color(0xFF7A6BE6) to Icons.Rounded.Visibility
+        "crime" in lower -> Color(0xFFC95A72) to Icons.Rounded.Gavel
+        "romance" in lower -> Color(0xFFE66D96) to Icons.Rounded.Favorite
+        "animation" in lower || "anime" in lower -> Color(0xFF4FB3E8) to Icons.Rounded.Animation
+        "documentary" in lower -> Color(0xFF54C78F) to Icons.Rounded.Public
+        "fantasy" in lower -> Color(0xFF9C72F2) to Icons.Rounded.AutoAwesome
+        "family" in lower || "kids" in lower -> Color(0xFF63D69A) to Icons.Rounded.FamilyRestroom
+        "drama" in lower -> Color(0xFF6D8BE8) to Icons.Rounded.TheaterComedy
+        "war" in lower || "politics" in lower -> Color(0xFFB87654) to Icons.Rounded.Shield
+        "history" in lower -> Color(0xFFC49E63) to Icons.Rounded.AccountBalance
+        "music" in lower -> Color(0xFFD964B8) to Icons.Rounded.MusicNote
+        "western" in lower -> Color(0xFFD49257) to Icons.Rounded.Explore
+        else -> AliflixAccentPrimary to Icons.Rounded.Movie
+    }
 }

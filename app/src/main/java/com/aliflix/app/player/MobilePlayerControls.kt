@@ -49,6 +49,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -153,6 +155,7 @@ internal fun MobilePlayerCenterControls(
     hideSeekForward: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val haptic = LocalHapticFeedback.current
     androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
     val gap = ((maxWidth - 184.dp) / 2).coerceIn(8.dp,48.dp)
     Row(
@@ -167,7 +170,10 @@ internal fun MobilePlayerCenterControls(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                     enabled = !hideSeekBack,
-                    onClick = onSeekBack,
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSeekBack()
+                    },
                 ),
             contentAlignment = Alignment.Center,
         ) {
@@ -191,7 +197,10 @@ internal fun MobilePlayerCenterControls(
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                    onClick = onPlayPause,
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onPlayPause()
+                    },
                 ),
             contentAlignment = Alignment.Center,
         ) {
@@ -214,7 +223,10 @@ internal fun MobilePlayerCenterControls(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                     enabled = !hideSeekForward,
-                    onClick = onSeekForward,
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSeekForward()
+                    },
                 ),
             contentAlignment = Alignment.Center,
         ) {

@@ -1,6 +1,9 @@
 package com.aliflix.app.ui.discover
 
+import com.aliflix.app.ui.common.AliflixChip
 import com.aliflix.app.ui.common.AliflixCorners
+import com.aliflix.app.ui.common.AliflixMediaCard
+import com.aliflix.app.ui.common.AliflixSpacing
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -172,6 +175,7 @@ internal fun DiscoverCatalogueContent(
     onCategory: (String) -> Unit,
     modifier: Modifier = Modifier,
     header: @Composable () -> Unit = {},
+    showMoodPills: Boolean = true,
 ) {
     val category = if (query.isBlank()) "trending" else null
     val session = store.session(category, query, filter)
@@ -194,15 +198,44 @@ internal fun DiscoverCatalogueContent(
             }
         }
         if (query.isBlank()) {
+            if (showMoodPills) item("mood-pills", span = { GridItemSpan(maxLineSpan) }) {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("discover-mood-pills"),
+                ) {
+                    items(discoveryCategories.entries.toList(), key = { it.key }) { (slug, label) ->
+                        AliflixChip(
+                            selected = slug == "trending",
+                            contentPadding = PaddingValues(horizontal = 13.dp, vertical = 9.dp),
+                            modifier = Modifier.clickable { onCategory(slug) },
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (slug == "trending") AliflixAccentSecondary else AliflixContentPrimary,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
+                }
+            }
             item("explore", span = { GridItemSpan(maxLineSpan) }) {
                 Row(
-                    Modifier.fillMaxWidth().clickable { onCategory("trending") }.padding(16.dp),
+                    Modifier.fillMaxWidth().clickable { onCategory("trending") }.padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        "Explore", style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f),
-                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Explore", style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            "Trending movies & series right now",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = AliflixContentTertiary,
+                        )
+                    }
                     Icon(Icons.AutoMirrored.Rounded.ArrowForward, "Explore", tint = AliflixAccentSecondary)
                 }
             }
@@ -212,18 +245,46 @@ internal fun DiscoverCatalogueContent(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxWidth().testTag("discover-explore-posters"),
                 ) {
-                    items(session.items.take(16), key = Media::key) { item ->
-                        // TMDB artwork is 2:3. The previous 118x128 crop cut off
-                        // approximately a quarter of every Explore poster.
-                        AsyncImage(
-                            model = item.posterUrl,
-                            contentDescription = item.title,
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.width(118.dp).aspectRatio(2f / 3f)
-                                .clip(AliflixCorners.Card)
-                                .background(AliflixSurfaceSecondary)
-                                .clickable { onOpen(item) },
-                        )
+                    if (session.loading && session.items.isEmpty()) {
+                        items(5, key = { "explore-skeleton:$it" }) {
+                            ShimmerBox(
+                                Modifier.width(120.dp).aspectRatio(2f / 3f).clip(AliflixCorners.Card),
+                            )
+                        }
+                    } else {
+                        items(session.items.take(18), key = Media::key) { item ->
+                            AliflixMediaCard(
+                                modifier = Modifier
+                                    .width(120.dp)
+                                    .aspectRatio(2f / 3f)
+                                    .clickable { onOpen(item) },
+                            ) {
+                                AsyncImage(
+                                    model = item.posterUrl,
+                                    contentDescription = item.title,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                                val cardRating = item.imdbRating ?: item.rating.takeIf { it > 0.0 }
+                                if (cardRating != null && cardRating > 0.0) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .padding(6.dp)
+                                            .clip(AliflixCorners.Small)
+                                            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.78f))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                                    ) {
+                                        Text(
+                                            text = String.format(java.util.Locale.US, "★ %.1f", cardRating),
+                                            color = AliflixAccentSecondary,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

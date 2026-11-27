@@ -89,20 +89,18 @@ fun HomeSkeleton(
             )
         }
 
-        // Hero Banner Area (~320dp)
+        // Full-bleed Hero Banner Area matching real Home hero height
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(300.dp)
-                .padding(horizontal = 16.dp)
-                .clip(RoundedCornerShape(20.dp))
+                .height(470.dp)
                 .alpha(alpha)
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color(0xFF221B3B).copy(alpha = 0.55f),
+                            Color(0xFF221B3B).copy(alpha = 0.60f),
                             Color(0xFF171B24).copy(alpha = 0.85f),
-                            Color(0xFF0C0E15),
+                            AliflixBackgroundBase,
                         ),
                     ),
                 ),
@@ -110,7 +108,7 @@ fun HomeSkeleton(
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(18.dp),
+                    .padding(horizontal = 20.dp, vertical = 24.dp),
             ) {
                 Box(
                     modifier = Modifier
@@ -119,57 +117,90 @@ fun HomeSkeleton(
                         .clip(RoundedCornerShape(4.dp))
                         .background(AliflixAccentPrimary.copy(alpha = 0.5f)),
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
                 Box(
                     modifier = Modifier
-                        .width(220.dp)
-                        .height(26.dp)
-                        .clip(RoundedCornerShape(6.dp))
+                        .width(240.dp)
+                        .height(34.dp)
+                        .clip(RoundedCornerShape(8.dp))
                         .background(Color.White.copy(alpha = 0.22f)),
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
                 Box(
                     modifier = Modifier
-                        .width(160.dp)
-                        .height(12.dp)
+                        .width(280.dp)
+                        .height(14.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .background(Color.White.copy(alpha = 0.10f)),
+                        .background(Color.White.copy(alpha = 0.12f)),
                 )
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(6.dp))
+                Box(
+                    modifier = Modifier
+                        .width(200.dp)
+                        .height(14.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.White.copy(alpha = 0.08f)),
+                )
+                Spacer(Modifier.height(18.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Box(
                         modifier = Modifier
-                            .width(88.dp)
-                            .height(36.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color.White.copy(alpha = 0.85f)),
+                            .width(106.dp)
+                            .height(50.dp)
+                            .clip(AliflixCorners.Card)
+                            .background(AliflixAccentPrimary.copy(alpha = 0.75f)),
                     )
                     Box(
                         modifier = Modifier
-                            .width(88.dp)
-                            .height(36.dp)
-                            .clip(RoundedCornerShape(10.dp))
+                            .width(124.dp)
+                            .height(50.dp)
+                            .clip(AliflixCorners.Card)
+                            .background(AliflixSurfaceElevated),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(50.dp)
+                            .clip(AliflixCorners.Card)
                             .background(AliflixSurfaceElevated),
                     )
                 }
             }
         }
 
-        Spacer(Modifier.height(20.dp))
+        // Filter Pills Row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .alpha(alpha),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            listOf(78.dp, 74.dp, 86.dp, 96.dp).forEach { pillWidth ->
+                Box(
+                    modifier = Modifier
+                        .width(pillWidth)
+                        .height(42.dp)
+                        .clip(AliflixCorners.Card)
+                        .background(AliflixSurfaceElevated),
+                )
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
 
         // Rails
-        repeat(2) { railIndex ->
+        repeat(2) { _ ->
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 20.dp),
+                    .padding(bottom = 22.dp),
             ) {
                 Box(
                     modifier = Modifier
-                        .padding(horizontal = 18.dp, vertical = 6.dp)
-                        .width(140.dp)
-                        .height(18.dp)
-                        .clip(RoundedCornerShape(4.dp))
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .width(156.dp)
+                        .height(20.dp)
+                        .clip(RoundedCornerShape(6.dp))
                         .alpha(alpha)
                         .background(Color.White.copy(alpha = 0.18f)),
                 )
@@ -177,14 +208,14 @@ fun HomeSkeleton(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 18.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        .padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    repeat(4) { cardIndex ->
+                    repeat(3) { _ ->
                         Box(
                             modifier = Modifier
-                                .width(104.dp)
-                                .height(146.dp)
+                                .width(126.dp)
+                                .height(186.dp)
                                 .clip(AliflixCorners.Card)
                                 .alpha(alpha)
                                 .background(

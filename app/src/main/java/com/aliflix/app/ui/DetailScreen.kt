@@ -73,11 +73,18 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Share
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import com.aliflix.app.ui.discover.ShimmerBox
+import com.aliflix.app.ui.discover.openAskConversation
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -390,22 +397,78 @@ internal fun DetailScreen(
                         .matchParentSize()
                         .padding(top = detailHeroTopInset),
                 ) {
+                val detailContext = LocalContext.current
+                val detailHaptic = LocalHapticFeedback.current
                 HistoryReminder(
                     itemKey = item.key, inHistory = inHistory, onDelete = { onDeleteHistory(item) },
-                    modifier = Modifier.padding(start = 76.dp, top = 16.dp, end = 16.dp),
+                    modifier = Modifier.padding(start = 76.dp, top = 16.dp, end = 124.dp),
                 )
                 AliflixIconButton(
                     onClick = onBack,
                     modifier = Modifier
                         .padding(AliflixSpacing.Content)
                         .size(48.dp)
-                        .clip(CircleShape),
+                        .clip(CircleShape)
+                        .aliflixSurface(AliflixSurfaceLevel.Chrome, CircleShape),
                 ) {
                     Icon(
                         Icons.AutoMirrored.Rounded.ArrowBack,
                         contentDescription = "Back to previous screen",
                         tint = AliflixContentPrimary,
                     )
+                }
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(AliflixSpacing.Content),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    AliflixIconButton(
+                        onClick = {
+                            detailHaptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            openAskConversation(detailContext, anchor = item)
+                        },
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .aliflixSurface(AliflixSurfaceLevel.Selected, CircleShape),
+                    ) {
+                        Icon(
+                            Icons.Rounded.AutoAwesome,
+                            contentDescription = "Ask Aliflix for similar titles",
+                            tint = AliflixAccentSecondary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    AliflixIconButton(
+                        onClick = {
+                            detailHaptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            val shareText = buildString {
+                                append(item.title)
+                                if (item.year.isNotBlank()) append(" (${item.year})")
+                                append("\nhttps://www.themoviedb.org/${item.type.routeName}/${item.id}")
+                            }
+                            val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(android.content.Intent.EXTRA_SUBJECT, item.title)
+                                putExtra(android.content.Intent.EXTRA_TEXT, shareText)
+                            }
+                            runCatching {
+                                detailContext.startActivity(android.content.Intent.createChooser(shareIntent, "Share ${item.title}"))
+                            }
+                        },
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .aliflixSurface(AliflixSurfaceLevel.Chrome, CircleShape),
+                    ) {
+                        Icon(
+                            Icons.Rounded.Share,
+                            contentDescription = "Share ${item.title}",
+                            tint = AliflixContentPrimary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
                 }
                 Column(
                     modifier = Modifier
@@ -654,7 +717,10 @@ internal fun DetailScreen(
                                 ),
                                 contentPadding = PaddingValues(horizontal = AliflixSpacing.Content),
                             ) {
-                                Text("S${season.number}", fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
+                                Text(
+                                    text = if (season.episodeCount > 0) "S${season.number} · ${season.episodeCount}" else "S${season.number}",
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                )
                             }
                         }
                     }
@@ -712,13 +778,16 @@ internal fun DetailScreen(
             }
         } else if (state.loading) {
             item(key = "detail-loading") {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center,
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    CircularProgressIndicator(color = AliflixAccentPrimary)
+                    ShimmerBox(Modifier.width(140.dp).height(18.dp).clip(CircleShape))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        repeat(3) {
+                            ShimmerBox(Modifier.weight(1f).aspectRatio(2f / 3f).clip(AliflixCorners.Card))
+                        }
+                    }
                 }
             }
         }
@@ -774,10 +843,11 @@ private fun DetailCastRow(item: Media, onOpenCreator: (MediaCreator) -> Unit) {
             val creator = item.creators.firstOrNull {
                 (person.tmdbId > 0 && it.tmdbId == person.tmdbId) || it.name.equals(person.name, ignoreCase = true)
             }
+            val openTarget = creator ?: person.takeIf { it.tmdbId > 0 }
             val roleLabel = (creator?.role ?: person.role)?.takeIf { it.isNotBlank() }
             Column(
-                modifier = Modifier.width(72.dp).then(
-                    if (creator != null) Modifier.clickable { onOpenCreator(creator) } else Modifier,
+                modifier = Modifier.width(74.dp).then(
+                    if (openTarget != null) Modifier.clickable { onOpenCreator(openTarget) } else Modifier,
                 ),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp),
@@ -1064,6 +1134,7 @@ private fun DetailCinematicActionPanel(
 ) {
     val progressRatio = latestProgress?.progressFraction?.toFloat() ?: 0f
     val isPartiallyWatched = latestProgress?.resumeEligible == true
+    val haptic = LocalHapticFeedback.current
 
     val ctaText = detailCtaText(item, mainEpisode, isPartiallyWatched)
 
@@ -1084,6 +1155,7 @@ private fun DetailCinematicActionPanel(
             ) {
                 Button(
                     onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         if (item.type == MediaType.TV && mainEpisode != null) {
                             onPlayEpisode(item, mainEpisode)
                         } else {
@@ -1141,7 +1213,10 @@ private fun DetailCinematicActionPanel(
 
                 // Compact Liked button
                 AliflixSurface(
-                    onClick = { onToggleLike(item) },
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onToggleLike(item)
+                    },
                     modifier = Modifier.size(48.dp),
                     shape = AliflixCorners.Card,
                     level = if (liked) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content,
@@ -1150,7 +1225,7 @@ private fun DetailCinematicActionPanel(
                         Icon(
                             imageVector = if (liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
                             contentDescription = if (liked) "Liked" else "Like",
-                            tint = if (liked) AliflixAccentSecondary else AliflixContentSecondary,
+                            tint = if (liked) AliflixEditorialWarm else AliflixContentSecondary,
                             modifier = Modifier.size(18.dp),
                         )
                     }
@@ -1158,7 +1233,10 @@ private fun DetailCinematicActionPanel(
 
                 // Compact My List button
                 AliflixSurface(
-                    onClick = { onToggleMyList(item) },
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onToggleMyList(item)
+                    },
                     modifier = Modifier.size(48.dp),
                     shape = AliflixCorners.Card,
                     level = if (inMyList) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content,
@@ -1196,7 +1274,27 @@ private fun DetailRatingsStrip(
     item: Media,
     modifier: Modifier = Modifier,
 ) {
-    val presentation = externalRatingsPresentation(item)
+    val terminalStates = remember {
+        setOf(
+            RatingSourceState.VERIFIED,
+            RatingSourceState.STALE,
+            RatingSourceState.NOT_RATED,
+            RatingSourceState.UNAVAILABLE,
+        )
+    }
+    val imdbLoading = item.imdbRating == null && item.imdbRatingState !in terminalStates
+    val imdbText = when {
+        item.imdbRating != null -> String.format(Locale.US, "%.1f", item.imdbRating)
+        item.imdbRatingState == RatingSourceState.NOT_RATED -> "—"
+        else -> "N/A"
+    }
+    val rtLoading = item.rottenTomatoesRating == null && item.rottenTomatoesState !in terminalStates
+    val rtText = when (item.rottenTomatoesState) {
+        RatingSourceState.VERIFIED, RatingSourceState.STALE -> item.rottenTomatoesRating?.let { "$it%" } ?: "N/A"
+        RatingSourceState.NOT_RATED -> "—"
+        else -> item.rottenTomatoesRating?.let { "$it%" } ?: "N/A"
+    }
+    val tmdbText = if (item.rating > 0.0) String.format(Locale.US, "%.1f", item.rating) else "—"
     Row(
         modifier = modifier
             .aliflixSurface(alpha = AliflixAlpha.Ratings)
@@ -1223,11 +1321,11 @@ private fun DetailRatingsStrip(
                 )
             }
             Spacer(modifier = Modifier.width(6.dp))
-            if (presentation.loading || presentation.imdb == "Loading...") {
+            if (imdbLoading) {
                 AbstractRatingLoader(accentColor = Color(0xFFF5C518))
             } else {
                 Text(
-                    text = presentation.imdb,
+                    text = imdbText,
                     color = AliflixContentPrimary,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
@@ -1254,11 +1352,11 @@ private fun DetailRatingsStrip(
                 fontSize = 10.sp,
             )
             Spacer(modifier = Modifier.width(5.dp))
-            if (presentation.loading || presentation.rottenTomatoes == "Loading...") {
+            if (rtLoading) {
                 AbstractRatingLoader(accentColor = Color(0xFFFA3A45))
             } else {
                 Text(
-                    text = presentation.rottenTomatoes,
+                    text = rtText,
                     color = AliflixContentPrimary,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
@@ -1274,7 +1372,7 @@ private fun DetailRatingsStrip(
                 .background(AliflixBorderSubtle),
         )
 
-        // TMDB
+        // TMDB (always immediate — never blocked on OMDb/RT)
         Row(
             modifier = Modifier.weight(1f),
             verticalAlignment = Alignment.CenterVertically,
@@ -1294,17 +1392,13 @@ private fun DetailRatingsStrip(
                 )
             }
             Spacer(modifier = Modifier.width(6.dp))
-            if (presentation.loading || presentation.tmdb == "Loading...") {
-                AbstractRatingLoader(accentColor = Color(0xFF01B4E4))
-            } else {
-                Text(
-                    text = presentation.tmdb,
-                    color = AliflixContentPrimary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                )
-            }
+            Text(
+                text = tmdbText,
+                color = AliflixContentPrimary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -1572,11 +1666,35 @@ private fun EpisodeRow(
                 ) {
                     Icon(Icons.Rounded.PlayArrow, "Play episode ${episode.number}", tint = Color.Black, modifier = Modifier.size(18.dp))
                 }
+                if (progress?.completed == true) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(4.dp)
+                            .size(18.dp)
+                            .clip(CircleShape)
+                            .background(AliflixGreen),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Filled.Check, "Watched", tint = Color.Black, modifier = Modifier.size(12.dp))
+                    }
+                }
                 if (shouldShowPlaybackProgressRing(progress)) {
-                    PlaybackProgressRing(
-                        progress!!.progressFraction.toFloat(),
-                        Modifier.align(Alignment.BottomEnd).padding(AliflixSpacing.Tiny),
-                    )
+                    val frac = progress!!.progressFraction.toFloat().coerceIn(0.03f, 1f)
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .background(Color.Black.copy(alpha = 0.55f)),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(frac)
+                                .height(3.dp)
+                                .background(if (progress.completed) AliflixGreen else AliflixAccentSecondary),
+                        )
+                    }
                 }
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {

@@ -1,4 +1,4 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, coil.annotation.ExperimentalCoilApi::class)
 package com.aliflix.app.ui
 
 import com.aliflix.app.ui.common.*
@@ -36,6 +36,7 @@ import com.aliflix.app.model.*
 import com.aliflix.app.player.PreferredVideoQuality
 import com.aliflix.app.recommendation.RecommendationAiModel
 import com.aliflix.app.ui.theme.*
+import kotlinx.coroutines.launch
 
 @Composable
 internal fun MobileSettingsDialog(
@@ -137,11 +138,69 @@ internal fun MobileSettingsDialog(
                         SettingsDivider()
                         SettingsToggle(Icons.Rounded.Subtitles, "Auto display", "", autoDisplaySubtitles, "settings-auto-subtitles-switch", onSetAutoDisplaySubtitles)
                     }
+                    val talkPrefs = remember(context) { context.getSharedPreferences("aliflix-talk", android.content.Context.MODE_PRIVATE) }
+                    var selectedVoice by remember { mutableStateOf(talkPrefs.getString("voice", "Aoede") ?: "Aoede") }
+                    var voiceMenu by remember { mutableStateOf(false) }
+                    val voiceOptions = remember {
+                        listOf(
+                            "Aoede" to "Aoede · Warm & expressive",
+                            "Kore" to "Kore · Crisp & articulate",
+                            "Puck" to "Puck · Upbeat & playful",
+                            "Charon" to "Charon · Deep & calm",
+                        )
+                    }
                     SettingsGroup("DISCOVER") {
                         SettingsToggle(Icons.Rounded.AutoAwesome, "Ask Aliflix", "Personal recommendations in Discover", aiRecommendationsEnabled, "settings-ask-aliflix-switch", onSetAiRecommendationsEnabled)
+                        SettingsDivider()
+                        Box {
+                            SettingsRow(
+                                Icons.Rounded.RecordVoiceOver,
+                                "Talk voice",
+                                voiceOptions.firstOrNull { it.first == selectedVoice }?.second ?: selectedVoice,
+                                onClick = { voiceMenu = true },
+                            ) {
+                                Icon(Icons.Rounded.ExpandMore, "Choose Talk voice", tint = AliflixAccentSecondary)
+                            }
+                            SettingsMenu(
+                                expanded = voiceMenu,
+                                dismiss = { voiceMenu = false },
+                                items = voiceOptions.map { it.first },
+                                label = { code -> voiceOptions.firstOrNull { it.first == code }?.second ?: code },
+                                selected = selectedVoice,
+                            ) { chosen ->
+                                selectedVoice = chosen
+                                talkPrefs.edit().putString("voice", chosen).apply()
+                                voiceMenu = false
+                            }
+                        }
+                    }
+                    val storageScope = rememberCoroutineScope()
+                    var imageCacheLabel by remember { mutableStateOf("Calculating cache size…") }
+                    LaunchedEffect(Unit) {
+                        val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            java.io.File(context.cacheDir, "image_cache").walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                        }
+                        imageCacheLabel = if (bytes < 1024L * 1024L) {
+                            "${(bytes / 1024L).coerceAtLeast(0)} KB cached posters & backdrops"
+                        } else {
+                            String.format(java.util.Locale.US, "%.1f MB cached posters & backdrops", bytes / (1024.0 * 1024.0))
+                        }
                     }
                     SettingsGroup("APP & STORAGE") {
-
+                        SettingsRow(Icons.Rounded.Cached, "Clear image cache", imageCacheLabel, onClick = {
+                            storageScope.launch {
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    runCatching { coil.Coil.imageLoader(context).memoryCache?.clear() }
+                                    runCatching { coil.Coil.imageLoader(context).diskCache?.clear() }
+                                    runCatching { java.io.File(context.cacheDir, "image_cache").deleteRecursively() }
+                                }
+                                imageCacheLabel = "0 KB cached posters & backdrops"
+                                android.widget.Toast.makeText(context, "Image cache cleared", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }) {
+                            Icon(Icons.Rounded.ChevronRight, null, tint = AliflixContentTertiary)
+                        }
+                        SettingsDivider()
                         SettingsRow(Icons.Rounded.DeleteSweep, "Clear watch history", "Reset watched titles and recommendations", onClick = { clearConfirmation = true }) {
                             Icon(Icons.Rounded.ChevronRight, null, tint = AliflixContentTertiary)
                         }

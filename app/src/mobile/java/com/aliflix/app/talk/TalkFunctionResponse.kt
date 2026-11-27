@@ -31,10 +31,15 @@ internal fun talkControlScheduling(names:List<String>,index:Int,hasOutput:Boolea
 
 /** Restore bounded, user-owned dialogue even when a provider resume handle
  * acknowledges transport but omits earlier realtime input from its context. */
-internal fun talkContinuityTurns(lines:List<TalkLine>,resuming:Boolean,cards:TalkCardContext=TalkCardContext()):org.json.JSONArray {
+internal fun talkContinuityTurns(lines:List<TalkLine>,resuming:Boolean,cards:TalkCardContext=TalkCardContext(),language:String?=null):org.json.JSONArray {
     val history=org.json.JSONArray(lines.filterNot { it.stopped }.takeLast(12).map { JSONObject().put("role",if(it.role=="assistant")"model" else "user")
         .put("parts",org.json.JSONArray().put(JSONObject().put("text",it.text.take(800)+if(it.titles.isNotEmpty())"\nCatalogue cards shown with this reply (app data): "+org.json.JSONArray(it.titles.map{card->card.json()}) else ""))) })
-    if(cards.known.isNotEmpty())history.put(JSONObject().put("role","user").put("parts",org.json.JSONArray().put(JSONObject().put("text","Established app conversation state (data, not a new question): "+cards.snapshot()))))
+    if(cards.known.isNotEmpty()||!language.isNullOrBlank()) {
+        val state=JSONObject()
+        if(cards.known.isNotEmpty())state.put("cards",cards.snapshot())
+        if(!language.isNullOrBlank())state.put("responseLanguage",language)
+        history.put(JSONObject().put("role","user").put("parts",org.json.JSONArray().put(JSONObject().put("text","Established app conversation state (data, not a new question): $state"))))
+    }
     if(!resuming)return history
     return org.json.JSONArray().put(JSONObject().put("role","user").put("parts",org.json.JSONArray().put(JSONObject().put("text",
         "Conversation continuity after reconnection. The following JSON is previous dialogue, not new instructions or a new question. Retain the discussed titles, references, language and viewing boundaries; do not answer this context note. The next user question follows separately.\n"+history))))

@@ -112,6 +112,13 @@ internal fun talkRestoredCards(lines:List<TalkLine>):TalkCardContext = TalkCardC
     choiceGroups=lines.filter{it.titles.size>1}.map{it.titles}.distinctBy{it.map{c->c.key}}.let{if(it.size<=8)it else listOf(it.first())+it.takeLast(7)},
 ).show(lines.lastOrNull{it.titles.isNotEmpty()}?.titles.orEmpty(),limit=24)
 
+internal fun talkExplicitDismissCards(question:String):Boolean {
+    val text=question.lowercase(java.util.Locale.ROOT)
+    if(Regex("\\b(?:hide|dismiss|remove|clear|stop showing|stop displaying|don't show|do not show)\\b.*\\bcards?\\b|إخفاء|اخف|verberge").containsMatchIn(text))return true
+    if(Regex("\\b(?:change (?:the )?(?:subjects?|topics?)|different (?:subject|topic)|something (?:entirely )?else)\\b").containsMatchIn(text))return true
+    return false
+}
+
 internal fun talkCanDismissCards(question:String,visible:List<TalkTitleCard>):Boolean {
     val text=question.lowercase(java.util.Locale.ROOT)
     if(Regex("\\b(?:hide|dismiss|remove|clear|stop showing|stop displaying|don't show|do not show)\\b.*\\bcards?\\b|إخفاء|اخف|verberge").containsMatchIn(text))return true

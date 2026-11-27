@@ -130,6 +130,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }
     private fun beginUserTurn() {
         cardReconciliation?.cancel();cardReconciliation=null
+        chatFallbackJob?.cancel();chatFallbackJob=null
         projectFailovers=0
         if(inputText.isNotBlank())commitQuestion()
         speechToolJobs.values.toList().forEach{it.cancel()};speechToolJobs.clear()
@@ -138,7 +139,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         awaitingInterrupt=false
         markStoppedTurn()
         userTurn.incrementAndGet();responseTurn=-1L;turnHasAudio=false;inputTurnActive=true;continueAfterReconnect=false
-        pendingTitles=emptyList();awaitingToolAnswer=false;pendingAnswerNeedsTitle=false;pendingToolReply=null;toolAnswerNudges=0;recommendationDelivery.clear();deliveryCorrections=0;recommendationLookup=false;recommendationPool=emptyList();recommendationRequestTurn=-1L;recommendationReply=null
+        pendingTitles=emptyList();awaitingToolAnswer=false;pendingAnswerNeedsTitle=false;pendingToolReply=null;toolAnswerNudges=0;recommendationDelivery.clear();deliveryCorrections=0;recommendationLookup=false;recommendationPool=emptyList();recommendationRequestTurn=-1L;recommendationReply=null;cardsCommittedTurn=-1L;presentationRetries=0
         pendingNativeNavigation=null
         researchNote=null;researchNoteUsedTurn=-1L;chatCollectionCommittedTurn=-1L;chatReply.reset()
         silentReplyNudges=0
@@ -487,7 +488,28 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             }
             beginUserTurn();inputText=question;commitQuestion();persistHistory()
             val turnTicket=userTurn.get()
+            val directChatDiscovery=state.value.textMode&&TalkPlayerConnection.current()==null&&talkDiscoveryQuestion(question,state.value.cards.group.isNotEmpty())
             try {
+                if(directChatDiscovery) {
+                    // Start Hydrogen + TMDB discovery immediately without waiting for
+                    // Live WebSocket handshake + model tool-dispatch latency.
+                    recommendationLookup=true
+                    val connectJob=scope.launch { if(!permitted)runCatching { connect() } }
+                    val sessionId=backendSession?:withTimeoutOrNull(6000) {
+                        while(backendSession==null&&turnTicket==userTurn.get()&&!closed) {
+                            if(!connectJob.isActive&&!permitted)break
+                            delay(25)
+                        }
+                        backendSession
+                    }?:run {
+                        val minted=mintLiveSession(buildConversationContext(17))
+                        if(turnTicket==userTurn.get()&&!closed){ephemeral=minted;backendSession=minted.getString("session")}
+                        minted.getString("session")
+                    }
+                    if(turnTicket==userTurn.get()&&!closed&&sessionId.isNotBlank()&&startNativeRecommendations(allowDirectChat=true)) {
+                        return@launch
+                    }
+                }
                 // Network/session setup and native source decoding are independent.
                 // Neither can deliver the question until BOTH are ready.
                 coroutineScope {
@@ -532,8 +554,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 parts.put(JSONObject().put("text",question))
                 if (BuildConfig.DEBUG) debugQuestionSentAt = SystemClock.elapsedRealtime()
                 emit(JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",parts))).put("turnComplete",true)))
-            } catch(cancelled:CancellationException){if(cancelled is TimeoutCancellationException){if(turnTicket==userTurn.get())failedTextTurn()}else throw cancelled}
-            catch(_:Exception){if(turnTicket==userTurn.get())failedTextTurn()}
+            } catch(cancelled:CancellationException){if(cancelled is TimeoutCancellationException){if(turnTicket==userTurn.get()&&chatCollectionCommittedTurn!=turnTicket)failedTextTurn()}else throw cancelled}
+            catch(_:Exception){if(turnTicket==userTurn.get()&&chatCollectionCommittedTurn!=turnTicket)failedTextTurn()}
             finally { if(turnTicket==userTurn.get())update { it.copy(evidenceStage=TalkEvidenceStage.NONE) } }
         }
     }
@@ -541,12 +563,13 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         pendingNativeNavigation=null
         archiveReadSequence++
         continueAfterReconnect=false
+        chatFallbackJob?.cancel();chatFallbackJob=null
         markStoppedTurn()
         textSend?.cancel();textSend=null
         suspendSession();userTurn.incrementAndGet();inputTurnActive=false
         ephemeral=null;resumeHandle=null;outputText="";assistantLine=-1;finalReferences=emptyList()
         recommendationLookup=false;pendingAnswerNeedsTitle=false;awaitingToolAnswer=false;pendingToolReply=null
-        recommendationPool=emptyList();recommendationReply=null;recommendationRequestTurn=-1L
+        recommendationPool=emptyList();recommendationReply=null;recommendationRequestTurn=-1L;cardsCommittedTurn=-1L;presentationRetries=0
         pendingTitles=emptyList();researchNote=null;spokenAttention=null;presentationDelivered=false
         answerDeadline.clear()
         update { it.copy(sending=false,answerComplete=true,phase="Ready",spokenCardKey=null) }
@@ -584,8 +607,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
       }
     }
 
-    private val http = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(0, TimeUnit.SECONDS)
-        .pingInterval(20, TimeUnit.SECONDS).callTimeout(12, TimeUnit.SECONDS).build()
+    private val http = OkHttpClient.Builder().connectTimeout(12, TimeUnit.SECONDS).readTimeout(0, TimeUnit.SECONDS)
+        .pingInterval(20, TimeUnit.SECONDS).callTimeout(20, TimeUnit.SECONDS).retryOnConnectionFailure(true).build()
     @Volatile private var closed = false
     private var ws: WebSocket? = null
     private var capture: AudioRecord? = null
@@ -616,18 +639,25 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 update{it.copy(sending=false,phase=if(muted)"Muted" else "Listening")}
             }
             else if(talkResearchNoteNeedsRecovery(researchNote,userTurn.get(),SystemClock.elapsedRealtime(),speaking)){
-                val stale=epoch;researchNote=null;recommendationDelivery.clear();continueAfterReconnect=true
-                scope.launch(start=CoroutineStart.UNDISPATCHED){disconnected(stale,false)}
+                // Release a stalled bridge cleanly so pending tool results deliver
+                // immediately on the healthy socket instead of tearing down the call.
+                researchNote=null;recommendationDelivery.clear();answerDeadline.awaiting(12000)
             }
             else if(speaking||generationOpen||remoteSpeechActive)answerDeadline.awaiting(3000)
             else if(tools.values.any{it.isActive})answerDeadline.awaiting(8000)
             else if(startNativeRecommendations())Unit
+            else if(state.value.textMode&&chatCollectionCommittedTurn==userTurn.get()&&pendingTitles.isNotEmpty()) {
+                settleChatCollectionFallback(userTurn.get(),recommendationReply?.optString("summary").orEmpty())
+            }
             else if(awaitingToolAnswer&&pendingToolReply!=null&&toolAnswerNudges++<1) {
                 assistantLine=-1;outputText="";turnHasAudio=false;responseTurn=-1L
                 val instruction=(if(recommendationPool.isNotEmpty()&&recommendationLookup)"The recommendation pool is ready. Call present_recommendations now with requestedCount returned keys and brief reasons. Do not speak titles before that tool approves speechText. " else "The asynchronous lookup is complete. Answer using its facts or read its approved speechText exactly. ")+"Do not repeat a search, acknowledgement or filler. Latest question: "+lastQuestion+"\nCompleted lookup: "+pendingToolReply.toString().take(16000)
                 val continuation=JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",JSONArray().put(JSONObject().put("text",instruction))))).put("turnComplete",true)
                 emit(JSONObject().put("clientContent",continuation))
                 answerDeadline.awaiting(12000)
+            }
+            else if(!state.value.textMode&&recommendationPool.isNotEmpty()&&recommendationLookup) {
+                commitSynthesizedVoicePresentation(userTurn.get(),epoch)
             }
             else if(silentReplyNudges++<1){continueSilentReply();answerDeadline.awaiting(12000)}
             else if(stalledRecoveries++<1){debugStallRecoveries++;commitQuestion();continueAfterReconnect=true;scope.launch{disconnected(epoch,false)}}
@@ -661,10 +691,14 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private val speechToolJobs=mutableMapOf<String,Job>()
     private var silentReplyNudges=0
     private var recommendationResultTurn=-1L
+    private var cardsCommittedTurn=-1L
+    private var presentationRetries=0
+    private var chatFallbackJob:Job?=null
     private var pendingNativeNavigation:Pair<Long,()->Unit>?=null
     private val catalogue by lazy { TalkCatalogue{state.value.cards} }
     private val nativeActions by lazy { TalkNativeActions(context,catalogue){cards->
         val shown=if(recommendationResultTurn==userTurn.get()&&state.value.cards.visible.size>1&&cards.size==1)state.value.cards.visible else cards
+        if(shown.isNotEmpty())cardsCommittedTurn=userTurn.get()
         update{it.copy(cards=it.cards.show(shown))};pendingTitles=shown
     } }
     fun consumePanelRequest(){update{it.copy(panelRequest="")}}
@@ -1144,48 +1178,71 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         val body = JSONObject(); user?.getIdToken(false)?.await()?.token?.let { body.put("idToken", it) }
         val request = Request.Builder().url(BuildConfig.RECOMMENDATION_AI_BASE_URL.trimEnd('/') + "/v1/party/identity")
             .post(body.toString().toRequestBody("application/json".toMediaType())).build()
-        val data = suspendCancellableCoroutine<JSONObject>{continuation->
-            val call=http.newCall(request);continuation.invokeOnCancellation{call.cancel()}
-            call.enqueue(object:Callback{
-                override fun onFailure(call:Call,e:java.io.IOException){if(continuation.isActive)continuation.resumeWith(Result.failure(e))}
-                override fun onResponse(call:Call,response:Response){response.use{
-                    try{
-                        if(!it.isSuccessful)throw TalkHttpException(it.code,"IDENTITY_UNAVAILABLE")
-                        val source=requireNotNull(it.body).source();source.request(16385);require(source.buffer.size<=16384)
-                        val json=JSONObject(source.buffer.readUtf8())
-                        if(continuation.isActive)continuation.resumeWith(Result.success(json))
-                    }catch(error:Exception){if(continuation.isActive)continuation.resumeWith(Result.failure(error))}
-                }}
-            })
+        var lastError:Throwable?=null
+        var data:JSONObject?=null
+        for(attempt in 0..1) {
+            try {
+                data = suspendCancellableCoroutine<JSONObject>{continuation->
+                    val call=http.newCall(request);continuation.invokeOnCancellation{call.cancel()}
+                    call.enqueue(object:Callback{
+                        override fun onFailure(call:Call,e:java.io.IOException){if(continuation.isActive)continuation.resumeWith(Result.failure(e))}
+                        override fun onResponse(call:Call,response:Response){response.use{
+                            try{
+                                if(!it.isSuccessful)throw TalkHttpException(it.code,"IDENTITY_UNAVAILABLE")
+                                val source=requireNotNull(it.body).source();source.request(16385);require(source.buffer.size<=16384)
+                                val json=JSONObject(source.buffer.readUtf8())
+                                if(continuation.isActive)continuation.resumeWith(Result.success(json))
+                            }catch(error:Exception){if(continuation.isActive)continuation.resumeWith(Result.failure(error))}
+                        }}
+                    })
+                }
+                break
+            } catch(cancelled:CancellationException) { throw cancelled }
+            catch(error:java.io.IOException) {
+                lastError=error
+                if(attempt==0)delay(350)
+            }
         }
+        val resolvedData=data?:throw (lastError?:java.io.IOException("Identity request failed"))
         account.requireCurrent(accountTicket())
-        prefs.edit().putString("endpoint", BuildConfig.RECOMMENDATION_AI_BASE_URL).putString("owner", owner).putString("token", data.getString("token")).putLong("expires", data.getLong("expires")).apply()
-        data.getString("token")
+        prefs.edit().putString("endpoint", BuildConfig.RECOMMENDATION_AI_BASE_URL).putString("owner", owner).putString("token", resolvedData.getString("token")).putLong("expires", resolvedData.getLong("expires")).apply()
+        resolvedData.getString("token")
     }
-    private suspend fun post(path: String, value: JSONObject, timeout:Long=12000, account:com.aliflix.app.recommendation.AskAccountTicket=accountTicket()): JSONObject = withContext(Dispatchers.IO) {
+    private suspend fun post(path: String, value: JSONObject, timeout:Long=20000, account:com.aliflix.app.recommendation.AskAccountTicket=accountTicket()): JSONObject = withContext(Dispatchers.IO) {
         account.requireCurrent(accountTicket())
         val token = identity(account)
         account.requireCurrent(accountTicket())
         val request = Request.Builder().url(BuildConfig.RECOMMENDATION_AI_BASE_URL.trimEnd('/')+"/v1/talk/"+path)
             .header("Authorization","Bearer $token").post(value.toString().toRequestBody("application/json".toMediaType())).build()
-        kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
-            val toolCall=http.newBuilder().callTimeout(timeout,TimeUnit.MILLISECONDS).build().newCall(request)
-            continuation.invokeOnCancellation{toolCall.cancel()}
-            toolCall.enqueue(object:Callback {
-                override fun onFailure(call:Call,e:java.io.IOException){if(continuation.isActive)continuation.resumeWith(Result.failure(e))}
-                override fun onResponse(call:Call,response:Response){response.use {
-                    try {
-                        if(it.code==401&&prefs.getString("token",null)==token)prefs.edit().remove("token").putLong("expires",0).apply()
-                        if(it.code==410&&path=="renew")backendSession=null
-                        val source=requireNotNull(it.body).source();source.request(128001);require(source.buffer.size<=128000)
-                        val payload=runCatching { JSONObject(source.buffer.readUtf8()) }.getOrNull()
-                        if(!it.isSuccessful)throw TalkHttpException(it.code,payload?.optString("error")?.takeIf { value -> value.matches(Regex("[A-Z0-9_]{3,80}")) } ?: "SERVICE_UNAVAILABLE")
-                        account.requireCurrent(accountTicket())
-                        if(continuation.isActive)continuation.resumeWith(Result.success(requireNotNull(payload)))
-                    }catch(e:Throwable){if(continuation.isActive)continuation.resumeWith(Result.failure(e))}
-                }}
-            })
+        val maxAttempts=if(path in setOf("session","renew","recommendations","viewing","titles","knowledge"))2 else 1
+        var lastError:Throwable?=null
+        for(attempt in 0 until maxAttempts) {
+            try {
+                return@withContext kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
+                    val toolCall=http.newBuilder().callTimeout(timeout,TimeUnit.MILLISECONDS).build().newCall(request)
+                    continuation.invokeOnCancellation{toolCall.cancel()}
+                    toolCall.enqueue(object:Callback {
+                        override fun onFailure(call:Call,e:java.io.IOException){if(continuation.isActive)continuation.resumeWith(Result.failure(e))}
+                        override fun onResponse(call:Call,response:Response){response.use {
+                            try {
+                                if(it.code==401&&prefs.getString("token",null)==token)prefs.edit().remove("token").putLong("expires",0).apply()
+                                if(it.code==410&&path=="renew")backendSession=null
+                                val source=requireNotNull(it.body).source();source.request(128001);require(source.buffer.size<=128000)
+                                val payload=runCatching { JSONObject(source.buffer.readUtf8()) }.getOrNull()
+                                if(!it.isSuccessful)throw TalkHttpException(it.code,payload?.optString("error")?.takeIf { value -> value.matches(Regex("[A-Z0-9_]{3,80}")) } ?: "SERVICE_UNAVAILABLE")
+                                account.requireCurrent(accountTicket())
+                                if(continuation.isActive)continuation.resumeWith(Result.success(requireNotNull(payload)))
+                            }catch(e:Throwable){if(continuation.isActive)continuation.resumeWith(Result.failure(e))}
+                        }}
+                    })
+                }
+            } catch(cancelled:CancellationException) { throw cancelled }
+            catch(error:java.io.IOException) {
+                lastError=error
+                if(attempt+1<maxAttempts)delay(350)
+            }
         }
+        throw (lastError?:java.io.IOException("Talk request failed"))
     }
     private suspend fun openSocket(ticket: Long) {
         cancelledTools.clear()
@@ -1267,6 +1324,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             projectFailovers++
             val rotationTicket=++epoch // Stale close callbacks cannot mint another token.
             val session=checkNotNull(backendSession)
+            update { it.copy(connectionDetail="Switching AI server…") }
             try {
                 val minted=post("renew",JSONObject().put("session",session).put("rotateProject",true)
                     .apply{responseLanguage?.let{put("responseLanguage",it)}})
@@ -1276,9 +1334,16 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 reconnectJob?.cancel();reconnectJob=scope.launch{openSocket(rotationTicket)}
                 return
             }catch(cancelled:CancellationException){throw cancelled}
-            catch(_:Exception){if(rotationTicket!=epoch||!permitted)return}
+            catch(error:Exception){
+                if(rotationTicket!=epoch||!permitted)return
+                if((error as? TalkHttpException)?.status==410){backendSession=null;ephemeral=null;resumeHandle=null}
+            }
         }
-        if(limited||++reconnects>3||SystemClock.elapsedRealtime()-startedAt>1200000) {
+        if(state.value.textMode&&chatCollectionCommittedTurn==userTurn.get()&&pendingTitles.isNotEmpty()) {
+            settleChatCollectionFallback(userTurn.get(),recommendationReply?.optString("summary").orEmpty())
+            return
+        }
+        if(limited||++reconnects>5||SystemClock.elapsedRealtime()-startedAt>1200000) {
             suspendSession();update {it.copy(phase=if(limited) "Try again later" else "Reconnect")};return
         }
         // A consumed one-use token cannot open a fresh session without a valid
@@ -1319,8 +1384,15 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         if(BuildConfig.DEBUG){debugWireEvents.add(message.keys().asSequence().joinToString(",")+":"+(message.optJSONObject("voiceActivity")?.optString("type")?:message.optJSONObject("serverContent")?.keys()?.asSequence()?.joinToString(",").orEmpty()));while(debugWireEvents.size>80)debugWireEvents.pollFirst()}
         if(message.has("setupComplete")) { scope.launch(Dispatchers.Main.immediate) {
             if(ticket!=epoch||!permitted)return@launch
-            readyWatchdog?.cancel();socketReady=true
+            readyWatchdog?.cancel();socketReady=true;reconnects=0
             if(BuildConfig.DEBUG)debugPlayerTransportAt=SystemClock.elapsedRealtime()
+            // Restore full conversation dialogue, visible cards and locked language
+            // BEFORE any continuation turn so mid-conversation API rotation keeps 100% context.
+            if(state.value.lines.isNotEmpty()||state.value.cards.known.isNotEmpty()) {
+                val restored=if(textSend?.isActive==true&&state.value.lines.lastOrNull()?.role=="user")state.value.lines.dropLast(1) else state.value.lines
+                val history=talkContinuityTurns(restored,resuming,state.value.cards,responseLanguage)
+                if(history.length()>0)emit(JSONObject().put("clientContent",JSONObject().put("turns",history).put("turnComplete",false)))
+            }
             if(continueAfterReconnect){
                 continueAfterReconnect=false
                 val turn=userTurn.get()
@@ -1328,18 +1400,13 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 // Do not send a second user turn over it or a newly speaking human.
                 if(tools.values.any{it.isActive}||resuming&&pendingToolReply==null)answerDeadline.awaiting(12000)
                 else scope.launch {
-                    delay(750)
+                    delay(450)
                     if(ticket==epoch&&permitted&&turn==userTurn.get()&&!speaking&&!generationOpen&&!remoteSpeechActive){
                         sendTurnContext(userOwned=true)
                         emitContinuation(talkPendingContinuation(lastQuestion,pendingToolReply,state.value.cards.snapshot()))
                         answerDeadline.awaiting(if(pendingToolReply!=null)15000 else 45000)
                     }
                 }
-            }
-            if(state.value.lines.isNotEmpty()) {
-                val restored=if(textSend?.isActive==true&&state.value.lines.lastOrNull()?.role=="user")state.value.lines.dropLast(1) else state.value.lines
-                val history=talkContinuityTurns(restored,resuming,state.value.cards)
-                if(history.length()>0)emit(JSONObject().put("clientContent",JSONObject().put("turns",history).put("turnComplete",false)))
             }
             try {
                 if(!state.value.textMode) {
@@ -1358,7 +1425,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     remoteSpeechActive -> "Listening"
                     pending -> "Thinking"
                     else -> "Listening"
-                },provider="gemini-3.8-live · ${it.voice}")}
+                },provider="gemini-3.8-live · ${it.voice}",connectionDetail="")}
                 if(pending&&!remoteSpeechActive)answerDeadline.awaiting(if(pendingToolReply!=null)12000 else 45000)
                 val changedVoice=pendingVoiceAcknowledgement
                 if(changedVoice!=null){
@@ -1500,15 +1567,21 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         continue
                     }
                     val presentation=runCatching{talkPresentation(recommendationPool,call.optJSONObject("args")?:JSONObject(),recommendationCount,natural=true)}
-                    if(presentation.isFailure) {
+                    val plan=if(presentation.isSuccess) presentation.getOrThrow() else {
                         if(BuildConfig.DEBUG)debugPresentationIssue="count=$recommendationCount pool=${recommendationPool.map{it.key}} args=${call.optJSONObject("args")} error=${presentation.exceptionOrNull()?.message}"
-                        emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,"present_recommendations",JSONObject().put("status","invalid_selection").put("instruction",presentation.exceptionOrNull()?.message).put("allowedKeys",JSONArray(recommendationPool.map{it.key})),"WHEN_IDLE")))))
-                        continue
+                        if(presentationRetries++<1||recommendationPool.isEmpty()) {
+                            emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,"present_recommendations",JSONObject().put("status","invalid_selection").put("instruction",presentation.exceptionOrNull()?.message).put("allowedKeys",JSONArray(recommendationPool.map{it.key})),"WHEN_IDLE")))))
+                            continue
+                        }
+                        val chosen=recommendationPool.take(recommendationCount.coerceIn(1,8))
+                        val spoken=chosen.joinToString(". "){card->
+                            if(card.why.isNotBlank())"${card.title}: ${card.why.trimEnd('.')}" else card.title
+                        }+"."
+                        TalkPresentation(chosen,spoken)
                     }
-                    val plan=presentation.getOrThrow()
                     spokenAttention=TalkSpokenAttention(plan.speechText,plan.cards,locked=true)
                     val reply=run {
-                        pendingTitles=plan.cards;recommendationResultTurn=userTurn.get()
+                        pendingTitles=plan.cards;recommendationResultTurn=userTurn.get();cardsCommittedTurn=userTurn.get()
                         debugPresentationCommits++
                         update{it.copy(cards=it.cards.show(plan.cards,replaceGroup=true))}
                         hydrateCards(plan.cards.filter{it.posterPath==null},userTurn.get(),ticket)
@@ -1610,8 +1683,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 }
                 if(call.optString("name")=="show_title_cards") {
                     val args=call.optJSONObject("args")?:JSONObject()
-                    if(args.optBoolean("dismiss")&&!talkCanDismissCards(currentQuestion(),state.value.cards.visible)) {
-                        emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,"show_title_cards",JSONObject().put("keptVisible",true).put("instruction","The user's card request or same-title follow-up keeps its card visible. Continue answering; do not dismiss it."),controlScheduling)))))
+                    val cardsCommitted=recommendationResultTurn==userTurn.get()||chatCollectionCommittedTurn==userTurn.get()||cardsCommittedTurn==userTurn.get()
+                    if(args.optBoolean("dismiss")&&(if(cardsCommitted)!talkExplicitDismissCards(currentQuestion()) else !talkCanDismissCards(currentQuestion(),state.value.cards.visible))) {
+                        emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,"show_title_cards",JSONObject().put("keptVisible",true).put("instruction","The user's card request, recommendation presentation or same-title follow-up keeps its cards visible. Continue answering; do not dismiss them."),controlScheduling)))))
                         continue
                     }
                     val names=args.optJSONArray("titles")?:JSONArray()
@@ -1625,6 +1699,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         else if(useGrounded)grounded
                         else if(requested.isEmpty())state.value.cards.visible.ifEmpty{state.value.cards.known.take(8)} else requested.flatMap{state.value.cards.resolve(it,args.optString("kind").takeIf{v->v in setOf("movie","tv")},args.optInt("year"))}
                     if(keepRecommendationGroup||args.optBoolean("dismiss")||cards.size==requested.size&&cards.isNotEmpty()||requested.isEmpty()&&cards.isNotEmpty()) {
+                        if(!args.optBoolean("dismiss")&&cards.isNotEmpty())cardsCommittedTurn=userTurn.get()
                         update{
                             val compared=cards.size>1&&talkConversationIntent(currentQuestion(),it.cards.group.size)==TalkIntent.DECISION
                             val shown=if(args.optBoolean("dismiss"))it.cards.copy(visible=emptyList())else it.cards.show(cards,replaceGroup=compared)
@@ -1727,6 +1802,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         if(needsPresentation&&returnedTitles.isNotEmpty()){recommendationPool=returnedTitles;recommendationCount=result.optInt("requestedCount",3).coerceIn(1,8);recommendationLookup=true}
                         else if(returnedTitles.isNotEmpty()) {
                             if(call.optString("name")=="recommendations")recommendationResultTurn=toolTurn
+                            cardsCommittedTurn=toolTurn
                             pendingTitles=returnedTitles
                             update{
                                 val compared=call.optString("name") in setOf("title_facts","show_title_cards")&&talkConversationIntent(toolQuestion,it.cards.group.size)==TalkIntent.DECISION
@@ -1912,6 +1988,19 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     if(!startNativeRecommendations())answerDeadline.awaiting(if(recommendationPool.isEmpty())45000 else 18000)
                     return
                 }
+                // Rescue generic model replies on discovery requests: if the model spoke a
+                // filler phrase without calling recommendations or showing posters, launch
+                // Hydrogen discovery automatically instead of dead-ending with empty results.
+                if(!awaitingToolAnswer&&tools.isEmpty()&&pendingTitles.isEmpty()&&
+                    recommendationRequestTurn!=userTurn.get()&&recommendationResultTurn!=userTurn.get()&&
+                    chatCollectionCommittedTurn!=userTurn.get()&&
+                    talkDiscoveryQuestion(currentQuestion(lastQuestion),state.value.cards.group.isNotEmpty())) {
+                    recommendationLookup=true
+                    if(startNativeRecommendations()) {
+                        outputText="";assistantLine=-1;turnHasAudio=false;responseTurn=-1L;endOfAudio=true
+                        return
+                    }
+                }
                 if(pendingAnswerNeedsTitle) {
                     val script=pendingToolReply?.optString("speechText").orEmpty()
                     if(!talkAnswerNamesAllTitles(outputText,pendingTitles,if(script.isBlank())state.value.cards.known else emptyList())||script.isNotBlank()&&!talkSpeechMatchesScript(outputText,script)) {
@@ -1959,10 +2048,11 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }.getOrDefault(emptyList())
     /** Own the lookup if Live finishes without dispatching it. The same pool,
      * present_recommendations contract and speech guard handle both entry paths. */
-    private fun startNativeRecommendations():Boolean {
+    private fun startNativeRecommendations(allowDirectChat:Boolean=false):Boolean {
         val turn=userTurn.get();val ticket=epoch
-        if(!recommendationLookup||recommendationRequestTurn==turn||!permitted)return false
-        val session=ephemeral?.optString("session")?.takeIf{it.isNotBlank()}?:return false
+        val directChat=allowDirectChat&&state.value.textMode
+        if(!recommendationLookup||recommendationRequestTurn==turn||(!directChat&&!permitted))return false
+        val session=(ephemeral?.optString("session")?.takeIf{it.isNotBlank()}?:backendSession?.takeIf{it.isNotBlank()})?:return false
         val question=currentQuestion().ifBlank{lastQuestion};if(question.isBlank())return false
         recommendationRequestTurn=turn
         if(BuildConfig.DEBUG){debugToolCalls.merge("recommendations",1){a,b->a+b};debugToolCalls.merge("native_recommendations",1){a,b->a+b}}
@@ -1979,18 +2069,32 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     if(BuildConfig.DEBUG)debugRecommendationIssue=error.javaClass.simpleName+":"+error.message.orEmpty().take(120)
                     JSONObject().put("available",false).put("results",JSONArray()).put("instruction","This lookup is unavailable. Give a brief honest reply; do not invent recommendations or say no such films exist.")
                 }
-                while(generationOpen||speaking)delay(25)
-                if(turn!=userTurn.get()||!permitted||session!=backendSession)return@launch
+                while(!directChat&&(generationOpen||speaking))delay(25)
+                if(turn!=userTurn.get()||closed||(!directChat&&(!permitted||session!=backendSession)))return@launch
                 if(state.value.textMode) {
                     recommendationReply=result;recommendationPool=emptyList();recommendationLookup=false
                     pendingTitles=parseTalkTitles(result.optJSONArray("results"),24)
+                    if(pendingTitles.isNotEmpty()){recommendationResultTurn=turn;cardsCommittedTurn=turn}
                     update{it.copy(cards=it.cards.show(pendingTitles,replaceGroup=true,limit=24))}
                     finalReferences=result.optJSONArray("evidence")?.let{rows->(0 until rows.length()).map{rows.getJSONObject(it).let{row->TalkReference(row.getString("title"),row.getString("url"),row.optString("license",row.optString("attribution","Source")))}}}.orEmpty()
                     awaitingToolAnswer=true;pendingAnswerNeedsTitle=false;pendingToolReply=result;toolAnswerNudges=0
                     tools.remove(key)
                     publishChatCollection()
+                    if(pendingTitles.isNotEmpty()) {
+                        val fallbackSummary=result.optString("summary").orEmpty()
+                        chatFallbackJob?.cancel()
+                        chatFallbackJob=scope.launch {
+                            delay(if(socketReady) 5000L else 2000L)
+                            if(turn==userTurn.get()&&!closed&&state.value.textMode&&state.value.sending&&!state.value.answerComplete&&outputText.isBlank()) {
+                                settleChatCollectionFallback(turn,fallbackSummary)
+                            }
+                        }
+                    } else if(!socketReady) {
+                        failedTextTurn()
+                        return@launch
+                    }
                     if(socketReady)emitContinuation("The requested catalogue collection is ready. Follow its response instruction and answer the request directly. Latest question: $question. Result: "+result.toString().take(24000))else continueAfterReconnect=true
-                    answerDeadline.awaiting(18000)
+                    answerDeadline.awaiting(12000)
                     return@launch
                 }
                 recommendationReply=result;recommendationPool=parseTalkTitles(result.optJSONArray("results"),8)
@@ -2070,8 +2174,53 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             value.copy(lines=if(index<0)value.lines+TalkLine("user",lastQuestion)else value.lines.mapIndexed{i,line->if(i==index)line.copy(text=lastQuestion)else line})
         }else addLine(TalkLine("user",lastQuestion))
         val subject=topicWords(lastQuestion,"",state.value.words);rememberFilmTopic(subject)
-        update{it.copy(words=subject,cards=it.cards.question(lastQuestion))}
-        if(!updateExisting||talkExplicitComparisonTitles(previous)!=talkExplicitComparisonTitles(lastQuestion))prepareComparedCards(lastQuestion)
+        // Never wipe posters already committed for the active user turn when late
+        // input transcription fragments or reconnect bookkeeping update lastQuestion.
+        val preserveCommittedCards=recommendationResultTurn==userTurn.get()||chatCollectionCommittedTurn==userTurn.get()||cardsCommittedTurn==userTurn.get()
+        update{it.copy(words=subject,cards=if(preserveCommittedCards)it.cards else it.cards.question(lastQuestion))}
+        if(!preserveCommittedCards&&(!updateExisting||talkExplicitComparisonTitles(previous)!=talkExplicitComparisonTitles(lastQuestion)))prepareComparedCards(lastQuestion)
+    }
+    private fun settleChatCollectionFallback(turn:Long,summary:String) {
+        if(turn!=userTurn.get()||closed||!state.value.textMode||pendingTitles.isEmpty())return
+        chatFallbackJob?.cancel();chatFallbackJob=null
+        val fallbackText=summary.ifBlank {
+            pendingTitles.take(3).joinToString(" · ") { card ->
+                card.title+(if(card.year.isNotBlank())" (${card.year})" else "")+(if(card.why.isNotBlank())" — ${card.why}" else "")
+            }
+        }
+        chatReply.narrate(fallbackText,false,pendingTitles,finalReferences)
+        val canonical=chatReply.line()
+        awaitingToolAnswer=false;pendingAnswerNeedsTitle=false;pendingToolReply=null;recommendationLookup=false;inputTurnActive=false;continueAfterReconnect=false
+        answerDeadline.clear()
+        update { value ->
+            val lines=chatReply.upsert(value.lines)
+            assistantLine=lines.indexOfLast{it.role=="assistant"}
+            value.copy(lines=lines,cards=value.cards.show(canonical.titles,replaceGroup=true,limit=24),sending=false,answerComplete=true,phase="Listening",connectionDetail="")
+        }
+        persistHistory()
+    }
+    private fun commitSynthesizedVoicePresentation(turn:Long,ticket:Long) {
+        if(turn!=userTurn.get()||closed||recommendationPool.isEmpty())return
+        val chosen=recommendationPool.take(recommendationCount.coerceIn(1,8))
+        val spoken=chosen.joinToString(". "){card->
+            if(card.why.isNotBlank())"${card.title}: ${card.why.trimEnd('.')}" else card.title
+        }+"."
+        spokenAttention=TalkSpokenAttention(spoken,chosen,locked=true)
+        pendingTitles=chosen;recommendationResultTurn=turn;cardsCommittedTurn=turn
+        recommendationLookup=false;pendingAnswerNeedsTitle=false;awaitingToolAnswer=true;toolAnswerNudges=0
+        val reply=JSONObject().put("status","approved").put("results",JSONArray(chosen.map{it.json()})).put("speechText",spoken)
+        recommendationReply=reply;pendingToolReply=reply
+        update{it.copy(cards=it.cards.show(chosen,replaceGroup=true))}
+        hydrateCards(chosen.filter{it.posterPath==null},turn,ticket)
+        if(socketReady) {
+            emitContinuation("Read EXACTLY this approved recommendation answer now, with no introduction or additions: $spoken")
+            answerDeadline.awaiting(15000)
+        } else {
+            addLine(TalkLine("assistant",spoken,finalReferences,titles=chosen))
+            awaitingToolAnswer=false;pendingToolReply=null;presentationDelivered=true
+            update{it.copy(sending=false,answerComplete=true,phase=if(muted)"Muted" else "Listening")}
+            persistHistory()
+        }
     }
     private fun deliverToolResult(origin:Long,id:String,name:String,result:JSONObject,acknowledged:Boolean=false){
         if(!socketReady){continueAfterReconnect=true;return}
@@ -2084,6 +2233,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         val canonical=chatReply.line();pendingTitles=canonical.titles;finalReferences=canonical.sources
         update{value->val lines=chatReply.upsert(value.lines);assistantLine=lines.indexOfLast{it.role=="assistant"};value.copy(lines=lines,cards=value.cards.show(canonical.titles,replaceGroup=true,limit=24))}
         chatCollectionCommittedTurn=userTurn.get()
+        cardsCommittedTurn=userTurn.get()
         persistHistory()
     }
     private fun addLine(line:TalkLine){if(line.text.isNotBlank()||line.titles.isNotEmpty())update{it.copy(lines=(it.lines+line).takeLast(64))}}
