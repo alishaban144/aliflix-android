@@ -138,6 +138,8 @@ class MediaTest {
                 MobilePlaybackProvider.FILMO,
                 MobilePlaybackProvider.SEVEN_MOVIES,
                 MobilePlaybackProvider.MOVY,
+                MobilePlaybackProvider.HIMOVIES,
+                MobilePlaybackProvider.CINEGO,
             ),
             mobileGeneralPlaybackProviders(),
         )

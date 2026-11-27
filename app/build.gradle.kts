@@ -5,8 +5,8 @@ plugins {
 }
 
 val compatibilityBridge = providers.gradleProperty("aliflix.mobileCompatBridge").orNull == "true"
-val mobileVersionCode = 299
-val mobileVersionName = "3.1.209"
+val mobileVersionCode = 302
+val mobileVersionName = "3.1.212"
 val recommendationBaseUrl = providers.gradleProperty("ALIFLIX_RECOMMENDATION_BASE_URL")
     .orElse("https://aliflix-recommendations.equable-equipment.workers.dev")
     .get()

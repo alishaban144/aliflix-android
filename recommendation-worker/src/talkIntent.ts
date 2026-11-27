@@ -50,9 +50,10 @@ export function talkSeriesStatus(question:string):'ended'|'returning'|undefined 
 export function talkRecommendationQuery(question:string|undefined,toolQuery:string,previousQuery?:string):string {
  const current=question?.trim();
  if(!current)return toolQuery;
+ if(previousQuery&&/^(?:(?:can|could|would) you\s+)?(?:(?:give|show) me\s+|suggest\s+|recommend\s+)?(?:some\s+|any\s+)?(?:more|other|different|another)(?:\s+(?:more|other|different|new))?(?:\s+(?:ones?|titles?|choices?|movies?|films?|shows?|series|recommendations?))?(?:\s+please)?[.!?]*$/i.test(current))return previousQuery;
  // The captured prior request owns inherited constraints. A model expansion
  // must not add an unrequested recent-only era to a relative mood refinement.
- return /\b(?:those|these|them|same ones|more like|more of|that kind|similar ones|less|still|lighter|darker|only|more recent|newer|ended series|running series|same constraints)\b/i.test(current)
+ return /\b(?:those|these|them|same ones|other ones|different ones|more like|more of|that kind|similar ones|less|still|lighter|darker|only|more recent|newer|ended series|running series|same constraints)\b/i.test(current)
   ? `${previousQuery||toolQuery}\nUser refinement: ${current}`.slice(-2000) : current;
 }
 
@@ -66,21 +67,26 @@ export function talkRecommendationPolicy(query: string, now = new Date()) {
     filters: { minimumYear: year - 3, maximumYear: year },
   };
 }
-/** Quota recovery for simple discovery only. Complex premises, named anchors,
- * exclusions and older eras still require the normal research pipeline. */
-export function cachedTalkDiscovery(query:string,collection:{results:RecommendationResult[];publishedAt:number},type:'movie'|'tv',excludedIds:Set<number>,excludedTitles:string[],now=new Date()):RecommendationResult[] {
+/** Complex premises, named anchors and older eras still require research. */
+export function simpleTalkDiscoveryGenres(query:string,now=new Date()):string[]|null {
  const year=now.getUTCFullYear();
  let rest=query.toLowerCase().replace(/[’']/g,' ').replace(/[-–]/g,' ')
   .replace(new RegExp(`\\b${year-3}\\s+(?:(?:to|through|and)\\s+)?${year}\\b`,'g'),' ');
  const genres:string[]=[];
  const patterns:Array<[RegExp,string]>=[[/\b(?:science fiction|sci fi|scifi)\b/g,'Science Fiction'],[/\bhorror\b/g,'Horror'],[/\bthrillers?\b/g,'Thriller'],[/\bcomed(?:y|ies)\b/g,'Comedy'],[/\bdramas?\b/g,'Drama'],[/\baction\b/g,'Action'],[/\bcrime\b/g,'Crime'],[/\bromance\b/g,'Romance'],[/\bdocumentar(?:y|ies)\b/g,'Documentary']];
  for(const [pattern,genre] of patterns)rest=rest.replace(pattern,()=>{genres.push(genre);return ' ';});
- rest=rest.replace(/\b(?:i|would|like|you|can|could|please|instead|suggest|suggestions|recommend|recommendations|find|give|me|us|a|an|the|some|one|two|three|[123]|recent|latest|new|released|releases|movies?|films?|series|shows?|include|their|release|years?|to|watch|for|from|between|with|today|now|tonight|something|best|good|top)\b/g,'').replace(/[\s,.!?;:]/g,'');
- if(rest||new Set(genres).size>1||collection.publishedAt<now.getTime()-7*86400000||collection.publishedAt>now.getTime()+60000)return [];
+ rest=rest.replace(/\b(?:i|we|what|should|would|like|you|can|could|please|instead|suggest|suggestions|recommend|recommendations|find|give|me|us|a|an|the|some|one|two|three|[1-9][0-9]?|recent|latest|new|released|releases|movies?|films?|series|shows?|include|their|release|years?|to|watch|for|from|between|with|today|now|tonight|something|best|good|top)\b/g,'').replace(/[\s,.!?;:+]/g,'');
+ return rest||new Set(genres).size>1?null:genres;
+}
+
+export function cachedTalkDiscovery(query:string,collection:{results:RecommendationResult[];publishedAt:number},type:'movie'|'tv',excludedIds:Set<number>,excludedTitles:string[],now=new Date(),limit=3):RecommendationResult[] {
+ const genres=simpleTalkDiscoveryGenres(query,now),year=now.getUTCFullYear();
+ if(!genres||collection.publishedAt<now.getTime()-7*86400000||collection.publishedAt>now.getTime()+60000)return [];
  const titleKey=(v:string)=>v.toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
  const excluded=new Set(excludedTitles.map(titleKey)),today=now.toISOString().slice(0,10);
  return collection.results.filter(v=>v.mediaType===type&&!excludedIds.has(v.tmdbId)&&!excluded.has(titleKey(v.title))&&
-  v.releaseDate&&v.releaseDate>=`${year-3}-01-01`&&v.releaseDate<=today&&v.finalScore>0&&
+  v.releaseDate&&v.releaseDate>=`${year-3}-01-01`&&v.releaseDate<=today&&
+  (v.finalScore>0||v.retrievalSources.length===1&&v.retrievalSources[0]===`https://www.themoviedb.org/${type}/${v.tmdbId}`)&&
   genres.every(g=>v.genres.includes(g))&&v.retrievalSources.length>0&&v.retrievalSources.every(source=>{try{const u=new URL(source);return u.protocol==='https:'&&!u.username&&!u.password;}catch{return false;}}))
-  .sort((a,b)=>b.releaseDate!.localeCompare(a.releaseDate!)).slice(0,3);
+  .sort((a,b)=>b.releaseDate!.localeCompare(a.releaseDate!)).slice(0,limit);
 }

@@ -101,7 +101,7 @@ internal class DiscoverCatalogueStore(
                     overview = item.overview.orEmpty(), posterPath = item.posterPath,
                     backdropPath = item.backdropPath, year = item.releaseDate?.take(4).orEmpty(),
                     rating = item.tmdbRating ?: 0.0, tmdbVoteCount = item.tmdbVoteCount,
-                    genres = item.genres, originalLanguage = item.originalLanguage.orEmpty(),
+                    genres = item.genres, originalLanguage = item.originalLanguage.orEmpty(), originCountries = item.originCountries,
                 )
             }
             val rawPeople = json.optJSONArray("people")

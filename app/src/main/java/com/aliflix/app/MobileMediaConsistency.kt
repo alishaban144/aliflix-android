@@ -34,6 +34,7 @@ internal fun V3CatalogMedia.toMobileMedia(
         tmdbVoteCount = tmdbVoteCount ?: fallback?.tmdbVoteCount,
         genres = genres.ifEmpty { fallback?.genres.orEmpty() },
         originalLanguage = originalLanguage ?: fallback?.originalLanguage.orEmpty(),
+        originCountries = originCountries.ifEmpty { fallback?.originCountries.orEmpty() },
         runtime = runtimeMinutes?.takeIf { it > 0 }?.let { "$it min" }
             ?: fallback?.runtime.orEmpty(),
     )
@@ -101,6 +102,7 @@ internal fun Media.mergeStableMobileDetailUpdate(update: Media): Media {
         castPeople = update.castPeople.ifEmpty { castPeople },
         status = status.ifBlank { update.status },
         originalLanguage = originalLanguage.ifBlank { update.originalLanguage },
+        originCountries = originCountries.ifEmpty { update.originCountries },
         creators = creators.ifEmpty { update.creators },
         runtime = runtime.ifBlank { update.runtime },
         trailerKey = trailerKey ?: update.trailerKey,

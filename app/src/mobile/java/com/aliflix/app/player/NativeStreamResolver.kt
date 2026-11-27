@@ -2,6 +2,7 @@ package com.aliflix.app.player
 
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.MobilePlaybackProvider
+import com.aliflix.app.model.isIndianCatalogue
 
 import android.os.SystemClock
 import android.widget.FrameLayout
@@ -64,6 +65,44 @@ internal class NativeStreamResolver(
         onServer: (String) -> Unit,
     ): NativePlaybackRequest {
         reportServers = onServers
+        if (selection.source.identity.isIndianCatalogue) {
+            val servers = try { IndianPlaybackCatalogue.resolveServers(selection) } catch (error: Exception) {
+                currentCoroutineContext().ensureActive()
+                android.util.Log.d("AliflixSite", "${selection.source.identity.name}: catalogue ${error.javaClass.simpleName}")
+                throw error
+            }
+            android.util.Log.d("AliflixSite", "${selection.source.identity.name}: ${servers.size} listed servers")
+            onServers(servers.map { it.server })
+            val candidates = servers.filter { it.server !in excluded && (!strictPreferredServer || it.server == preferredServer) }
+                .sortedBy { it.server != preferredServer }
+            if (candidates.isEmpty()) throw NoNativeServersException()
+            val (winner, request) = withTimeout(24_000) {
+                firstSuccessful(candidates.mapIndexed { index, link -> suspend {
+                    if (index > 0 && !strictPreferredServer) delay(450)
+                    val child = NativeStreamResolver(activity, progress, host)
+                    children.add(child)
+                    try {
+                        withTimeout(13_000) {
+                            val target = IndianPlaybackCatalogue.playerUrl(link)
+                            val resolved = child.resolveSingle(selection, positionMs, emptySet(), link.server,
+                                listOf(link.server to target), true) {}
+                            child.close()
+                            if (validateSingle) validateStream(selection, resolved)
+                            link.server to resolved
+                        }
+                    } catch (error: Exception) {
+                        currentCoroutineContext().ensureActive()
+                        android.util.Log.d("AliflixSite", "${selection.source.identity.name}: ${link.server} ${error.javaClass.simpleName}")
+                        throw error
+                    } finally {
+                        child.close()
+                        children.remove(child)
+                    }
+                } }, parallelism = 2)
+            }
+            onServer(winner)
+            return request
+        }
         if (selection.source.identity in setOf(MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD)) {
             return try { LinkedSiteCatalog(activity).resolve(selection,positionMs,excluded,preferredServer,strictPreferredServer,
                 audioLanguage,onServers,onServer) { label, target ->
@@ -105,7 +144,7 @@ internal class NativeStreamResolver(
                 selection, positionMs, excluded, preferredServer,
                 onServers, strictPreferredServer,
                 lowQuality = forceLowQuality || (activity.application as com.aliflix.app.AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality == PreferredVideoQuality.LOW,
-                validate = { request -> if (validateSingle && !strictPreferredServer) StartupStreamCache.awaitPlayable(activity, request) },
+                validate = { request -> if (validateSingle && !strictPreferredServer) validateStream(selection, request) },
                 onServer = onServer,
             ).also { close() }
         }
@@ -133,7 +172,7 @@ internal class NativeStreamResolver(
             selectNativeServer(embeds, preferredServer, excluded, true) { it.first }
         }
         if (embeds.isNotEmpty() && candidates.isEmpty()) throw NoNativeServersException()
-        if (strictPreferredServer || candidates.size < 2) return resolveSingle(selection, positionMs, excluded, preferredServer, embeds, strictPreferredServer, onServer).also { close(); if (validateSingle) StartupStreamCache.awaitPlayable(activity, it) }
+        if (strictPreferredServer || candidates.size < 2) return resolveSingle(selection, positionMs, excluded, preferredServer, embeds, strictPreferredServer, onServer).also { close(); if (validateSingle) validateStream(selection, it) }
         val winner = try { firstSuccessful(candidates.map { (name, _) -> suspend {
             val child = NativeStreamResolver(activity, progress, host)
             children.add(child)
@@ -142,7 +181,7 @@ internal class NativeStreamResolver(
             try {
                 val request = child.resolveSingle(selection, positionMs, excluded, name, embeds) {}
                 child.close()
-                StartupStreamCache.awaitPlayable(activity, request)
+                validateStream(selection, request)
                 history.edit().putLong("$key:ms", SystemClock.elapsedRealtime() - started).putLong("$key:at", now).apply()
                 name to request
             } catch (error: Exception) {
@@ -155,10 +194,14 @@ internal class NativeStreamResolver(
             currentCoroutineContext().ensureActive()
             // Preferred embeds may all be unavailable while the catalogue has another server.
             if (catalogueProvider) throw error
-            return resolveSingle(selection, positionMs, excluded + candidates.map { it.first }, null, embeds, onServer = onServer).also { close(); StartupStreamCache.awaitPlayable(activity, it) }
+            return resolveSingle(selection, positionMs, excluded + candidates.map { it.first }, null, embeds, onServer = onServer).also { close(); validateStream(selection, it) }
         }
         onServer(winner.first)
         return winner.second
+    }
+
+    private suspend fun validateStream(selection: PlaybackSelection, request: NativePlaybackRequest) {
+        StartupStreamCache.awaitPlayable(activity, request, expectedDuration = indianNativeDurationRange(selection))
     }
 
     /** Keep Flixer's own live server queue running while native Media3 validates each selected URL. */
@@ -176,7 +219,7 @@ internal class NativeStreamResolver(
                 if (request != null && request.url !in rejected) {
                     try {
                         android.util.Log.i("AliflixFlixer", "Validating selected Flixer stream")
-                        StartupStreamCache.awaitPlayable(activity, request)
+                        validateStream(selection, request)
                         return@withTimeout request
                     } catch (error: Exception) {
                         currentCoroutineContext().ensureActive()

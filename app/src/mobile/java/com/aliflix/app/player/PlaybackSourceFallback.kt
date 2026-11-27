@@ -6,13 +6,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** Keep content/progress identity while trying every available provider automatically. */
-internal fun playbackSourceFallbacks(selection: PlaybackSelection, preferences: PlaybackPreferences): List<PlaybackSelection> =
-    listOf(selection) + (listOf(MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FILMO, MobilePlaybackProvider.FLIXER, PlaybackProviderId.MIRURO,
+internal fun playbackSourceFallbacks(selection: PlaybackSelection, preferences: PlaybackPreferences): List<PlaybackSelection> {
+    val indian = if (selection.media.isIndianTitle) listOf(MobilePlaybackProvider.HIMOVIES, MobilePlaybackProvider.CINEGO) else emptyList()
+    return listOf(selection) + (indian + listOf(MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FILMO, MobilePlaybackProvider.FLIXER, PlaybackProviderId.MIRURO,
         PlaybackProviderId.ANIKURO, PlaybackProviderId.MOVIEPIRE, PlaybackProviderId.CINEJOY,
         PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY,
         MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY))
         .filter { it.isAvailableFor(selection.media) && it != selection.source.identity }
         .map { selection.copy(source = preferences.sourceFor(selection.media, it)) }
+}
 
 /** Priority controls launch order; an unavailable priority must never serialize fallback. */
 internal fun initialPlaybackRace(candidates: List<PlaybackSelection>): List<PlaybackSelection> {
@@ -20,6 +22,12 @@ internal fun initialPlaybackRace(candidates: List<PlaybackSelection>): List<Play
     return when {
         candidates.firstOrNull()?.media?.let { it.type == MediaType.TV && it.isJapaneseAnime } == true && anime.isNotEmpty() ->
             anime + candidates.filterNot { it.source.identity.isAnimeNative }
+        candidates.firstOrNull()?.media?.isIndianTitle == true -> candidates.sortedBy {
+            when (val provider = it.source.identity) {
+                MobilePlaybackProvider.FLIXER, PlaybackProviderId.MOVIEPIRE -> 1
+                else -> if (provider.isIndianCatalogue) 0 else 2
+            }
+        }
         else -> candidates
     }
 }
@@ -37,6 +45,7 @@ internal fun alternativePlaybackSources(
     return playbackSourceFallbacks(selection, preferences).drop(1).sortedBy { candidate ->
         val provider = candidate.source.identity
         when {
+            selection.media.isIndianTitle && provider.isIndianCatalogue -> 0
             (anime && provider.isAnimeNative) || provider == specialist -> 0
             provider == preferences.effectiveGeneralProvider -> 1
             else -> 2
@@ -44,8 +53,32 @@ internal fun alternativePlaybackSources(
     }
 }
 
+private val runtimeMinutes = Regex("""^(\d{1,3})\s*min(?:utes?)?$""", RegexOption.IGNORE_CASE)
+
+internal fun indianNativeDurationRange(selection: PlaybackSelection): LongRange? {
+    if (!selection.media.isIndianTitle) return null
+    val length = if (selection.media.type == MediaType.MOVIE) selection.media.runtime else {
+        selection.availableEpisodes.firstOrNull {
+            it.seasonNumber == selection.seasonNumber && it.number == selection.episodeNumber
+        }?.runtime.orEmpty()
+    }
+    val minutes = runtimeMinutes.matchEntire(length.trim())?.groupValues?.get(1)?.toLongOrNull()
+    if (minutes == null || minutes <= 0) return 10_000L..Long.MAX_VALUE
+    val expected = minutes * 60_000L
+    // Alternate cuts vary in length. Reject previews and grossly mismatched titles.
+    val tolerance = maxOf(90_000L, expected * 15 / 100)
+    return (expected - tolerance).coerceAtLeast(10_000L)..(expected + tolerance)
+}
+
+internal fun verifyNativeDuration(durationMs: Long, expected: LongRange?) {
+    check(expected == null || durationMs <= 0 || durationMs in expected) {
+        "The video length doesn't match the selected title."
+    }
+}
+
 /** Give the chosen catalogue a brief head start, with bounded concurrent alternatives. */
 internal suspend fun <T : Any> racePlaybackSources(candidates: List<PlaybackSelection>, attempt: suspend (PlaybackSelection) -> T): T {
+    val indianCatalogue = candidates.firstOrNull()?.source?.identity?.isIndianCatalogue == true
     val filmOAttempt = candidates.firstOrNull()
         ?.takeIf { it.source.identity == MobilePlaybackProvider.FILMO }
         ?.let { CompletableDeferred<Unit>() }
@@ -58,7 +91,10 @@ internal suspend fun <T : Any> racePlaybackSources(candidates: List<PlaybackSele
                 filmOAttempt?.complete(Unit)
             }
         } else {
-            if (filmOAttempt == null) delay(900)
+            if (indianCatalogue && (candidate.source.identity.isIndianCatalogue ||
+                    candidate.source.identity == MobilePlaybackProvider.FLIXER ||
+                    candidate.source.identity == PlaybackProviderId.MOVIEPIRE)) delay(250)
+            else if (filmOAttempt == null) delay(900)
             else withTimeoutOrNull(8_000) { filmOAttempt.await() }
             attempt(candidate)
         }

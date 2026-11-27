@@ -45,6 +45,7 @@ import com.aliflix.app.data.PlaybackProgress
 import com.aliflix.app.data.PlaybackProgressStore
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.PlaybackSelection
+import com.aliflix.app.model.isIndianCatalogue
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -143,7 +144,11 @@ class WebPlayerController(
 
     private fun preparationScript() = if (nativePreparation) "\n" + nativePreparationScript() else ""
     private val resolvedEmbedOrigin get()=trustedNativeEmbedOrigin(nativeEmbedUrl, nativePreparation)
-    private fun nativeOriginRules(sourceHost:String)=nativePlaybackOriginRules(sourceHost)+setOfNotNull(resolvedEmbedOrigin)
+    // The public MoviesAPI player embeds the actual video one frame deeper.
+    private val resolvedEmbedChildOrigins: Set<String> get() = if (resolvedEmbedOrigin == "https://moviesapi.to") {
+        setOf("https://cdn.vidspark.to", "https://player.vidprime.top", "https://cdn.vidprime.top")
+    } else emptySet()
+    private fun nativeOriginRules(sourceHost:String)=nativePlaybackOriginRules(sourceHost)+setOfNotNull(resolvedEmbedOrigin)+resolvedEmbedChildOrigins
     private var webView: WebView? = null
     private var loadedKey: String? = null
     private var activeSelection: PlaybackSelection? = null
@@ -729,8 +734,13 @@ class WebPlayerController(
             moviepireProtectedNativeMode = false
             installMoviepireMessageListener(view, sourceHost)
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                val shield = if (selection.source.identity == MobilePlaybackProvider.FLIXER) mobileMoviepireAdShieldScript() else ""
+                // The native resolver already gives the HLS master time to arrive after a variant.
+                val discovery = nativeStreamDiscoveryScript(
+                    reportVariantsImmediately = nativePreparation && selection.source.identity.isIndianCatalogue,
+                )
                 moviepireDocumentStartScriptHandler = WebViewCompat.addDocumentStartJavaScript(
-                    view, (if (selection.source.identity == MobilePlaybackProvider.FLIXER) mobileMoviepireAdShieldScript() else "") + nativeStreamDiscoveryScript() + "\n" + mobileMoviepireProgressBridgeScript() + preparationScript(),
+                    view, shield + discovery + "\n" + mobileMoviepireProgressBridgeScript() + preparationScript(),
                     nativeOriginRules(sourceHost),
                 )
             }
@@ -809,7 +819,8 @@ class WebPlayerController(
         selection: PlaybackSelection,
     ): Boolean {
         if (!origin.scheme.equals("https", ignoreCase = true)) return false
-        resolvedEmbedOrigin?.let { if(trustedNativeEmbedOrigin(origin.toString(), preparing = true)==it) return true }
+        val frameOrigin = trustedNativeEmbedOrigin(origin.toString(), preparing = true)
+        if (frameOrigin != null && (frameOrigin == resolvedEmbedOrigin || frameOrigin in resolvedEmbedChildOrigins)) return true
         val host = origin.host?.lowercase()?.removePrefix("www.") ?: return false
         val approved = PlaybackNavigationPolicy.moviepirePlayerDocumentHosts + PlaybackNavigationPolicy.defaultApprovedPlaybackHosts +
             selection.source.cleanDomain.lowercase().removePrefix("www.")
@@ -1441,7 +1452,8 @@ class WebPlayerController(
         if (nativePreparation && nativeEmbedUrl != null) return
         when (selection.source.identity) {
             PlaybackProviderId.CINEJOY -> Unit // Exact TMDB movie/episode route, native HLS discovery.
-            MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, MobilePlaybackProvider.MOVY, MobilePlaybackProvider.SEVEN_MOVIES -> Unit // Native mobile catalogues and exact TMDB routes.
+            MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, MobilePlaybackProvider.MOVY, MobilePlaybackProvider.SEVEN_MOVIES,
+            MobilePlaybackProvider.HIMOVIES, MobilePlaybackProvider.CINEGO -> Unit // Native mobile catalogues and exact TMDB routes.
             PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
             PlaybackProviderId.MOVIEPIRE -> {
                 installMobileMoviepireAdShield(view, selection)

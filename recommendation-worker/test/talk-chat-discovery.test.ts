@@ -21,6 +21,7 @@ describe('one conversation with mode-appropriate discovery',()=>{
   expect(talkSeriesStatus(running)).toBe('returning');
   expect(talkSeriesStatus(talkRecommendationQuery('More different titles with the same constraints.','','Only ended series'))).toBe('ended');
   expect(talkRecommendationQuery('Now find silent comedies','',previous)).toBe('Now find silent comedies');
+  expect(talkRecommendationQuery('Can you give me some other different ones?','Unrelated movies',previous)).toBe(previous);
  });
  it('exposes research notes only to capable voice clients and keeps presentation out of chat',()=>{
   const names=(value:ReturnType<typeof liveSetup>)=>value.tools[0].functionDeclarations.map(tool=>tool.name);

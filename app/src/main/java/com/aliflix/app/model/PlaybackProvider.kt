@@ -33,7 +33,9 @@ enum class MobilePlaybackProvider(
     FILMO("Filmo", "https://filmo.to/"),
     ANIWORLD("AniWorld", "https://aniworld.to/"),
     SEVEN_MOVIES("7Movies", "https://7movies.ac/"),
-    MOVY("Movy", "https://www.movy.sx/");
+    MOVY("Movy", "https://www.movy.sx/"),
+    HIMOVIES("HiMovies", "https://himovies.bz/"),
+    CINEGO("CineGo", "https://cinego.ws/");
 
     override val supportsGeneralPlayback: Boolean get() = this != ANIWORLD
     override val isBeta: Boolean = false
@@ -46,6 +48,13 @@ enum class MobilePlaybackProvider(
         else -> supportsGeneralPlayback
     }
 }
+
+internal val PlaybackProvider.isIndianCatalogue: Boolean
+    get() = this == MobilePlaybackProvider.HIMOVIES || this == MobilePlaybackProvider.CINEGO
+
+internal val Media.isIndianTitle: Boolean
+    get() = originCountries.any { it.equals("IN", true) } || originalLanguage.lowercase(java.util.Locale.ROOT) in
+        setOf("as", "bn", "bho", "gu", "hi", "kn", "kok", "ks", "mai", "ml", "mni", "mr", "ne", "or", "pa", "sa", "sd", "ta", "te", "ur")
 
 enum class PlaybackProviderId(
     override val displayName: String,
@@ -207,6 +216,7 @@ data class PlaybackSource(
         MobilePlaybackProvider.SERIENSTREAM -> baseUrl.trimEnd('/') + "/suche?term=" + java.net.URLEncoder.encode(media.title, "UTF-8")
         MobilePlaybackProvider.FILMO -> baseUrl.trimEnd('/') + "/search?q=" + java.net.URLEncoder.encode(media.title, "UTF-8")
         MobilePlaybackProvider.ANIWORLD -> baseUrl.trimEnd('/') + "/animes"
+        MobilePlaybackProvider.HIMOVIES, MobilePlaybackProvider.CINEGO -> baseUrl
         PlaybackProviderId.CINEJOY -> baseUrl.trimEnd('/') + if (media.type == MediaType.TV) {
             "/watch/tv/${media.id}/${seasonNumber ?: 1}/${episodeNumber ?: 1}"
         } else "/watch/movie/${media.id}"
@@ -284,6 +294,7 @@ data class PlaybackPreferences(
         val provider = requestedProvider
             ?.takeIf { candidate -> candidate.isAvailableFor(media) }
             ?: when {
+                media.isIndianTitle -> MobilePlaybackProvider.HIMOVIES
                 media.type == MediaType.TV && media.isJapaneseAnime -> MobilePlaybackProvider.ANIWORLD
                 media.type == MediaType.TV -> MobilePlaybackProvider.SERIENSTREAM
                 media.type == MediaType.MOVIE -> MobilePlaybackProvider.FILMO
@@ -298,6 +309,7 @@ data class PlaybackPreferences(
             MobilePlaybackProvider.ANIWORLD -> PlaybackSource(MobilePlaybackProvider.ANIWORLD)
             MobilePlaybackProvider.SEVEN_MOVIES -> PlaybackSource(MobilePlaybackProvider.SEVEN_MOVIES)
             MobilePlaybackProvider.MOVY -> PlaybackSource(MobilePlaybackProvider.MOVY)
+            MobilePlaybackProvider.HIMOVIES, MobilePlaybackProvider.CINEGO -> PlaybackSource(provider)
             PlaybackProviderId.RAMOFLIX -> PlaybackSource.ramoflix(ramoflixConfig)
             PlaybackProviderId.MOVIEPIRE -> PlaybackSource.moviepire(moviepireBaseUrl)
             PlaybackProviderId.DORABY -> PlaybackSource.doraby(dorabyBaseUrl)

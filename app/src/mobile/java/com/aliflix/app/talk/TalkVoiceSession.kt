@@ -1231,7 +1231,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 override fun onFailure(webSocket:WebSocket,t:Throwable,response:Response?) { scope.launch {
                     if(BuildConfig.DEBUG)debugConnectionIssue="socket:${response?.code?:0}:${t.javaClass.simpleName}:"+t.message.orEmpty().replace(Regex("(?:AIza|auth_tokens/)[A-Za-z0-9_./-]+"),"[redacted]").take(160)
                     if(ticket==epoch && response?.code in listOf(401,403)){ephemeral=null;resumeHandle=null}
-                    disconnected(ticket,response?.code==429)
+                    disconnected(ticket,response?.code==429,response?.code in setOf(401,403,408,500,502,503,504))
                 } }
                 override fun onClosing(webSocket:WebSocket,code:Int,reason:String) {
                     // onClosed requires BOTH peers to close. Without this acknowledgement
@@ -1240,21 +1240,21 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     scope.launch {
                         if(BuildConfig.DEBUG)debugConnectionIssue="close:$code:"+reason.replace(Regex("(?:AIza|auth_tokens/)[A-Za-z0-9_./-]+"),"[redacted]").take(700)
                         if(ticket==epoch&&(code==1007||code==1008||reason.contains("resum",true)||reason.contains("handle",true))){ephemeral=null;resumeHandle=null}
-                        disconnected(ticket,talkProviderQuotaFailure(code,reason))
+                        disconnected(ticket,talkProviderQuotaFailure(code,reason),talkProviderUnavailable(code,reason))
                     }
                 }
                 override fun onClosed(webSocket:WebSocket,code:Int,reason:String) { scope.launch {
                     if(ticket==epoch && (code==1007||code==1008||reason.contains("resum",true)||reason.contains("handle",true))){ephemeral=null;resumeHandle=null}
-                    disconnected(ticket,talkProviderQuotaFailure(code,reason))
+                    disconnected(ticket,talkProviderQuotaFailure(code,reason),talkProviderUnavailable(code,reason))
                 } }
             })
         } catch(cancelled:CancellationException){throw cancelled}
-        catch(e:Exception){if(BuildConfig.DEBUG)debugConnectionIssue=e.message.orEmpty().take(160);if(ticket==epoch)update{it.copy(connectionDetail=talkConnectionDetail(e))};disconnected(ticket,talkFailureIsLimited(e))}
+        catch(e:Exception){if(BuildConfig.DEBUG)debugConnectionIssue=e.message.orEmpty().take(160);if(ticket==epoch)update{it.copy(connectionDetail=talkConnectionDetail(e))};disconnected(ticket,talkFailureIsLimited(e),(e as? TalkHttpException)?.code=="LIVE_UNAVAILABLE")}
     }
     private fun cancelSocket(socket:WebSocket?) {
         if(socket!=null)http.dispatcher.executorService.execute {runCatching {socket.cancel()}}
     }
-    private suspend fun disconnected(ticket:Long,limited:Boolean) {
+    private suspend fun disconnected(ticket:Long,limited:Boolean,providerUnavailable:Boolean=false) {
         if(ticket!=epoch||!permitted)return
         if(parkedPlayerKey!=null){suspendSession();return}
         if(textSend?.isActive==true)continueAfterReconnect=false
@@ -1263,7 +1263,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         update{it.copy(phase="Reconnecting",level=0f)}
         socketReady=false
         readyWatchdog?.cancel();stopAudio(cancelTools=false);cancelSocket(ws);ws=null;inputText="";outputText="";assistantLine=-1;finalReferences=emptyList()
-        if(talkCanRotateQuotaProject(limited,projectFailovers,backendSession!=null)) {
+        if(talkCanRotateQuotaProject(limited||providerUnavailable,projectFailovers,backendSession!=null)) {
             projectFailovers++
             val rotationTicket=++epoch // Stale close callbacks cannot mint another token.
             val session=checkNotNull(backendSession)
@@ -1272,6 +1272,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     .apply{responseLanguage?.let{put("responseLanguage",it)}})
                 if(rotationTicket!=epoch||!permitted)return
                 ephemeral=minted;backendSession=minted.getString("session");resumeHandle=null
+                update { it.copy(connectionDetail="") }
                 reconnectJob?.cancel();reconnectJob=scope.launch{openSocket(rotationTicket)}
                 return
             }catch(cancelled:CancellationException){throw cancelled}
@@ -1301,7 +1302,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         }
         message.optJSONObject("error")?.let{error->
             if(BuildConfig.DEBUG)debugConnectionIssue="live:"+error.optInt("code")+":"+error.optString("status").take(60)
-            scope.launch{disconnected(ticket,error.optInt("code")==429||error.optString("status")=="RESOURCE_EXHAUSTED")}
+            scope.launch{disconnected(ticket,error.optInt("code")==429||error.optString("status")=="RESOURCE_EXHAUSTED",
+                talkProviderUnavailable(error.optInt("code"),error.optString("status")))}
             return
         }
         if(BuildConfig.DEBUG&&debugTraceInput) {
@@ -2677,3 +2679,6 @@ internal fun explicitRequestedTalkLanguage(text:String):String? =
 
 internal fun talkProviderQuotaFailure(code:Int,reason:String):Boolean =
     code==4429||reason.contains("RESOURCE_EXHAUSTED",true)||reason.contains("exceeded your current quota",true)||reason.contains("quota exhausted",true)
+
+internal fun talkProviderUnavailable(code:Int,reason:String):Boolean =
+    code in setOf(500,502,503,504,1011,1012,1013)||reason.equals("UNAVAILABLE",true)||reason.contains("service unavailable",true)

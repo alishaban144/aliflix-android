@@ -75,6 +75,7 @@ private fun V3CatalogMedia.toMedia(fallback: Media? = null): Media {
         tmdbVoteCount = tmdbVoteCount ?: fallback?.tmdbVoteCount,
         genres = genres.ifEmpty { fallback?.genres.orEmpty() },
         originalLanguage = originalLanguage ?: fallback?.originalLanguage.orEmpty(),
+        originCountries = originCountries.ifEmpty { fallback?.originCountries.orEmpty() },
         runtime = runtimeMinutes?.takeIf { it > 0 }?.let { "$it min" }
             ?: fallback?.runtime.orEmpty(),
     )

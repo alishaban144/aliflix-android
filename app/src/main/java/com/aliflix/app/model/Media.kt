@@ -70,6 +70,7 @@ data class Media(
     val trailerKey: String? = null,
     val castPeople: List<MediaCreator> = emptyList(),
     val omdbAwards: String? = null,
+    val originCountries: List<String> = emptyList(),
 ) {
     val key: String get() = "${type.routeName}:$id"
     val posterUrl: String?
@@ -180,6 +181,7 @@ data class Media(
         })
         put("status", status)
         put("originalLanguage", originalLanguage)
+        put("originCountries", org.json.JSONArray(originCountries))
         put("creators", org.json.JSONArray().apply {
             creators.forEach { creator ->
                 put(
@@ -257,6 +259,9 @@ data class Media(
                 }.orEmpty(),
                 status = json.optString("status"),
                 originalLanguage = json.optString("originalLanguage"),
+                originCountries = json.optJSONArray("originCountries")?.let { countries ->
+                    (0 until countries.length()).map { countries.optString(it) }.filter(String::isNotBlank)
+                }.orEmpty(),
                 castPeople = json.optJSONArray("castPeople")?.let { array ->
                     (0 until array.length()).mapNotNull { index ->
                         val person = array.optJSONObject(index) ?: return@mapNotNull null
